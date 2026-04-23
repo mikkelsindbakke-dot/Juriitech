@@ -741,6 +741,121 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst):
     return content
 
 
+def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
+    """
+    Generér struktureret match-metadata for hver retriever-match, til brug i
+    de visuelle sagskort.
+
+    Returnerer en liste af dicts i samme rækkefølge som 'relevante_sager':
+      {
+        "sagsnummer": str,
+        "titel": str,
+        "rejsearrangoer": str,
+        "klagers_krav": str,
+        "tilkendt_beloeb": str,
+        "udfald": "Fuld medhold til klager" | "Delvist medhold" | "Afvist" | "Ukendt",
+        "match_begrundelse": [str, str, ...]
+      }
+
+    Hvis AI-kaldet fejler eller output ikke kan parses, returneres en tom liste.
+    """
+    import json as _json
+    import re as _re
+
+    if not relevante_sager:
+        return []
+
+    # Kort resume af uploadede sag (første 3 filer, 1500 tegn hver)
+    filer = uploadet_sag.get("filer") or []
+    upload_dele = []
+    for f in filer[:3]:
+        t = f.get("tekst") or ""
+        if t:
+            upload_dele.append(f"--- {f.get('filnavn', 'fil')} ---\n{t[:1500]}")
+    uploadet_resume = "\n\n".join(upload_dele)[:5000] or "(Ingen tekst udtrukket lokalt)"
+
+    # Byg tekst for hver tidligere afgørelse
+    sager_tekst = ""
+    for i, s in enumerate(relevante_sager, 1):
+        filnavn = s.get("filnavn", "ukendt")
+        indhold = (s.get("indhold") or "")[:5500]
+        sager_tekst += f"\n\n=== AFGØRELSE #{i} — filnavn: {filnavn} ===\n{indhold}\n"
+
+    prompt = (
+        "Du får nedenfor en NY KLAGESAG (sagsmateriale fra rejseselskabet) og "
+        f"{len(relevante_sager)} TIDLIGERE AFGØRELSER der ligner den nye sag.\n\n"
+        "For hver tidligere afgørelse skal du udlede struktureret metadata og "
+        "forklare kort hvorfor netop den afgørelse ligner den nye sag.\n\n"
+        "NY SAG (uddrag af de uploadede filer):\n"
+        f"{uploadet_resume}\n\n"
+        "TIDLIGERE AFGØRELSER:"
+        f"{sager_tekst}\n\n"
+        "OPGAVE:\n"
+        f"Returnér KUN en gyldig JSON-array med præcis {len(relevante_sager)} objekter, "
+        "i nøjagtig samme rækkefølge som afgørelserne ovenfor. Ingen forklaring, "
+        "ingen markdown-blok, intet ud over JSON. Hvert objekt skal have disse nøgler:\n"
+        "  - sagsnummer (string): Nævnets sagsnummer, typisk 'ÅÅ-NNNN' (fx '24-290'). "
+        "Udled fra filnavn eller tekst.\n"
+        "  - titel (string): Kort beskrivende titel på sagens tema — 4-8 danske ord "
+        "(fx 'Navneændring afvist ved check-in' eller 'Forsinket fly pga. vejrlig').\n"
+        "  - rejsearrangoer (string): Navn på rejsearrangøren (fx 'TUI Danmark A/S'). "
+        "IKKE CVR-nummer — udelad det. Hvis ikke nævnt, skriv 'ukendt'.\n"
+        "  - klagers_krav (string): Hvad klageren krævede, fx '12.500 kr.' — eller "
+        "'ukendt' hvis ikke tydeligt i teksten.\n"
+        "  - tilkendt_beloeb (string): Hvad Nævnet tilkendte klageren, fx '4.000 kr.' "
+        "eller '0 kr.' hvis afvist, eller 'ukendt'.\n"
+        "  - udfald (string): ÉN af disse PRÆCISE værdier: "
+        "'Fuld medhold til klager', 'Delvist medhold', 'Afvist', eller 'Ukendt'.\n"
+        "  - match_begrundelse (array of strings): 2-4 KORTE bullets (6-14 ord hver) "
+        "der forklarer hvorfor netop denne afgørelse ligner den nye sag — fx "
+        "tilsvarende mangel, samme rejsearrangør, tilsvarende faktum, samme "
+        "juridiske grundlag. Vær specifik.\n\n"
+        "VIGTIGT: Returnér intet andet end selve JSON-arrayet. Start med '[' og slut med ']'."
+    )
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=3000,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        svar = response.content[0].text.strip()
+
+        # Strip eventuelle markdown-kodeblokke
+        svar = _re.sub(r"^```(?:json)?\s*", "", svar)
+        svar = _re.sub(r"\s*```$", "", svar)
+
+        data = _json.loads(svar)
+        if not isinstance(data, list):
+            return []
+
+        # Sanity-check og normalisering
+        resultat = []
+        for item in data:
+            if not isinstance(item, dict):
+                resultat.append({})
+                continue
+            resultat.append({
+                "sagsnummer": str(item.get("sagsnummer", "")).strip(),
+                "titel": str(item.get("titel", "")).strip(),
+                "rejsearrangoer": str(item.get("rejsearrangoer", "")).strip(),
+                "klagers_krav": str(item.get("klagers_krav", "")).strip(),
+                "tilkendt_beloeb": str(item.get("tilkendt_beloeb", "")).strip(),
+                "udfald": str(item.get("udfald", "Ukendt")).strip(),
+                "match_begrundelse": [
+                    str(b).strip()
+                    for b in (item.get("match_begrundelse") or [])
+                    if str(b).strip()
+                ],
+            })
+        return resultat
+
+    except Exception as e:
+        print(f"DEBUG: opsummer_matches_til_visning fejlede: {e}")
+        return []
+
+
 def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None, returner_relevante=False):
     """
     Stil et spørgsmål mod vidensbanken MED en hel sag (flere filer) som

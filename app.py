@@ -26,6 +26,7 @@ from ai_engine import (
     generer_svarbrev_til_sag,
     generer_tjekliste,
     anonymiser_sag,
+    opsummer_matches_til_visning,
 )
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
@@ -311,6 +312,8 @@ if "auto_vurdering_for_signatur" not in st.session_state:
     st.session_state.auto_vurdering_for_signatur = None
 if "relevante_sager" not in st.session_state:
     st.session_state.relevante_sager = []
+if "match_info" not in st.session_state:
+    st.session_state.match_info = []
 
 
 def _auto_gem_klage_i_db(klage_dict):
@@ -590,6 +593,8 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.seneste_svarbrev = None
             st.session_state.seneste_tjekliste = None
             st.session_state.seneste_anonymisering = None
+            st.session_state.relevante_sager = []
+            st.session_state.match_info = []
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -635,6 +640,20 @@ if st.session_state.get("aktuel_sag"):
                 )
                 st.session_state.auto_vurdering_tekst = auto_svar
                 st.session_state.relevante_sager = rel_sager
+
+                # Generer struktureret metadata + match-begrundelse for hver
+                # relevant afgørelse (til de visuelle kort nedenfor)
+                rel_afgoerelser = [
+                    r for r in rel_sager
+                    if (r.get("dokumenttype") or "").lower() == "afgoerelse"
+                ][:5]
+                if rel_afgoerelser:
+                    st.session_state.match_info = opsummer_matches_til_visning(
+                        uploadet_sag=st.session_state.aktuel_sag,
+                        relevante_sager=rel_afgoerelser,
+                    )
+                else:
+                    st.session_state.match_info = []
                 st.session_state.auto_vurdering_for_signatur = (
                     st.session_state.sidste_sagsfil_signatur
                 )
@@ -675,34 +694,68 @@ if st.session_state.get("aktuel_sag"):
                 "Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om din nuværende sag. "
                 "Juriitech bruger dem aktivt som juridisk præcedens i analysen ovenfor."
             )
-            from badges import udled_afgoerelsesdato
+            from badges import udled_afgoerelsesdato, badge
+
+            match_info_list = st.session_state.get("match_info") or []
+
             for i, sag_ref in enumerate(afgoerelser_ud[:5], 1):
                 sim = sag_ref.get("similarity") or 0
                 sim_pct = int(sim * 100)
-                kilde = sag_ref.get("kilde_url") or "Uploadet manuelt"
                 afgoerelses_dato = udled_afgoerelsesdato(
                     sag_ref.get("indhold"),
                     filnavn=sag_ref.get("filnavn"),
                 )
                 dato_str = afgoerelses_dato or "dato ikke angivet"
-                uddrag = (sag_ref.get("indhold") or "")[:400]
 
-                # Farvekodning af relevans
-                if sim_pct >= 70:
-                    farve = "#059669"  # grøn — meget relevant
-                    etiket = "Meget høj relevans"
-                elif sim_pct >= 55:
-                    farve = "#CA8A04"  # gul — moderat
-                    etiket = "Relevant"
+                # Hent den strukturerede match-info hvis den findes
+                info = match_info_list[i - 1] if i - 1 < len(match_info_list) else {}
+                sagsnummer = info.get("sagsnummer") or (
+                    (sag_ref.get("filnavn") or "")
+                    .rsplit(".", 1)[0]
+                    .replace("_", " ")
+                )
+                titel = info.get("titel") or ""
+                udfald = info.get("udfald") or ""
+                klagers_krav = info.get("klagers_krav") or ""
+                tilkendt = info.get("tilkendt_beloeb") or ""
+                arrangoer = info.get("rejsearrangoer") or ""
+                match_begrundelse = info.get("match_begrundelse") or []
+
+                # Udfalds-badge (set fra rejseselskabets perspektiv)
+                if "Fuld medhold" in udfald:
+                    udfald_badge_html = badge("Fuld medhold klager", "red")
+                elif "Delvist" in udfald:
+                    udfald_badge_html = badge("Delvist medhold", "yellow")
+                elif udfald == "Afvist":
+                    udfald_badge_html = badge("Afvist", "green")
                 else:
-                    farve = "#6B7280"  # grå — lavere
-                    etiket = "Muligvis relevant"
+                    udfald_badge_html = ""
+
+                # Farve på match-%
+                if sim_pct >= 70:
+                    farve = "#059669"
+                elif sim_pct >= 55:
+                    farve = "#CA8A04"
+                else:
+                    farve = "#6B7280"
 
                 with st.container(border=True):
                     kol_a, kol_b = st.columns([5, 1])
                     with kol_a:
-                        st.markdown(f"**{i}. {sag_ref.get('filnavn', 'ukendt')}**")
-                        st.caption(f"Afgjort {dato_str}  ·  {etiket}")
+                        # Overskrift: "Sagsnummer 25-0122 · Navneændring afvist"
+                        overskrift_dele = [f"Sagsnummer {sagsnummer}"]
+                        if titel:
+                            overskrift_dele.append(titel)
+                        st.markdown(
+                            f"**{i}.  {'  ·  '.join(overskrift_dele)}**"
+                        )
+                        # Meta + udfaldsbadge
+                        meta = f"Afgjort {dato_str}"
+                        if arrangoer and arrangoer.lower() != "ukendt":
+                            meta += f"  ·  {arrangoer}"
+                        st.caption(meta)
+                        if udfald_badge_html:
+                            st.markdown(udfald_badge_html, unsafe_allow_html=True)
                     with kol_b:
                         st.markdown(
                             f"<div style='text-align:right; font-size:1.4rem; "
@@ -711,8 +764,36 @@ if st.session_state.get("aktuel_sag"):
                             f"color:#6B7280;'>match</div>",
                             unsafe_allow_html=True,
                         )
+
                     with st.expander("Se uddrag af afgørelsen"):
-                        st.text(uddrag + ("..." if len(uddrag) == 400 else ""))
+                        # Struktureret sammenligning af krav og tilkendt beløb
+                        if klagers_krav or tilkendt:
+                            st.markdown("**Beløb**")
+                            kol_krav, kol_tilkendt = st.columns(2)
+                            with kol_krav:
+                                st.caption("Klageren krævede")
+                                st.markdown(
+                                    f"### {klagers_krav or 'ukendt'}"
+                                )
+                            with kol_tilkendt:
+                                st.caption("Nævnet tilkendte")
+                                st.markdown(
+                                    f"### {tilkendt or 'ukendt'}"
+                                )
+                            st.markdown("")
+
+                        # Match-begrundelse (hvorfor Juriitech ser den som match)
+                        if match_begrundelse:
+                            st.markdown("**Hvorfor Juriitech ser det som et match**")
+                            for b in match_begrundelse:
+                                st.markdown(f"- {b}")
+                            st.markdown("")
+
+                        # Rå tekst-uddrag af afgørelsen
+                        with st.expander("Se rå tekst fra afgørelsen"):
+                            raa = (sag_ref.get("indhold") or "")[:2000]
+                            st.text(raa + ("..." if len(raa) == 2000 else ""))
+
                         if sag_ref.get("kilde_url"):
                             st.markdown(
                                 f"[Åbn original på pakkerejseankenaevnet.dk]"
