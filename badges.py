@@ -131,3 +131,90 @@ def relevans_badge(similarity):
     if pct >= 55:
         return badge(f"{pct}% match", "yellow")
     return badge(f"{pct}% match", "gray")
+
+
+# ---------- TUI-VILKÅR: tekst-oprydning og titel-udledning ----------
+
+def fix_mojibake(tekst):
+    """
+    Repareret UTF-8 tekst der er blevet dekodet som Latin-1 (mojibake).
+    Typiske symptomer: 'Ã¦' i stedet for 'æ', 'Ã¸' for 'ø', 'Ã¥' for 'å'.
+    """
+    if not tekst:
+        return tekst
+    if not any(s in tekst for s in ("Ã¦", "Ã¸", "Ã¥", "Ã†", "Ã˜", "Ã…", "Â")):
+        return tekst
+    try:
+        repareret = tekst.encode("latin-1", errors="ignore").decode("utf-8", errors="ignore")
+        if repareret and len(repareret) >= len(tekst) * 0.5:
+            return repareret
+    except Exception:
+        pass
+    return tekst
+
+
+def pæn_titel_fra_vilkår_filnavn(filnavn):
+    """Udled en pæn læsbar titel fra et TUI-vilkår-filnavn."""
+    if not filnavn:
+        return "TUI rejsevilkår"
+
+    basis = filnavn.rsplit("/", 1)[-1]
+    basis = re.sub(r"\.html?$", "", basis, flags=re.IGNORECASE)
+
+    if "__" in basis:
+        titel = basis.split("__", 1)[1].strip()
+    else:
+        titel = re.sub(r"^tui_", "", basis, flags=re.IGNORECASE)
+        titel = titel.replace("_", " ").replace("-", " ")
+
+    titel = fix_mojibake(titel)
+    titel = re.sub(r"[_]+", " ", titel)
+    titel = re.sub(r"\s+", " ", titel).strip()
+
+    if titel and titel[0].islower():
+        titel = titel[0].upper() + titel[1:]
+
+    return titel or "TUI rejsevilkår"
+
+
+def find_mest_relevante_afsnit(tekst, soege_kontekst, max_afsnit=2, min_laengde=80):
+    """
+    Del tekst op i afsnit og returner de 1-2 afsnit der har størst
+    ordoverlapning med søgekonteksten. Hurtig heuristik, ingen AI nødvendig.
+    """
+    if not tekst:
+        return []
+    tekst = fix_mojibake(tekst)
+
+    afsnit = re.split(r"\n\s*\n+", tekst.strip())
+    afsnit = [a.strip() for a in afsnit if len(a.strip()) >= min_laengde]
+
+    if not afsnit:
+        return []
+    if not soege_kontekst:
+        return afsnit[:max_afsnit]
+
+    STOP = {
+        "og", "i", "er", "det", "den", "en", "et", "at", "som", "for",
+        "til", "med", "af", "på", "har", "skal", "kan", "om", "men",
+        "the", "a", "is", "of", "to", "for", "and", "in", "that",
+    }
+    def ord_set(s):
+        o = re.findall(r"[A-Za-zæøåÆØÅ]{3,}", s.lower())
+        return {w for w in o if w not in STOP}
+
+    søg_ord = ord_set(soege_kontekst)
+    if not søg_ord:
+        return afsnit[:max_afsnit]
+
+    scored = []
+    for a in afsnit:
+        a_ord = ord_set(a)
+        overlap = len(søg_ord & a_ord)
+        laengde_boost = min(len(a) / 500, 1.0) * 0.5
+        score = overlap + laengde_boost
+        scored.append((score, a))
+
+    scored.sort(reverse=True, key=lambda x: x[0])
+    top = [a for s, a in scored[:max_afsnit] if s > 0]
+    return top or afsnit[:max_afsnit]

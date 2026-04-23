@@ -622,10 +622,24 @@ if st.session_state.get("aktuel_sag"):
             try:
                 auto_svar, rel_sager = spoerg_ai_med_sag(
                     spoergsmaal=(
-                        "Lav en kort juridisk førstevurdering af sagen "
-                        "baseret på de uploadede dokumenter. Du SKAL afslutte "
-                        "med en sandsynlighedsvurderings-sektion der indeholder "
-                        "præcis denne struktur — procenterne skal summe til 100:\n\n"
+                        "Lav en struktureret juridisk førstevurdering af sagen "
+                        "baseret på de uploadede dokumenter. Følg præcis denne "
+                        "rækkefølge:\n\n"
+                        "1. **Kort resume af sagen** (2-4 sætninger)\n"
+                        "2. **Klagens kernepunkter** (3-5 punkter i bullet-form)\n"
+                        "3. **Rejseselskabets stillingtagen indtil nu** — "
+                        "beskriv hvad rejseselskabet (TUI) har gjort, tilbudt "
+                        "eller afvist i forhold til klagen INDEN Nævnet blev "
+                        "involveret. Fx: 'TUI har afvist reklamationen med "
+                        "begrundelsen ...', 'TUI har tilbudt X kr. i "
+                        "kompensation', eller 'TUI har ikke svaret'. Udled "
+                        "dette fra mail-korrespondance og sagsakter i bilagene. "
+                        "Hvis det ikke fremgår tydeligt, skriv 'fremgår ikke af "
+                        "bilagene'.\n"
+                        "4. **Kort juridisk vurdering** (2-4 sætninger om de "
+                        "centrale juridiske spørgsmål)\n"
+                        "5. **Sandsynlighedsvurdering** — du SKAL afslutte med "
+                        "præcis denne struktur, hvor procenterne summer til 100:\n\n"
                         "**Fuld medhold til klager:** X%\n"
                         "**Delvist medhold til klager:** Y%\n"
                         "**Afvisning af klagen:** Z%\n\n"
@@ -800,22 +814,88 @@ if st.session_state.get("aktuel_sag"):
                                 f"({sag_ref['kilde_url']})"
                             )
 
+        # Juridisk førstevurdering som tekst — placeret efter afgørelses-kortene
+        # så man kan læse analysen med de relevante sager friskt i hukommelsen
+        if st.session_state.auto_vurdering_tekst:
+            st.markdown("### Juridisk resume og vurdering")
+            st.caption(
+                "Juriitechs strukturerede vurdering af sagen — resume, klagens "
+                "kernepunkter, rejseselskabets hidtidige stillingtagen, og "
+                "juridisk vurdering."
+            )
+            with st.container(border=True):
+                st.markdown(st.session_state.auto_vurdering_tekst)
+
         if vilkaar_ud:
+            from badges import (
+                pæn_titel_fra_vilkår_filnavn,
+                find_mest_relevante_afsnit,
+                fix_mojibake,
+            )
+
             st.markdown("### Relevante passager fra TUI's rejsevilkår")
             st.caption("Disse sektioner af vilkårene er relevante for denne sagstype.")
+
+            # Byg søgekontekst fra uploadede filer (til at finde relevante afsnit)
+            _sag_tekster = []
+            for _f in (st.session_state.aktuel_sag.get("filer") or [])[:3]:
+                if _f.get("tekst"):
+                    _sag_tekster.append(_f["tekst"][:2500])
+            soege_kontekst = "\n".join(_sag_tekster)
+
             for i, vk in enumerate(vilkaar_ud[:3], 1):
                 sim_pct = int((vk.get("similarity") or 0) * 100)
-                with st.container(border=True):
-                    st.markdown(
-                        f"**{vk.get('filnavn', 'ukendt')}** · {sim_pct}% match"
-                    )
-                    if vk.get("kilde_url"):
-                        st.caption(f"Kilde: {vk['kilde_url']}")
-                    with st.expander("Se uddrag"):
-                        st.text((vk.get("indhold") or "")[:500])
+                pæn_titel = pæn_titel_fra_vilkår_filnavn(vk.get("filnavn", ""))
+                kilde_url = vk.get("kilde_url") or ""
 
-        with st.expander("Se den fulde førstevurdering med argumentation", expanded=False):
-            st.markdown(st.session_state.auto_vurdering_tekst)
+                # Find de 1-2 mest relevante afsnit fra vilkåret
+                relevante_afsnit = find_mest_relevante_afsnit(
+                    tekst=vk.get("indhold") or "",
+                    soege_kontekst=soege_kontekst,
+                    max_afsnit=2,
+                )
+
+                with st.container(border=True):
+                    kol_t, kol_m = st.columns([5, 1])
+                    with kol_t:
+                        st.markdown(f"**{i}. {pæn_titel}**")
+                        if kilde_url:
+                            st.markdown(
+                                f"<span style='font-size:0.8rem; color:#6B7280;'>"
+                                f"<a href='{kilde_url}' target='_blank' "
+                                f"style='color:#6366F1; text-decoration:none;'>"
+                                f"Åbn på tui.dk ↗</a></span>",
+                                unsafe_allow_html=True,
+                            )
+                    with kol_m:
+                        farve = "#059669" if sim_pct >= 70 else (
+                            "#CA8A04" if sim_pct >= 55 else "#6B7280"
+                        )
+                        st.markdown(
+                            f"<div style='text-align:right; font-size:1.2rem; "
+                            f"font-weight:700; color:{farve};'>{sim_pct}%</div>"
+                            f"<div style='text-align:right; font-size:0.7rem; "
+                            f"color:#6B7280;'>match</div>",
+                            unsafe_allow_html=True,
+                        )
+
+                    with st.expander("Se relevante afsnit"):
+                        if relevante_afsnit:
+                            for j, afsnit in enumerate(relevante_afsnit, 1):
+                                st.markdown(
+                                    f"**Afsnit {j}** *(fundet som mest relevant)*"
+                                )
+                                # Vis som blockquote for klarhed
+                                quoted = "\n".join(
+                                    "> " + linje
+                                    for linje in afsnit.split("\n")
+                                )
+                                st.markdown(quoted)
+                                st.markdown("")
+                        else:
+                            st.caption("Ingen specifikke afsnit fundet — her er hele teksten:")
+                            st.text(fix_mojibake((vk.get("indhold") or "")[:800]))
+
 
     # ---------- SAGSAKTER (C4C, e-mails, bookingdetaljer) ----------
     with st.expander(

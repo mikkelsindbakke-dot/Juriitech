@@ -157,13 +157,19 @@ def _normaliser_url(url):
 
 
 def _hent_html(url):
-    """Henter HTML, returnerer BeautifulSoup eller None."""
+    """Henter HTML, returnerer BeautifulSoup eller None.
+    Sikrer at encoding håndteres korrekt — requests' default detektion er
+    nogle gange forkert og giver mojibake i danske tegn."""
     try:
         r = requests.get(url, headers=HEADERS, timeout=REQUEST_TIMEOUT)
         r.raise_for_status()
         ctype = r.headers.get("Content-Type", "").lower()
         if "html" not in ctype:
             return None
+        # Hvis requests har gættet latin-1/iso-8859-1 (default for HTTP hvis
+        # intet er sat), skift til den faktiske encoding fra indholdet
+        if r.encoding and r.encoding.lower() in ("iso-8859-1", "latin-1", "ascii"):
+            r.encoding = r.apparent_encoding or "utf-8"
         return BeautifulSoup(r.text, "html.parser")
     except Exception as e:
         print(f"   ⚠️  Kunne ikke hente {url}: {e}")
