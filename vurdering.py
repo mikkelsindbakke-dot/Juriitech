@@ -36,32 +36,42 @@ def parse_sandsynligheder(tekst):
 
     resultat = {"fuld_medhold": None, "delvist_medhold": None, "afvist": None}
 
-    # Fuld medhold til klager — fx "**Fuld medhold til klager:** 30%"
-    m = re.search(
-        r"fuld\s+medhold\s+til\s+klager[^0-9]*?(\d{1,3})\s*%",
-        tekst,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if m:
-        resultat["fuld_medhold"] = int(m.group(1))
+    # Fjern markdown-markører så regex er mere robust
+    ren = re.sub(r"\*{1,3}", "", tekst)
 
-    # Delvist medhold til klager
-    m = re.search(
-        r"delvist\s+medhold(?:\s+til\s+klager)?[^0-9]*?(\d{1,3})\s*%",
-        tekst,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if m:
-        resultat["delvist_medhold"] = int(m.group(1))
+    # FULD MEDHOLD — fang mange variationer:
+    # "fuld medhold til klager: 30%", "fuldt medhold: 30 %", "Fuld medhold: 30 pct"
+    patterns_fuld = [
+        r"fuld(?:t|\s+)?\s+medhold(?:\s+til\s+klage(?:r|n))?[^0-9\n]{0,40}(\d{1,3})\s*(?:%|pct|procent)",
+        r"(\d{1,3})\s*(?:%|pct|procent)[^0-9\n]{0,20}fuld(?:t|\s+)?\s+medhold",
+    ]
+    for p in patterns_fuld:
+        m = re.search(p, ren, re.IGNORECASE)
+        if m:
+            resultat["fuld_medhold"] = int(m.group(1))
+            break
 
-    # Afvisning af klagen
-    m = re.search(
-        r"(?:afvisning\s+af\s+klagen|afvist\s+samlet|afvist\s+klage)[^0-9]*?(\d{1,3})\s*%",
-        tekst,
-        re.IGNORECASE | re.DOTALL,
-    )
-    if m:
-        resultat["afvist"] = int(m.group(1))
+    # DELVIST MEDHOLD
+    patterns_delvist = [
+        r"delvis(?:t|\s+)?\s+medhold(?:\s+til\s+klage(?:r|n))?[^0-9\n]{0,40}(\d{1,3})\s*(?:%|pct|procent)",
+        r"(\d{1,3})\s*(?:%|pct|procent)[^0-9\n]{0,20}delvis(?:t|\s+)?\s+medhold",
+    ]
+    for p in patterns_delvist:
+        m = re.search(p, ren, re.IGNORECASE)
+        if m:
+            resultat["delvist_medhold"] = int(m.group(1))
+            break
+
+    # AFVISNING
+    patterns_afvist = [
+        r"afvis(?:ning|t)(?:\s+af\s+klage(?:n|r)?)?[^0-9\n]{0,50}(\d{1,3})\s*(?:%|pct|procent)",
+        r"(\d{1,3})\s*(?:%|pct|procent)[^0-9\n]{0,20}afvis(?:ning|t)",
+    ]
+    for p in patterns_afvist:
+        m = re.search(p, ren, re.IGNORECASE)
+        if m:
+            resultat["afvist"] = int(m.group(1))
+            break
 
     resultat["fandt_alle_tre"] = all(
         resultat[k] is not None

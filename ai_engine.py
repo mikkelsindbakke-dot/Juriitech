@@ -44,17 +44,32 @@ SYSTEM_PROMPT = (
     '"Vi tilbød værelsesskift ved ankomst." (Bilag 05)\'. Dine svar, '
     "analyser og svarbreve skal altid skrives på dansk.\n"
     "\n"
-    "ABSOLUT REGEL OM KILDER:\n"
-    "  - Hver juridisk vurdering, hvert sandsynlighedsestimat og hvert "
-    "argument du fremsætter SKAL kunne føres tilbage til en konkret afgørelse "
-    "i vidensbanken.\n"
-    "  - Når du henviser til et udfald eller en juridisk pointe, skal du "
-    "ALTID angive filnavn og år i parentes, fx '(19-1467, 2019)'.\n"
-    "  - Hvis vidensbanken ikke indeholder grundlag for at svare, skal du "
-    "sige det ærligt: 'Jeg kan ikke finde belæg i vidensbanken for en "
-    "vurdering af dette spørgsmål.'\n"
-    "  - Du må IKKE trække på almen juridisk viden uden for vidensbanken, "
-    "og du må IKKE opdigte afgørelser eller udfald.\n"
+    "ABSOLUT REGEL OM KILDEHENVISNINGER — OBLIGATORISK VED HVER PÅSTAND:\n"
+    "Eftersom brugeren skal kunne stole på din argumentation, SKAL du tilføje "
+    "en kildehenvisning i kantet parentes UMIDDELBART EFTER hver enkelt påstand, "
+    "hvert faktum, hvert tal, hver dato og hver konklusion du fremsætter. Dette "
+    "gælder uanset om påstanden er central eller perifer. Format:\n"
+    "  • Fra sagens bilag: [Bilag 03, s. 2]  eller  [Klageskema, s. 1]\n"
+    "  • Fra tidligere afgørelse: [Afgørelse 19-1467 (2019)]\n"
+    "  • Fra rejseselskabets vilkår: [TUI rejsevilkår, punkt 4.3]\n"
+    "  • Fra sagsakter (C4C/interne): [Sagsakter — C4C-notat 14/8-2024]\n"
+    "  • Fra høringsbrev: [Høring, s. 1]\n"
+    "\n"
+    "Eksempel på korrekt formatering:\n"
+    "  'Kunden rejste til Rhodos den 10. august 2024 [Bilag 03, s. 1] og "
+    "klagede over rengøringsstandard på værelset [Klageskema, s. 2]. "
+    "Rejseselskabet tilbød værelsesskift dag 2 [Sagsakter — C4C-notat "
+    "14/8-2024], hvilket i tilsvarende sager har været tilstrækkeligt til "
+    "at afvise klagen [Afgørelse 19-1467 (2019)].'\n"
+    "\n"
+    "Hvis du ikke kan finde en konkret kilde til en påstand, må du IKKE "
+    "fremsætte påstanden. Skriv i stedet: '[Kilde ikke fundet i materialet — "
+    "skal verificeres af sagsbehandler]'.\n"
+    "\n"
+    "Du må ALDRIG trække på almen juridisk viden uden for vidensbanken, og "
+    "du må ALDRIG opdigte afgørelser, bilagsnumre, sidetal eller datoer. Hvis "
+    "du ikke kender sidetallet, skriv fx [Bilag 05, sidetal ikke angivet] — "
+    "men opfind aldrig et sidetal.\n"
     "\n"
     "VIDENSBANKEN indeholder tre typer dokumenter:\n"
     "  - AFGØRELSE: en tidligere kendelse fra Pakkerejseankenævnet, hvor "
@@ -726,7 +741,7 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst):
     return content
 
 
-def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None):
+def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None, returner_relevante=False):
     """
     Stil et spørgsmål mod vidensbanken MED en hel sag (flere filer) som
     udgangspunkt. Dette er den nye udgave af spoerg_ai_med_klage der
@@ -736,6 +751,10 @@ def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None):
          {"filnavn", "type": "tekst"|"pdf_bytes", "tekst", "bytes", "rolle"}
 
     sagsakter: valgfri streng — interne C4C-notater, e-mails osv.
+
+    returner_relevante: hvis True, returneres (svar_tekst, relevante_sager),
+                       hvor relevante_sager er de RAG-matchede afgørelser/vilkår.
+                       Hvis False (default), returneres kun svar-teksten.
     """
     try:
         sagsakter_tekst = (sagsakter or "").strip()
@@ -815,10 +834,16 @@ def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None):
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
-        return response.content[0].text
+        svar_tekst = response.content[0].text
+        if returner_relevante:
+            return svar_tekst, relevante
+        return svar_tekst
 
     except Exception as e:
-        return f"Fejl i forbindelsen til Juriitech: {str(e)}"
+        fejl = f"Fejl i forbindelsen til Juriitech: {str(e)}"
+        if returner_relevante:
+            return fejl, []
+        return fejl
 
 
 def generer_svarbrev_til_sag(sag, sagsakter=None, ekstra_instrukser=None):

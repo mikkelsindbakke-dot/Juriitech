@@ -38,6 +38,75 @@ st.set_page_config(
     page_icon="⚖️",
     layout="wide",
 )
+
+# ---------- STYLING (font + layout) ----------
+# Inter til brødtekst (geometrisk, moderne, tæt på Claudes Styrene-font)
+# Source Serif 4 til overskrifter (elegant serif, tæt på Claudes Copernicus)
+st.markdown(
+    """
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap');
+
+    html, body, .stApp, [class*="css"] {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+    }
+
+    h1, h2, h3, h4, h5, h6,
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {
+        font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif !important;
+        font-weight: 600 !important;
+        letter-spacing: -0.01em !important;
+    }
+
+    h1 { font-size: 2.2rem !important; }
+    h2 {
+        margin-top: 2.5rem !important;
+        margin-bottom: 1rem !important;
+        padding: 0.75rem 1rem !important;
+        background: linear-gradient(to right, #F3F4F6, #FFFFFF) !important;
+        border-left: 4px solid #4F46E5 !important;
+        border-radius: 6px !important;
+        font-size: 1.5rem !important;
+    }
+    h3 { margin-top: 1.5rem !important; margin-bottom: 0.5rem !important; }
+
+    /* Gør dividers mere markante */
+    hr {
+        margin: 2rem 0 !important;
+        border-top: 2px solid #E5E7EB !important;
+    }
+
+    /* Gør brødtekst mere behagelig at læse */
+    .stMarkdown p, .stMarkdown li, p, li {
+        line-height: 1.65 !important;
+    }
+
+    /* Skarpere sektionsopdeling via bordered containers */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 12px !important;
+        padding: 1.25rem !important;
+        margin-bottom: 1rem !important;
+        background: #FDFDFD !important;
+        border: 1px solid #E5E7EB !important;
+    }
+
+    /* Fremhæv sidebarens overskrift */
+    [data-testid="stSidebar"] h1 {
+        font-size: 1.6rem !important;
+    }
+
+    /* Kildehenvisninger (fodnoter) i AI-tekst — diskret grå kursiv */
+    .stMarkdown code {
+        background: #F3F4F6 !important;
+        padding: 1px 6px !important;
+        border-radius: 4px !important;
+        font-size: 0.85em !important;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 opret_tabeller()
 
 # ---------- ADMIN-MODE ----------
@@ -72,6 +141,12 @@ if "seneste_tjekliste" not in st.session_state:
     st.session_state.seneste_tjekliste = None
 if "seneste_anonymisering" not in st.session_state:
     st.session_state.seneste_anonymisering = None
+if "auto_vurdering_tekst" not in st.session_state:
+    st.session_state.auto_vurdering_tekst = None
+if "auto_vurdering_for_signatur" not in st.session_state:
+    st.session_state.auto_vurdering_for_signatur = None
+if "relevante_sager" not in st.session_state:
+    st.session_state.relevante_sager = []
 
 
 def _auto_gem_klage_i_db(klage_dict):
@@ -275,8 +350,8 @@ st.header("📄 Analysér en ny sag fra Ankenævnet")
 st.caption(
     "Upload **hele sagspakken** fra Ankenævnet — enten som ZIP-fil eller ved at "
     "vælge flere filer på én gang (høringsbrev, klageskema, bilag 02-07 osv.). "
-    "Programmet pakker ZIP ud, læser hver fil, gætter dens rolle i sagen (høring, "
-    "klageskema, bilag), og behandler dem alle samlet som én sag."
+    "Programmet pakker ZIP ud, læser hver fil, gætter dens rolle i sagen, "
+    "og behandler dem alle samlet som én sag."
 )
 
 uploadede_sagsfiler = st.file_uploader(
@@ -344,6 +419,12 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.aktuel_sag = None
             st.session_state.sidste_sagsfil_signatur = None
             st.session_state.sagsakter = ""
+            st.session_state.auto_vurdering_tekst = None
+            st.session_state.auto_vurdering_for_signatur = None
+            st.session_state.seneste_svar = None
+            st.session_state.seneste_svarbrev = None
+            st.session_state.seneste_tjekliste = None
+            st.session_state.seneste_anonymisering = None
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -356,6 +437,136 @@ if st.session_state.get("aktuel_sag"):
                 if fil["type"] == "tekst" else " — scannet PDF"
             )
             st.markdown(f"**{i}. {ikon} {fil['filnavn']}** *({rolle})*{tegn_info}")
+
+    # ---------- AUTOMATISK FØRSTEVURDERING ----------
+    # Når en sag er uploadet (ny signatur), kør en kort analyse med
+    # sandsynlighedsvurdering så brugeren får det farvekodede dashboard
+    # med det samme — uden at skulle stille et spørgsmål først.
+    skal_auto_vurdere = (
+        st.session_state.auto_vurdering_for_signatur
+        != st.session_state.sidste_sagsfil_signatur
+    )
+    if skal_auto_vurdere:
+        with st.spinner(
+            "Juriitech laver en første vurdering af sagen — tager 20-40 sekunder..."
+        ):
+            try:
+                auto_svar, rel_sager = spoerg_ai_med_sag(
+                    spoergsmaal=(
+                        "Lav en kort juridisk førstevurdering af sagen "
+                        "baseret på de uploadede dokumenter. Du SKAL afslutte "
+                        "med en sandsynlighedsvurderings-sektion der indeholder "
+                        "præcis denne struktur — procenterne skal summe til 100:\n\n"
+                        "**Fuld medhold til klager:** X%\n"
+                        "**Delvist medhold til klager:** Y%\n"
+                        "**Afvisning af klagen:** Z%\n\n"
+                        "Selv hvis sagen er ufuldstændigt oplyst, estimér de tre "
+                        "procenter baseret på hvad du KAN udlede. Angiv eventuelt "
+                        "'Lavt grundlag' hvis et estimat er særligt usikkert."
+                    ),
+                    sager=[],
+                    sag=st.session_state.aktuel_sag,
+                    sagsakter=st.session_state.get("sagsakter", ""),
+                    returner_relevante=True,
+                )
+                st.session_state.auto_vurdering_tekst = auto_svar
+                st.session_state.relevante_sager = rel_sager
+                st.session_state.auto_vurdering_for_signatur = (
+                    st.session_state.sidste_sagsfil_signatur
+                )
+
+                # Gem også i arkivet
+                sag_filer_for_arkiv = st.session_state.aktuel_sag.get("filer") or []
+                klage_fn_for_arkiv = None
+                for fil in sag_filer_for_arkiv:
+                    if fil.get("rolle") == "klageskema":
+                        klage_fn_for_arkiv = fil["filnavn"]
+                        break
+                gem_i_arkiv(
+                    titel=(
+                        f"Førstevurdering — {klage_fn_for_arkiv}"
+                        if klage_fn_for_arkiv else "Førstevurdering"
+                    ),
+                    type_="analyse",
+                    indhold=auto_svar,
+                    klage_filnavn=klage_fn_for_arkiv,
+                    spoergsmaal="Automatisk førstevurdering ved upload",
+                )
+            except Exception as e:
+                st.warning(f"Kunne ikke lave automatisk førstevurdering: {e}")
+
+    # Vis dashboard + selve teksten hvis vi har en førstevurdering
+    if st.session_state.auto_vurdering_tekst:
+        st.markdown("### 🎯 Førstevurdering af sagen")
+        vis_udfalds_dashboard(st.session_state.auto_vurdering_tekst)
+
+        # Visuelle kort for de 3-5 mest relevante tidligere sager
+        rel = st.session_state.get("relevante_sager") or []
+        afgoerelser_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "afgoerelse"]
+        vilkaar_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "vilkaar"]
+
+        if afgoerelser_ud:
+            st.markdown("### 📚 De mest relevante tidligere afgørelser")
+            st.caption(
+                "Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om din nuværende sag. "
+                "Juriitech bruger dem aktivt som juridisk præcedens i analysen ovenfor."
+            )
+            for i, sag_ref in enumerate(afgoerelser_ud[:5], 1):
+                sim = sag_ref.get("similarity") or 0
+                sim_pct = int(sim * 100)
+                kilde = sag_ref.get("kilde_url") or "Uploadet manuelt"
+                dato = sag_ref.get("oprettet_dato")
+                dato_str = dato.strftime("%d-%m-%Y") if dato else "ukendt"
+                uddrag = (sag_ref.get("indhold") or "")[:400]
+
+                # Farvekodning af relevans
+                if sim_pct >= 70:
+                    farve = "#059669"  # grøn — meget relevant
+                    etiket = "Meget høj relevans"
+                elif sim_pct >= 55:
+                    farve = "#CA8A04"  # gul — moderat
+                    etiket = "Relevant"
+                else:
+                    farve = "#6B7280"  # grå — lavere
+                    etiket = "Muligvis relevant"
+
+                with st.container(border=True):
+                    kol_a, kol_b = st.columns([5, 1])
+                    with kol_a:
+                        st.markdown(f"**{i}. {sag_ref.get('filnavn', 'ukendt')}**")
+                        st.caption(f"Gemt {dato_str}  ·  {etiket}")
+                    with kol_b:
+                        st.markdown(
+                            f"<div style='text-align:right; font-size:1.4rem; "
+                            f"font-weight:700; color:{farve};'>{sim_pct}%</div>"
+                            f"<div style='text-align:right; font-size:0.75rem; "
+                            f"color:#6B7280;'>match</div>",
+                            unsafe_allow_html=True,
+                        )
+                    with st.expander("Se uddrag af afgørelsen"):
+                        st.text(uddrag + ("..." if len(uddrag) == 400 else ""))
+                        if sag_ref.get("kilde_url"):
+                            st.markdown(
+                                f"[Åbn original på pakkerejseankenaevnet.dk]"
+                                f"({sag_ref['kilde_url']})"
+                            )
+
+        if vilkaar_ud:
+            st.markdown("### 📘 Relevante passager fra TUI's rejsevilkår")
+            st.caption("Disse sektioner af vilkårene er relevante for denne sagstype.")
+            for i, vk in enumerate(vilkaar_ud[:3], 1):
+                sim_pct = int((vk.get("similarity") or 0) * 100)
+                with st.container(border=True):
+                    st.markdown(
+                        f"**{vk.get('filnavn', 'ukendt')}** · {sim_pct}% match"
+                    )
+                    if vk.get("kilde_url"):
+                        st.caption(f"Kilde: {vk['kilde_url']}")
+                    with st.expander("Se uddrag"):
+                        st.text((vk.get("indhold") or "")[:500])
+
+        with st.expander("📝 Se den fulde førstevurdering med argumentation", expanded=False):
+            st.markdown(st.session_state.auto_vurdering_tekst)
 
     # ---------- SAGSAKTER (C4C, e-mails, bookingdetaljer) ----------
     with st.expander(
