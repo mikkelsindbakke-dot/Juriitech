@@ -35,7 +35,7 @@ from vurdering import vis_dashboard as vis_udfalds_dashboard
 # ---------- OPSÆTNING ----------
 st.set_page_config(
     page_title="Juriitech",
-    page_icon="⚖️",
+    page_icon=None,
     layout="wide",
 )
 
@@ -258,7 +258,7 @@ def _auto_gem_klage_i_db(klage_dict):
         return None
 
     if sag_findes(filnavn):
-        return f"ℹ️ {filnavn} findes allerede i vidensbanken — ikke gemt igen."
+        return f"{filnavn} findes allerede i vidensbanken — ikke gemt igen."
 
     if klage_dict["type"] == "tekst":
         indhold = klage_dict.get("tekst") or ""
@@ -279,8 +279,8 @@ def _auto_gem_klage_i_db(klage_dict):
 
     gem_sag_i_db(filnavn, indhold, dokumenttype="klage", embedding=emb)
     if emb is None and klage_dict["type"] == "tekst":
-        return f"⚠️ {filnavn} gemt som klage, men embedding fejlede."
-    return f"✅ {filnavn} automatisk gemt i vidensbanken som klage."
+        return f"{filnavn} gemt som klage, men embedding fejlede."
+    return f"{filnavn} automatisk gemt i vidensbanken som klage."
 
 
 # ---------- SIDEBAR ----------
@@ -311,7 +311,7 @@ with st.sidebar:
         )
         st.divider()
         st.caption(
-            "💡 **Sådan gør du:**\n\n"
+            "**Sådan gør du:**\n\n"
             "1. Upload hele sagen fra Nævnet (ZIP eller enkeltfiler)\n"
             "2. Få tjekliste over hvad der mangler\n"
             "3. Stil spørgsmål og få juridisk analyse\n"
@@ -497,9 +497,9 @@ if uploadede_sagsfiler and _aktuel_sagsfiler_signatur != st.session_state.get(
             gemt_nu.append(fil["filnavn"])
 
         if gemt_nu:
-            st.toast(f"✅ {len(gemt_nu)} filer gemt i vidensbanken.")
+            st.toast(f"{len(gemt_nu)} filer gemt i vidensbanken.")
         if sprunget_over:
-            st.toast(f"ℹ️ {len(sprunget_over)} filer var allerede i databasen.")
+            st.toast(f"{len(sprunget_over)} filer var allerede i databasen.")
 
 # Knap til at rydde sagen
 if st.session_state.get("aktuel_sag"):
@@ -833,13 +833,13 @@ if st.session_state.get("aktuel_sag"):
         fejl_antal = sum(1 for r in resultater if r["status"] == "fejl")
 
         st.success(
-            f"Anonymisering færdig. ✅ {ok_antal} anonymiseret, "
-            f"ℹ️ {sprunget_antal} sprunget over, "
-            f"⚠️ {fejl_antal} fejlede."
+            f"Anonymisering færdig. {ok_antal} anonymiseret, "
+            f"{sprunget_antal} sprunget over, "
+            f"{fejl_antal} fejlede."
         )
 
         st.caption(
-            "⚠️ **Tjek resultaterne manuelt før du sender til Nævnet.** "
+            "**Tjek resultaterne manuelt før du sender til Nævnet.** "
             "AI-anonymisering er et hjælpeværktøj, ikke en garanti. "
             "Gennemgå hver fil for at sikre at alle personhenførbare oplysninger "
             "er fjernet korrekt."

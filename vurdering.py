@@ -115,15 +115,15 @@ def vis_dashboard(svar_tekst):
     #   fuld medhold (dårligt for TUI) = rød
     if mest_key == "afvist":
         banner_farve = "#1E8449"   # grøn
-        banner_ikon = "🟢"
-        strategi = "Gode udsigter. Byg forsvaret stærkt — dokumenter at kravet ikke er berettiget."
+        banner_ikon = ""
+        strategi = "Gode udsigter. Byg forsvaret stærkt — dokumentér at kravet ikke er berettiget."
     elif mest_key == "delvist_medhold":
         banner_farve = "#CA8A04"   # gul/orange
-        banner_ikon = "🟡"
+        banner_ikon = ""
         strategi = "Blandet billede. Overvej et forligstilbud der afspejler det forventede delvise udfald."
     else:
         banner_farve = "#B91C1C"   # rød
-        banner_ikon = "🔴"
+        banner_ikon = ""
         strategi = "Risiko for fuldt medhold. Overvej forligstilbud og stærkt fokus på formildende forhold."
 
     # Øverste banner
@@ -136,8 +136,8 @@ def vis_dashboard(svar_tekst):
             border-radius: 8px;
             margin-bottom: 16px;
         ">
-            <div style="font-size: 0.85em; opacity: 0.9;">
-                {banner_ikon} MEST SANDSYNLIGE UDFALD
+            <div style="font-size: 0.85em; opacity: 0.9; letter-spacing: 0.08em;">
+                MEST SANDSYNLIGE UDFALD
             </div>
             <div style="font-size: 1.6em; font-weight: bold; margin-top: 4px;">
                 {mest_label} — {mest_pct} %
