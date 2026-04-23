@@ -1,0 +1,50 @@
+# ======================================================================
+# KRITISK: Filer der ALDRIG må uploades til GitHub
+# ======================================================================
+
+# API-nøgler og hemmeligheder
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# IDE-filer
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Streamlit-cache
+.streamlit/cache/
+
+# Tester / outputs
+*.docx.tmp
+/tmp/
+
+# Uploads-mappe (brugerdata hører ikke i Git)
+uploads/
+output/
+
+# Backup-filer
+*.bak
+*.backup
+*~
+
+# Python distribution
+*.egg-info/
+build/
+dist/
