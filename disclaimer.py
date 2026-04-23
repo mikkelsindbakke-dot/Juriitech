@@ -150,8 +150,8 @@ with st.container(border=True):
         - **[Bilag XX, s. Y]** — sagens egne bilag fra klagesagen
         - **[Afgørelse YY-NNNN (ÅÅÅÅ)]** — tidligere afgørelser fra
           Pakkerejse-Ankenævnet
-        - **[TUI rejsevilkår, punkt X.Y]** — kontraktgrundlaget mellem
-          rejseselskabet og kunden
+        - **[Rejsevilkår, punkt X.Y]** — et rejseselskabs egne rejsevilkår,
+          såfremt disse er hentet af Juriitech
         """
     )
 
