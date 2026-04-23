@@ -395,7 +395,7 @@ with st.sidebar:
         # Bruger-interface: kort og venligt
         st.caption(
             "Analyser klagesager fra Pakkerejse-Ankenævnet med AI der har læst "
-            "alle tidligere afgørelser og TUI's egne rejsevilkår."
+            "alle tidligere afgørelser."
         )
         st.divider()
         st.caption(
@@ -841,75 +841,10 @@ if st.session_state.get("aktuel_sag"):
             with st.container(border=True):
                 st.markdown(st.session_state.auto_vurdering_tekst)
 
-        if vilkaar_ud:
-            from badges import (
-                pæn_titel_fra_vilkår_filnavn,
-                find_mest_relevante_afsnit,
-                fix_mojibake,
-            )
-
-            st.markdown("### Relevante passager fra TUI's rejsevilkår")
-            st.caption("Disse sektioner af vilkårene er relevante for denne sagstype.")
-
-            # Byg søgekontekst fra uploadede filer (til at finde relevante afsnit)
-            _sag_tekster = []
-            for _f in (st.session_state.aktuel_sag.get("filer") or [])[:3]:
-                if _f.get("tekst"):
-                    _sag_tekster.append(_f["tekst"][:2500])
-            soege_kontekst = "\n".join(_sag_tekster)
-
-            for i, vk in enumerate(vilkaar_ud[:3], 1):
-                sim_pct = int((vk.get("similarity") or 0) * 100)
-                pæn_titel = pæn_titel_fra_vilkår_filnavn(vk.get("filnavn", ""))
-                kilde_url = vk.get("kilde_url") or ""
-
-                # Find de 1-2 mest relevante afsnit fra vilkåret
-                relevante_afsnit = find_mest_relevante_afsnit(
-                    tekst=vk.get("indhold") or "",
-                    soege_kontekst=soege_kontekst,
-                    max_afsnit=2,
-                )
-
-                with st.container(border=True):
-                    kol_t, kol_m = st.columns([5, 1])
-                    with kol_t:
-                        st.markdown(f"**{i}. {pæn_titel}**")
-                        if kilde_url:
-                            st.markdown(
-                                f"<span style='font-size:0.8rem; color:#6B7280;'>"
-                                f"<a href='{kilde_url}' target='_blank' "
-                                f"style='color:#6366F1; text-decoration:none;'>"
-                                f"Åbn på tui.dk ↗</a></span>",
-                                unsafe_allow_html=True,
-                            )
-                    with kol_m:
-                        farve = "#059669" if sim_pct >= 70 else (
-                            "#CA8A04" if sim_pct >= 55 else "#6B7280"
-                        )
-                        st.markdown(
-                            f"<div style='text-align:right; font-size:1.2rem; "
-                            f"font-weight:700; color:{farve};'>{sim_pct}%</div>"
-                            f"<div style='text-align:right; font-size:0.7rem; "
-                            f"color:#6B7280;'>match</div>",
-                            unsafe_allow_html=True,
-                        )
-
-                    with st.expander("Se relevante afsnit"):
-                        if relevante_afsnit:
-                            for j, afsnit in enumerate(relevante_afsnit, 1):
-                                st.markdown(
-                                    f"**Afsnit {j}** *(fundet som mest relevant)*"
-                                )
-                                # Vis som blockquote for klarhed
-                                quoted = "\n".join(
-                                    "> " + linje
-                                    for linje in afsnit.split("\n")
-                                )
-                                st.markdown(quoted)
-                                st.markdown("")
-                        else:
-                            st.caption("Ingen specifikke afsnit fundet — her er hele teksten:")
-                            st.text(fix_mojibake((vk.get("indhold") or "")[:800]))
+        # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
+        # (for ikke at rode UI'en). De bliver stadig automatisk brugt af Claude
+        # som juridisk kontekst i førstevurderingen — de hentes blot via RAG
+        # og indgår i prompten uden at være synlige som visuelle kort.
 
 
     # ---------- SAGSAKTER (C4C, e-mails, bookingdetaljer) ----------
