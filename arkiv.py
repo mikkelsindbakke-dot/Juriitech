@@ -38,6 +38,11 @@ st.markdown(
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
     }
+    h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
+    [data-testid="stHeaderActionElements"],
+    [data-testid="stHeading"] a {
+        display: none !important;
+    }
     h1, h2, h3, h4 {
         font-family: 'Source Serif 4', Georgia, serif !important;
         font-weight: 600 !important;

@@ -79,6 +79,20 @@ st.markdown(
         letter-spacing: -0.015em !important;
     }
 
+    /* Skjul Streamlits auto-genererede anchor-link-ikoner på overskrifter */
+    h1 a, h2 a, h3 a, h4 a, h5 a, h6 a,
+    .stMarkdown h1 a, .stMarkdown h2 a, .stMarkdown h3 a,
+    .stMarkdown h4 a, .stMarkdown h5 a, .stMarkdown h6 a,
+    [data-testid="stMarkdownContainer"] h1 a,
+    [data-testid="stMarkdownContainer"] h2 a,
+    [data-testid="stMarkdownContainer"] h3 a,
+    [data-testid="stMarkdownContainer"] h4 a,
+    [data-testid="stHeaderActionElements"],
+    .stMarkdown .stHeaderActionElements,
+    [data-testid="stHeading"] a {
+        display: none !important;
+    }
+
     h1 {
         font-size: 2.4rem !important;
         line-height: 1.15 !important;
