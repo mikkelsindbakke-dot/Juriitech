@@ -359,6 +359,61 @@ def slet_arkiv_entry(entry_id):
 
 # ---------- RAG-SØGNING ----------
 
+def soeg_i_arkiv(stikord=None, dokumenttype=None, begraens=50):
+    """
+    Stikordssøgning i vidensbanken.
+    - stikord: hvis angivet, filtreres der på tekstindhold (ILIKE match)
+    - dokumenttype: 'afgoerelse' / 'klage' / 'vilkaar' eller None for alle
+    - begraens: max antal resultater
+
+    Returnerer liste af dicts med fil-metadata + indhold.
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        where = []
+        params = []
+        if stikord and stikord.strip():
+            # Split på mellemrum og kræv at alle ord forekommer (case-insensitive)
+            ord_liste = [o.strip() for o in stikord.split() if o.strip()]
+            for ord_ in ord_liste:
+                where.append("indhold ILIKE %s")
+                params.append(f"%{ord_}%")
+        if dokumenttype:
+            where.append("dokumenttype = %s")
+            params.append(dokumenttype)
+
+        where_klausul = (" WHERE " + " AND ".join(where)) if where else ""
+        params.append(begraens)
+
+        sql = f"""
+            SELECT filnavn, indhold, oprettet_dato, dokumenttype, kilde_url
+            FROM mine_dokumenter
+            {where_klausul}
+            ORDER BY oprettet_dato DESC
+            LIMIT %s
+        """
+        cur.execute(sql, params)
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return [
+            {
+                "filnavn": r[0],
+                "indhold": r[1],
+                "oprettet_dato": r[2],
+                "dokumenttype": r[3] or "afgoerelse",
+                "kilde_url": r[4],
+            }
+            for r in raekker
+        ]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke søge i arkiv: {e}")
+        return []
+
+
 def find_relevante_sager(
     sporgsmaal_embedding,
     top_k=5,

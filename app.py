@@ -39,69 +39,168 @@ st.set_page_config(
     layout="wide",
 )
 
-# ---------- STYLING (font + layout) ----------
-# Inter til brødtekst (geometrisk, moderne, tæt på Claudes Styrene-font)
-# Source Serif 4 til overskrifter (elegant serif, tæt på Claudes Copernicus)
+# ---------- STYLING (Stripe/Notion-inspireret, minimal og professionel) ----------
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap');
 
+    /* ========== TYPOGRAFI ========== */
     html, body, .stApp, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
     }
 
     h1, h2, h3, h4, h5, h6,
     .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4 {
-        font-family: 'Source Serif 4', Georgia, 'Times New Roman', serif !important;
+        font-family: 'Source Serif 4', Georgia, serif !important;
         font-weight: 600 !important;
-        letter-spacing: -0.01em !important;
+        letter-spacing: -0.015em !important;
     }
 
-    h1 { font-size: 2.2rem !important; }
+    h1 {
+        font-size: 2.4rem !important;
+        line-height: 1.15 !important;
+        margin-bottom: 0.5rem !important;
+    }
     h2 {
-        margin-top: 2.5rem !important;
-        margin-bottom: 1rem !important;
-        padding: 0.75rem 1rem !important;
-        background: linear-gradient(to right, #F3F4F6, #FFFFFF) !important;
-        border-left: 4px solid #4F46E5 !important;
-        border-radius: 6px !important;
-        font-size: 1.5rem !important;
+        font-size: 1.65rem !important;
+        margin-top: 3rem !important;
+        margin-bottom: 1.25rem !important;
+        letter-spacing: -0.02em !important;
     }
-    h3 { margin-top: 1.5rem !important; margin-bottom: 0.5rem !important; }
-
-    /* Gør dividers mere markante */
-    hr {
-        margin: 2rem 0 !important;
-        border-top: 2px solid #E5E7EB !important;
+    h3 {
+        font-size: 1.2rem !important;
+        margin-top: 1.75rem !important;
+        margin-bottom: 0.75rem !important;
     }
 
-    /* Gør brødtekst mere behagelig at læse */
     .stMarkdown p, .stMarkdown li, p, li {
-        line-height: 1.65 !important;
+        line-height: 1.7 !important;
+        font-weight: 400 !important;
     }
 
-    /* Skarpere sektionsopdeling via bordered containers */
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 12px !important;
-        padding: 1.25rem !important;
-        margin-bottom: 1rem !important;
-        background: #FDFDFD !important;
-        border: 1px solid #E5E7EB !important;
+    /* ========== GENNEMSIGTIG SIDEBAR MED BLUR (iOS/macOS-look) ========== */
+    section[data-testid="stSidebar"] {
+        backdrop-filter: saturate(180%) blur(24px) !important;
+        -webkit-backdrop-filter: saturate(180%) blur(24px) !important;
+        background-color: rgba(250, 250, 252, 0.72) !important;
+        border-right: 1px solid rgba(0, 0, 0, 0.06) !important;
     }
 
-    /* Fremhæv sidebarens overskrift */
+    @media (prefers-color-scheme: dark) {
+        section[data-testid="stSidebar"] {
+            background-color: rgba(25, 27, 32, 0.72) !important;
+            border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+        }
+    }
+
+    /* Sidebarens titel — lidt mindre og mere elegant */
     [data-testid="stSidebar"] h1 {
-        font-size: 1.6rem !important;
+        font-size: 1.55rem !important;
+        margin-bottom: 0.25rem !important;
     }
 
-    /* Kildehenvisninger (fodnoter) i AI-tekst — diskret grå kursiv */
+    /* ========== HVIDT RUM OG LAYOUT (Stripe-inspireret) ========== */
+    .main .block-container {
+        padding-top: 3rem !important;
+        padding-bottom: 4rem !important;
+        max-width: 1000px !important;
+    }
+
+    /* Divider — meget subtil */
+    hr {
+        margin: 2.5rem 0 !important;
+        border: none !important;
+        border-top: 1px solid rgba(127, 127, 127, 0.15) !important;
+    }
+
+    /* ========== KORT/CONTAINERS — meget subtile borders ========== */
+    [data-testid="stVerticalBlockBorderWrapper"] {
+        border-radius: 10px !important;
+        padding: 1.5rem !important;
+        margin-bottom: 1rem !important;
+        border: 1px solid rgba(127, 127, 127, 0.14) !important;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.03) !important;
+    }
+
+    /* ========== KNAPPER — tynde, Stripe-agtige ========== */
+    .stButton > button {
+        border-radius: 8px !important;
+        font-weight: 500 !important;
+        font-size: 0.9rem !important;
+        padding: 0.5rem 1.1rem !important;
+        border: 1px solid rgba(127, 127, 127, 0.3) !important;
+        transition: all 0.15s ease !important;
+    }
+    .stButton > button:hover {
+        border-color: rgba(99, 102, 241, 0.5) !important;
+        transform: translateY(-1px) !important;
+    }
+
+    /* Primary knapper — fyldte, men moderat */
+    .stButton > button[kind="primary"] {
+        background-color: #0F172A !important;
+        color: #FFFFFF !important;
+        border: 1px solid #0F172A !important;
+    }
+    .stButton > button[kind="primary"]:hover {
+        background-color: #1E293B !important;
+        border-color: #1E293B !important;
+    }
+
+    /* ========== CAPTIONS — mere subtile ========== */
+    .stCaption, [data-testid="stCaptionContainer"] {
+        color: rgba(100, 116, 139, 0.85) !important;
+        font-size: 0.85rem !important;
+        font-weight: 400 !important;
+    }
+
+    /* ========== INLINE KILDEHENVISNINGER ========== */
     .stMarkdown code {
-        background: #F3F4F6 !important;
+        background: rgba(127, 127, 127, 0.12) !important;
         padding: 1px 6px !important;
         border-radius: 4px !important;
-        font-size: 0.85em !important;
+        font-size: 0.82em !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 500 !important;
+        color: rgba(100, 116, 139, 1) !important;
     }
+
+    /* ========== BADGES (Notion/Apple-style tags) ========== */
+    .badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 100px;
+        font-size: 0.75rem;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        line-height: 1.4;
+        margin-right: 6px;
+    }
+    .badge-green  { background: rgba(34, 197, 94, 0.14);  color: #15803D; }
+    .badge-red    { background: rgba(239, 68, 68, 0.14);  color: #B91C1C; }
+    .badge-yellow { background: rgba(234, 179, 8, 0.16);  color: #A16207; }
+    .badge-blue   { background: rgba(59, 130, 246, 0.14); color: #1D4ED8; }
+    .badge-gray   { background: rgba(100, 116, 139, 0.14); color: #475569; }
+    .badge-purple { background: rgba(139, 92, 246, 0.14); color: #6D28D9; }
+
+    @media (prefers-color-scheme: dark) {
+        .badge-green  { color: #86EFAC; }
+        .badge-red    { color: #FCA5A5; }
+        .badge-yellow { color: #FDE047; }
+        .badge-blue   { color: #93C5FD; }
+        .badge-gray   { color: #CBD5E1; }
+        .badge-purple { color: #C4B5FD; }
+    }
+
+    /* ========== EXPANDER HEADERS — subtile ========== */
+    .streamlit-expanderHeader {
+        font-weight: 500 !important;
+        font-size: 0.95rem !important;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -198,7 +297,7 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-    st.title("Juriitech ⚖️")
+    st.title("Juriitech")
     st.caption("Juridisk AI til pakkerejseklager")
 
     antal = hent_antal_sager()
@@ -226,7 +325,7 @@ with st.sidebar:
         st.caption("🔧 **Administrative værktøjer** — kun synlige for dig som admin.")
 
         # ---------- AUTOMATISK HENTNING FRA PAKKEREJSEANKENÆVNET ----------
-        st.subheader("🌐 Hent direkte fra Ankenævnet")
+        st.subheader("Hent direkte fra Ankenævnet")
         st.caption(
             "Scrape nye kendelser direkte fra pakkerejseankenaevnet.dk. "
             "Hver sag dedupes på URL, så du kan trykke flere gange uden at duplikere. "
@@ -242,9 +341,9 @@ with st.sidebar:
 
         kol_a, kol_b = st.columns(2)
         with kol_a:
-            tael_knap = st.button("🔢 Tæl kun", help="Dry-run — tæl hvor mange der er på siden uden at hente")
+            tael_knap = st.button("Tæl kun", help="Dry-run — tæl hvor mange der er på siden uden at hente")
         with kol_b:
-            hent_knap = st.button("⬇️ Hent nye sager", type="primary")
+            hent_knap = st.button("Hent nye sager", type="primary")
 
         if tael_knap:
             from scraper import tael_alle_kendelser_paa_siden
@@ -290,7 +389,7 @@ with st.sidebar:
         st.divider()
 
         # ---------- AUTOMATISK HENTNING AF TUI-VILKÅR ----------
-        st.subheader("📘 Hent TUI's rejsevilkår")
+        st.subheader("Hent TUI's rejsevilkår")
         st.caption(
             "Scrape juridisk indhold fra tui.dk — kun sider om vilkår, regler, "
             "retningslinjer, procedurer og andre juridisk relevante emner."
@@ -305,7 +404,7 @@ with st.sidebar:
         )
 
         tui_hent_knap = st.button(
-            "⬇️ Hent juridisk indhold fra tui.dk",
+            "Hent juridisk indhold fra tui.dk",
             type="secondary",
             key="tui_hent",
         )
@@ -342,11 +441,12 @@ with st.sidebar:
 
 
 # ---------- HOVEDSKÆRM ----------
-st.title("Juriitech ⚖️")
+st.title("Juriitech")
+st.caption("Juridisk AI-assistent til pakkerejseklager")
 
 
 # ---------- ANALYSE AF NY SAG ----------
-st.header("📄 Analysér en ny sag fra Ankenævnet")
+st.header("Analysér en ny sag fra Ankenævnet")
 st.caption(
     "Upload **hele sagspakken** fra Ankenævnet — enten som ZIP-fil eller ved at "
     "vælge flere filer på én gang (høringsbrev, klageskema, bilag 02-07 osv.). "
@@ -428,15 +528,14 @@ if st.session_state.get("aktuel_sag"):
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
-    with st.expander(f"📋 Se de {len(filer)} filer i sagen", expanded=False):
+    with st.expander(f"Se de {len(filer)} filer i sagen", expanded=False):
         for i, fil in enumerate(filer, 1):
             rolle = fil.get("rolle", "ukendt").replace("_", " ")
-            ikon = "📄" if fil["type"] == "tekst" else "🖼️"
             tegn_info = (
                 f" — {len(fil.get('tekst') or '')} tegn læst"
                 if fil["type"] == "tekst" else " — scannet PDF"
             )
-            st.markdown(f"**{i}. {ikon} {fil['filnavn']}** *({rolle})*{tegn_info}")
+            st.markdown(f"**{i}. {fil['filnavn']}** · *{rolle}*{tegn_info}")
 
     # ---------- AUTOMATISK FØRSTEVURDERING ----------
     # Når en sag er uploadet (ny signatur), kør en kort analyse med
@@ -497,7 +596,7 @@ if st.session_state.get("aktuel_sag"):
 
     # Vis dashboard + selve teksten hvis vi har en førstevurdering
     if st.session_state.auto_vurdering_tekst:
-        st.markdown("### 🎯 Førstevurdering af sagen")
+        st.markdown("### Førstevurdering af sagen")
         vis_udfalds_dashboard(st.session_state.auto_vurdering_tekst)
 
         # Visuelle kort for de 3-5 mest relevante tidligere sager
@@ -506,7 +605,7 @@ if st.session_state.get("aktuel_sag"):
         vilkaar_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "vilkaar"]
 
         if afgoerelser_ud:
-            st.markdown("### 📚 De mest relevante tidligere afgørelser")
+            st.markdown("### De mest relevante tidligere afgørelser")
             st.caption(
                 "Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om din nuværende sag. "
                 "Juriitech bruger dem aktivt som juridisk præcedens i analysen ovenfor."
@@ -552,7 +651,7 @@ if st.session_state.get("aktuel_sag"):
                             )
 
         if vilkaar_ud:
-            st.markdown("### 📘 Relevante passager fra TUI's rejsevilkår")
+            st.markdown("### Relevante passager fra TUI's rejsevilkår")
             st.caption("Disse sektioner af vilkårene er relevante for denne sagstype.")
             for i, vk in enumerate(vilkaar_ud[:3], 1):
                 sim_pct = int((vk.get("similarity") or 0) * 100)
@@ -565,12 +664,12 @@ if st.session_state.get("aktuel_sag"):
                     with st.expander("Se uddrag"):
                         st.text((vk.get("indhold") or "")[:500])
 
-        with st.expander("📝 Se den fulde førstevurdering med argumentation", expanded=False):
+        with st.expander("Se den fulde førstevurdering med argumentation", expanded=False):
             st.markdown(st.session_state.auto_vurdering_tekst)
 
     # ---------- SAGSAKTER (C4C, e-mails, bookingdetaljer) ----------
     with st.expander(
-        "📎 Sagsakter til denne klage — C4C-notater, e-mails, bookingdetaljer",
+        "Sagsakter til denne klage — C4C-notater, e-mails, bookingdetaljer",
         expanded=False,
     ):
         st.caption(
@@ -606,7 +705,7 @@ st.divider()
 
 
 # ---------- SPØRGSMÅL / CHAT ----------
-st.header("💬 Stil spørgsmål til dine sager")
+st.header("Stil spørgsmål til dine sager")
 
 # Opdatér antal efter evt. auto-gem ovenfor
 antal = hent_antal_sager()
@@ -691,7 +790,7 @@ if st.session_state.seneste_svar:
     )
     filnavn_base = (senste.get("klage_filnavn") or "analyse").rsplit(".", 1)[0]
     st.download_button(
-        label="⬇️ Download analyse (inkl. sandsynlighedsvurdering) som Word",
+        label="Download analyse som Word",
         data=docx_bytes,
         file_name=f"analyse_{filnavn_base}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -702,7 +801,7 @@ if st.session_state.seneste_svar:
 # ---------- ANONYMISERINGSASSISTENT ----------
 if st.session_state.get("aktuel_sag"):
     st.divider()
-    st.header("🔒 Anonymisér bilag til Nævnet")
+    st.header("Anonymisér bilag til Nævnet")
     st.caption(
         "Juriitech producerer anonymiserede versioner af alle tekst-baserede bilag "
         "efter Pakkerejse-Ankenævnets retningslinjer (K for klager, R for "
@@ -711,7 +810,7 @@ if st.session_state.get("aktuel_sag"):
         "sendes tilbage. Scannede PDF'er kræver manuel behandling."
     )
 
-    if st.button("🔒 Anonymisér alle bilag", type="secondary"):
+    if st.button("Anonymisér alle bilag", type="secondary"):
         filer = st.session_state.aktuel_sag.get("filer") or []
         tekstfiler_der_skal_behandles = [
             f for f in filer
@@ -748,13 +847,13 @@ if st.session_state.get("aktuel_sag"):
 
         for r in resultater:
             if r["status"] == "ok":
-                ikon = "✅"
+                prefix = "[OK]"
             elif r["status"] == "sprunget_over":
-                ikon = "ℹ️"
+                prefix = "[Sprunget over]"
             else:
-                ikon = "⚠️"
+                prefix = "[Fejl]"
 
-            with st.expander(f"{ikon} {r['filnavn']}  —  {r['bemaerkning']}"):
+            with st.expander(f"{prefix} {r['filnavn']}  —  {r['bemaerkning']}"):
                 if r["status"] == "ok":
                     st.markdown("**Anonymiseret tekst:**")
                     st.text_area(
@@ -773,7 +872,7 @@ if st.session_state.get("aktuel_sag"):
                     )
                     fn_base = r["filnavn"].rsplit(".", 1)[0]
                     st.download_button(
-                        label="⬇️ Download anonymiseret version som Word",
+                        label="Download anonymiseret version som Word",
                         data=docx_bytes,
                         file_name=f"anonymiseret_{fn_base}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -786,14 +885,14 @@ if st.session_state.get("aktuel_sag"):
 # ---------- AUTO-TJEKLISTE MOD HØRINGSBREV ----------
 if st.session_state.get("aktuel_sag"):
     st.divider()
-    st.header("📋 Tjekliste mod høringsbrev")
+    st.header("Tjekliste mod høringsbrev")
     st.caption(
         "Læser Ankenævnets høringsbrev og sammenholder med de uploadede bilag. "
         "Viser hvilke af Nævnets ønskede punkter der er dækket, og hvad der mangler. "
         "Kør den INDEN svarbrevet — så du ved hvad du skal hente fra TUI's systemer først."
     )
 
-    if st.button("🔎 Generer tjekliste", type="secondary"):
+    if st.button("Generer tjekliste", type="secondary"):
         with st.spinner("Juriitech læser høringsbrevet og gennemgår bilagene — 20-40 sekunder..."):
             tjekliste = generer_tjekliste(sag=st.session_state.aktuel_sag)
             st.session_state.seneste_tjekliste = {
@@ -822,7 +921,7 @@ if st.session_state.get("aktuel_sag"):
 # ---------- SVARBREV-GENERATOR ----------
 if st.session_state.get("aktuel_sag"):
     st.divider()
-    st.header("✉️ Generer svarbrev til Nævnet")
+    st.header("Generer svarbrev til Nævnet")
     st.caption(
         "Lav et komplet udkast til svarbrev fra rejseselskabet til Pakkerejseankenævnet. "
         "Brevet struktureres automatisk (indledning, faktum, stillingtagen, juridisk "
@@ -835,7 +934,7 @@ if st.session_state.get("aktuel_sag"):
         placeholder="fx 'læg særlig vægt på force majeure-forbeholdet' eller 'anerkend 2.000 kr. men bestrid resten'",
     )
 
-    if st.button("📝 Generer udkast til svarbrev", type="primary"):
+    if st.button("Generer udkast til svarbrev", type="primary"):
         with st.spinner("Juriitech udarbejder svarbrevet — tager 30-60 sekunder..."):
             svarbrev = generer_svarbrev_til_sag(
                 sag=st.session_state.aktuel_sag,
@@ -881,7 +980,7 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.seneste_svarbrev["klage_filnavn"] or "svarbrev"
         ).rsplit(".", 1)[0]
         st.download_button(
-            label="⬇️ Download svarbrev som Word",
+            label="Download svarbrev som Word",
             data=svarbrev_docx,
             file_name=f"svarbrev_{sb_filnavn_base}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -892,7 +991,7 @@ if st.session_state.get("aktuel_sag"):
 
 # ---------- ARKIV OVER TIDLIGERE ANALYSER OG SVARBREVE ----------
 st.divider()
-with st.expander("📚 Mine tidligere analyser og svarbreve", expanded=False):
+with st.expander("Mine tidligere analyser og svarbreve", expanded=False):
     arkiv_items = hent_arkiv(begraens=100)
 
     if not arkiv_items:
@@ -923,17 +1022,19 @@ with st.expander("📚 Mine tidligere analyser og svarbreve", expanded=False):
             filtreret = [a for a in arkiv_items if a["type"] == "tjekliste"]
 
         for item in filtreret:
+            from badges import badge
             if item["type"] == "svarbrev":
-                ikon = "📝"
+                type_badge_html = badge("Svarbrev", "purple")
             elif item["type"] == "tjekliste":
-                ikon = "📋"
+                type_badge_html = badge("Tjekliste", "blue")
             else:
-                ikon = "🔎"
+                type_badge_html = badge("Analyse", "gray")
             dato_str = (
                 item["oprettet_dato"].strftime("%d-%m-%Y %H:%M")
                 if item.get("oprettet_dato") else "ukendt"
             )
-            with st.expander(f"{ikon} {item['titel']}  —  {dato_str}"):
+            with st.expander(f"{item['titel']}  —  {dato_str}"):
+                st.markdown(type_badge_html, unsafe_allow_html=True)
                 if item.get("spoergsmaal"):
                     st.caption(f"**Spørgsmål:** {item['spoergsmaal']}")
                 if item.get("ekstra_instrukser"):
