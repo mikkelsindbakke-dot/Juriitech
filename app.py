@@ -30,6 +30,7 @@ from ai_engine import (
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
 from vurdering import vis_dashboard as vis_udfalds_dashboard
+from ui import thinking
 
 
 # ---------- OPSÆTNING ----------
@@ -199,6 +200,70 @@ st.markdown(
     .streamlit-expanderHeader {
         font-weight: 500 !important;
         font-size: 0.95rem !important;
+    }
+
+    /* ========== CUSTOM "THINKING"-ANIMATION (Claude-inspireret) ========== */
+    .thinking-wrapper {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 20px 24px;
+        border-radius: 12px;
+        background: rgba(99, 102, 241, 0.05);
+        border: 1px solid rgba(99, 102, 241, 0.12);
+        margin: 1rem 0;
+    }
+
+    .thinking-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: radial-gradient(circle at 30% 30%, #A5B4FC, #6366F1 60%, #4F46E5);
+        box-shadow:
+            0 0 16px rgba(99, 102, 241, 0.45),
+            inset -2px -2px 6px rgba(0, 0, 0, 0.12);
+        animation: thinking-pulse 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        flex-shrink: 0;
+    }
+
+    .thinking-text {
+        color: rgba(71, 85, 105, 0.95);
+        font-size: 0.95rem;
+        font-weight: 500;
+        letter-spacing: 0.01em;
+        animation: thinking-text-fade 2.8s ease-in-out infinite;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        .thinking-wrapper {
+            background: rgba(99, 102, 241, 0.1);
+            border-color: rgba(99, 102, 241, 0.2);
+        }
+        .thinking-text {
+            color: rgba(203, 213, 225, 0.9);
+        }
+    }
+
+    @keyframes thinking-pulse {
+        0%, 100% {
+            transform: scale(0.85);
+            opacity: 0.75;
+            box-shadow:
+                0 0 10px rgba(99, 102, 241, 0.3),
+                inset -2px -2px 6px rgba(0, 0, 0, 0.12);
+        }
+        50% {
+            transform: scale(1.15);
+            opacity: 1;
+            box-shadow:
+                0 0 22px rgba(99, 102, 241, 0.6),
+                inset -2px -2px 6px rgba(0, 0, 0, 0.12);
+        }
+    }
+
+    @keyframes thinking-text-fade {
+        0%, 100% { opacity: 0.75; }
+        50% { opacity: 1; }
     }
 
     </style>
@@ -610,12 +675,16 @@ if st.session_state.get("aktuel_sag"):
                 "Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om din nuværende sag. "
                 "Juriitech bruger dem aktivt som juridisk præcedens i analysen ovenfor."
             )
+            from badges import udled_afgoerelsesdato
             for i, sag_ref in enumerate(afgoerelser_ud[:5], 1):
                 sim = sag_ref.get("similarity") or 0
                 sim_pct = int(sim * 100)
                 kilde = sag_ref.get("kilde_url") or "Uploadet manuelt"
-                dato = sag_ref.get("oprettet_dato")
-                dato_str = dato.strftime("%d-%m-%Y") if dato else "ukendt"
+                afgoerelses_dato = udled_afgoerelsesdato(
+                    sag_ref.get("indhold"),
+                    filnavn=sag_ref.get("filnavn"),
+                )
+                dato_str = afgoerelses_dato or "dato ikke angivet"
                 uddrag = (sag_ref.get("indhold") or "")[:400]
 
                 # Farvekodning af relevans
@@ -633,7 +702,7 @@ if st.session_state.get("aktuel_sag"):
                     kol_a, kol_b = st.columns([5, 1])
                     with kol_a:
                         st.markdown(f"**{i}. {sag_ref.get('filnavn', 'ukendt')}**")
-                        st.caption(f"Gemt {dato_str}  ·  {etiket}")
+                        st.caption(f"Afgjort {dato_str}  ·  {etiket}")
                     with kol_b:
                         st.markdown(
                             f"<div style='text-align:right; font-size:1.4rem; "

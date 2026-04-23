@@ -1,11 +1,71 @@
 """
-Badge-komponent i Notion/Apple Health-stil.
+Badge-komponent i Notion/Apple Health-stil + dato-udledning.
 
-Lille farvet tag der vises inline for hurtigt at kommunikere status:
-udfald af en sag, dokumenttype, relevans-niveau osv.
+Lille farvet tag der vises inline for hurtigt at kommunikere status,
+plus en helper der prøver at udlede afgørelsesdatoen fra dokumentets
+egen tekst.
 """
 
 import re
+
+
+DANSKE_MAANEDER = {
+    "januar": 1, "februar": 2, "marts": 3, "april": 4,
+    "maj": 5, "juni": 6, "juli": 7, "august": 8,
+    "september": 9, "oktober": 10, "november": 11, "december": 12,
+}
+
+
+def udled_afgoerelsesdato(indhold, filnavn=None):
+    """
+    Forsøger at udlede afgørelsesdatoen fra dokumentets indhold.
+    Returnerer en formateret streng (fx "15-03-2024" eller "2024"),
+    eller None hvis intet kan findes.
+
+    Strategier i rækkefølge:
+      1. "den DD. måned YYYY" (fx "den 15. marts 2024")
+      2. "den DD.MM.YYYY" eller "den DD/MM/YYYY"
+      3. Løs "DD.MM.YYYY" i de første 3000 tegn
+      4. År fra filnavn (fx "24-290.pdf" -> 2024)
+    """
+    uddrag = (indhold or "")[:3000]
+
+    # 1. "den 15. marts 2024"
+    m = re.search(
+        r"den\s+(\d{1,2})\.\s*(januar|februar|marts|april|maj|juni|juli|"
+        r"august|september|oktober|november|december)\s+(\d{4})",
+        uddrag,
+        re.IGNORECASE,
+    )
+    if m:
+        dag = int(m.group(1))
+        maaned = DANSKE_MAANEDER[m.group(2).lower()]
+        aar = int(m.group(3))
+        return f"{dag:02d}-{maaned:02d}-{aar}"
+
+    # 2. "den 15.03.2024" / "den 15-03-2024" / "den 15/03/2024"
+    m = re.search(r"den\s+(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})", uddrag)
+    if m:
+        return f"{int(m.group(1)):02d}-{int(m.group(2)):02d}-{m.group(3)}"
+
+    # 3. Generel "DD.MM.YYYY" i de første par tusinde tegn
+    m = re.search(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\b", uddrag)
+    if m:
+        # Sanity check på dag og måned
+        dag = int(m.group(1))
+        maaned = int(m.group(2))
+        if 1 <= dag <= 31 and 1 <= maaned <= 12:
+            return f"{dag:02d}-{maaned:02d}-{m.group(3)}"
+
+    # 4. Fallback: år fra filnavn (fx "24-290.pdf" → 2024)
+    if filnavn:
+        m = re.match(r"(\d{2})-\d+", filnavn)
+        if m:
+            aar_kort = int(m.group(1))
+            aar = (1900 + aar_kort) if aar_kort >= 50 else (2000 + aar_kort)
+            return str(aar)
+
+    return None
 
 
 # Tilgængelige badge-farver — matcher CSS-klasserne i app.py

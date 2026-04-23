@@ -7,7 +7,7 @@ import streamlit as st
 
 from database import soeg_i_arkiv, find_relevante_sager
 from embeddings import embed_sporgsmaal
-from badges import badge, doktype_badge, udfalds_badge_fra_tekst
+from badges import badge, doktype_badge, udfalds_badge_fra_tekst, udled_afgoerelsesdato
 
 
 # ---------- OPSÆTNING ----------
@@ -190,10 +190,13 @@ else:
             st.markdown(" ".join(badges_html), unsafe_allow_html=True)
             st.markdown(f"**{r.get('filnavn', 'ukendt')}**")
 
-            # Dato og evt. kilde
-            dato = r.get("oprettet_dato")
-            dato_str = dato.strftime("%d-%m-%Y") if dato else "ukendt"
-            meta_linje = f"Gemt {dato_str}"
+            # Afgørelsesdato (udledt fra dokumentets indhold)
+            afgoerelses_dato = udled_afgoerelsesdato(
+                r.get("indhold"),
+                filnavn=r.get("filnavn"),
+            )
+            dato_str = afgoerelses_dato or "dato ikke angivet"
+            meta_linje = f"Afgjort {dato_str}"
             if r.get("kilde_url"):
                 meta_linje += f"  ·  [Åbn original]({r['kilde_url']})"
             st.caption(meta_linje)
