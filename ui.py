@@ -300,12 +300,12 @@ def _highlight_kildehenvisninger(tekst):
     )
 
 
-def render_sagsresume(resume_dict):
+def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
     """
-    Renderer et kompakt 'Resume af sagen'-kort med fire felter:
-    emne, klagepunkter, krav og TUI's håndtering. Designet til at blive
-    placeret umiddelbart efter førstevurderingen så juristen lynhurtigt
-    kan fange essensen af sagen uden at læse hele analysen.
+    Renderer 'Resume af sagen' som en Apple Health-pillar — samme visuelle
+    sprog som de øvrige sektioner (farvet pastel baggrund, accent-prik og
+    serif-overskrift), men med et struktureret grid indeni der viser
+    emne, klagepunkter, klagers krav og TUI's håndtering.
 
     resume_dict forventes at indeholde nøglerne:
         emne, klagepunkter (liste), krav, tui_handtering
@@ -333,24 +333,25 @@ def render_sagsresume(resume_dict):
 
     st.markdown(
         f"""
-        <div class="sagsresume-kort">
-            <div class="sagsresume-header">
-                <span class="sagsresume-label">Resume af sagen</span>
-                <span class="sagsresume-hint">Lynoverblik</span>
-            </div>
-            <div class="sagsresume-emne">{emne}</div>
-            <div class="sagsresume-grid">
-                <div class="sagsresume-celle">
-                    <div class="sagsresume-celle-titel">Klagepunkter</div>
-                    <div class="sagsresume-celle-body">{punkter_html}</div>
-                </div>
-                <div class="sagsresume-celle">
-                    <div class="sagsresume-celle-titel">Klagers krav</div>
-                    <div class="sagsresume-celle-body"><p>{krav}</p></div>
-                </div>
-                <div class="sagsresume-celle sagsresume-celle-bred">
-                    <div class="sagsresume-celle-titel">TUI's håndtering indtil nu</div>
-                    <div class="sagsresume-celle-body"><p>{tui}</p></div>
+        <div class="analyse-pillar"
+             style="--pillar-bg: {bg}; --pillar-accent: {accent};">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">Resume af sagen</h2>
+            <div class="analyse-pillar-body">
+                <p class="sagsresume-emne-in-pillar">{emne}</p>
+                <div class="sagsresume-grid">
+                    <div class="sagsresume-celle">
+                        <div class="sagsresume-celle-titel">Klagepunkter</div>
+                        <div class="sagsresume-celle-body">{punkter_html}</div>
+                    </div>
+                    <div class="sagsresume-celle">
+                        <div class="sagsresume-celle-titel">Klagers krav</div>
+                        <div class="sagsresume-celle-body"><p>{krav}</p></div>
+                    </div>
+                    <div class="sagsresume-celle sagsresume-celle-bred">
+                        <div class="sagsresume-celle-titel">TUI's håndtering indtil nu</div>
+                        <div class="sagsresume-celle-body"><p>{tui}</p></div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -359,29 +360,52 @@ def render_sagsresume(resume_dict):
     )
 
 
-def render_analyse_som_pillars(svar_tekst, skip_resume=False):
+def render_analyse_som_pillars(
+    svar_tekst,
+    skip_resume=False,
+    skip_referencer=False,
+    skip_sandsynlighed=False,
+):
     """
     Renderer en juridisk analyse som Apple-Health-inspirerede "pillars"
     med farvede baggrunde per sektion, store serif-overskrifter, og
     fremhævede kildehenvisninger.
 
-    skip_resume: hvis True, springes den første sektion over hvis den
-    ligner et resume (overskrift starter med 'resume', 'kort resume',
-    'opsummering', 'oversigt'). Bruges når det strukturerede sagsresume
-    allerede vises separat, så vi undgår dobbelt-indhold.
+    Optional skip-flags fjerner sektioner der vises andre steder, så vi
+    undgår duplikeret indhold:
+      skip_resume       — hvis det strukturerede sagsresume vises separat
+      skip_referencer   — hvis referencer vises som visuelle kort separat
+      skip_sandsynlighed— hvis udfalds-dashboardet allerede vises øverst
     """
     if not svar_tekst:
         return
 
     sektioner = _split_analyse_i_sektioner(svar_tekst)
 
-    # Evt. skip første sektion hvis den er et resume
-    if skip_resume and sektioner:
-        foerste_titel = (sektioner[0][0] or "").lower()
-        if any(nogleord in foerste_titel for nogleord in (
-            "resume", "resumé", "opsummering", "oversigt"
+    def _matcher_nogleord(titel, nogleord_liste):
+        t = (titel or "").lower()
+        return any(n in t for n in nogleord_liste)
+
+    filtreret = []
+    for idx, (titel, body) in enumerate(sektioner):
+        # Resume fjernes KUN hvis det er den første sektion (så vi ikke
+        # ved et uheld skjuler en anden sektion der tilfældigvis har
+        # 'resume' i overskriften).
+        if skip_resume and idx == 0 and _matcher_nogleord(titel, (
+            "resume", "resumé", "opsummering", "oversigt",
         )):
-            sektioner = sektioner[1:]
+            continue
+        if skip_referencer and _matcher_nogleord(titel, (
+            "relevante referencer", "referencer", "præcedens",
+        )):
+            continue
+        if skip_sandsynlighed and _matcher_nogleord(titel, (
+            "sandsynlighedsvurdering", "sandsynlighed",
+        )):
+            continue
+        filtreret.append((titel, body))
+
+    sektioner = filtreret
 
     for i, (titel, body) in enumerate(sektioner):
         accent, bg = _PILLAR_PALETTER[i % len(_PILLAR_PALETTER)]

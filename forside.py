@@ -18,6 +18,7 @@ from ai_engine import (
     spoerg_ai_med_klage,
     generer_svarbrev,
     spoerg_ai_med_sag,
+    chat_om_sag,
     generer_svarbrev_til_sag,
     generer_tjekliste,
     anonymiser_sag,
@@ -451,64 +452,27 @@ st.markdown(
         opacity: 0.85;
     }
 
-    /* ========== RESUME AF SAGEN — lynoverblik efter førstevurdering ========== */
-    .sagsresume-kort {
-        background: #FFFFFF;
-        border: 1px solid rgba(17, 24, 39, 0.08);
-        border-radius: 18px;
-        padding: 1.75rem 2rem 1.5rem 2rem;
-        margin: 1.5rem 0;
-        box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
-        position: relative;
-    }
-    .sagsresume-kort::before {
-        content: "";
-        position: absolute;
-        top: 1.75rem;
-        left: 0;
-        width: 3px;
-        height: 28px;
-        background: linear-gradient(180deg, #6366F1, #4F46E5);
-        border-radius: 0 3px 3px 0;
-    }
-    .sagsresume-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-        margin-bottom: 0.5rem;
-    }
-    .sagsresume-label {
+    /* ========== RESUME-GRID (inde i Apple Health pillar) ========== */
+    /* Emne-linjen lige under pillar-overskriften — lidt større og
+       fremhævet, men stadig lysere end selve overskriften. */
+    .sagsresume-emne-in-pillar {
         font-family: 'Inter', sans-serif;
-        font-size: 0.78rem;
-        font-weight: 600;
-        letter-spacing: 0.08em;
-        text-transform: uppercase;
-        color: #6366F1;
-    }
-    .sagsresume-hint {
-        font-size: 0.75rem;
-        color: rgba(100, 116, 139, 0.8);
+        font-size: 1.05rem;
         font-weight: 500;
-    }
-    .sagsresume-emne {
-        font-family: 'Source Serif 4', Georgia, serif;
-        font-size: 1.4rem;
-        font-weight: 600;
-        line-height: 1.35;
-        color: #0F172A;
-        letter-spacing: -0.015em;
-        margin-bottom: 1.25rem;
+        line-height: 1.45;
+        color: #1F2937;
+        margin: 0 0 1.25rem 0;
     }
     .sagsresume-grid {
         display: grid;
         grid-template-columns: 1fr 1fr;
-        gap: 1.1rem;
+        gap: 0.85rem;
     }
     .sagsresume-celle {
-        background: #F8FAFC;
+        background: rgba(255, 255, 255, 0.55);
         border: 1px solid rgba(17, 24, 39, 0.05);
         border-radius: 12px;
-        padding: 0.95rem 1.1rem;
+        padding: 0.9rem 1.05rem;
     }
     .sagsresume-celle-bred {
         grid-column: 1 / -1;
@@ -527,24 +491,24 @@ st.markdown(
         color: #1F2937;
     }
     .sagsresume-celle-body p {
-        margin: 0;
-        color: #1F2937;
+        margin: 0 !important;
+        color: #1F2937 !important;
     }
     .sagsresume-liste {
-        margin: 0;
-        padding-left: 1.1rem;
+        margin: 0 !important;
+        padding-left: 1.1rem !important;
     }
     .sagsresume-liste li {
-        margin-bottom: 0.3rem;
-        color: #1F2937;
+        margin-bottom: 0.3rem !important;
+        color: #1F2937 !important;
     }
     .sagsresume-liste li:last-child {
-        margin-bottom: 0;
+        margin-bottom: 0 !important;
     }
     .sagsresume-tom {
-        color: rgba(100, 116, 139, 0.8);
+        color: rgba(100, 116, 139, 0.8) !important;
         font-style: italic;
-        margin: 0;
+        margin: 0 !important;
     }
     @media (max-width: 720px) {
         .sagsresume-grid { grid-template-columns: 1fr; }
@@ -1072,6 +1036,8 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.match_info = []
             st.session_state.sandsynligheder_dict = None
             st.session_state.sagsresume = None
+            st.session_state.chat_historik = []
+            st.session_state.anon_resultater_per_fil = {}
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -1285,16 +1251,39 @@ if st.session_state.get("aktuel_sag"):
 
         vis_udfalds_dashboard(st.session_state.auto_vurdering_tekst)
 
-        # Visuelle kort for de 3-5 mest relevante tidligere sager
+        # ---------- RESUME AF SAGEN — FØRSTE sektion efter dashboardet ----------
+        # Apple Health-pillar-stilen med emne + struktureret grid (klagepunkter,
+        # klagers krav, TUI's håndtering). Vises før de relevante afgørelser
+        # så juristen først får overblik, derefter præcedens.
+        _har_struktureret_resume = bool(st.session_state.get("sagsresume"))
+        if _har_struktureret_resume:
+            render_sagsresume(
+                st.session_state.sagsresume,
+                accent="#00D4C2",
+                bg="#FDE9EE",
+            )
+
+        # Visuelle kort for de 3-5 mest relevante tidligere sager.
+        # Indrammes i en Apple Health-pillar med overskriften "Relevante
+        # referencer" — det erstatter den tekstuelle referencer-pillar i
+        # analysen, så vi ikke har to sektioner der viser det samme.
         rel = st.session_state.get("relevante_sager") or []
         afgoerelser_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "afgoerelse"]
         vilkaar_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "vilkaar"]
 
         if afgoerelser_ud:
-            st.markdown("### De mest relevante tidligere afgørelser")
-            st.caption(
-                "Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om din nuværende sag. "
-                "juriitech PAX bruger dem aktivt som juridisk præcedens i analysen ovenfor."
+            # Apple Health-pillar wrapper — lavendel baggrund, indigo accent
+            st.markdown(
+                '<div class="analyse-pillar"'
+                ' style="--pillar-bg: #EEEAFF; --pillar-accent: #6366F1;">'
+                '<div class="analyse-pillar-accent-dot"></div>'
+                '<h2 class="analyse-pillar-title">Relevante referencer</h2>'
+                '<div class="analyse-pillar-body">'
+                '<p>Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om '
+                'din nuværende sag. juriitech PAX bruger dem aktivt som '
+                'juridisk præcedens i analysen.</p>'
+                '</div></div>',
+                unsafe_allow_html=True,
             )
             from badges import udled_afgoerelsesdato, badge
 
@@ -1402,20 +1391,19 @@ if st.session_state.get("aktuel_sag"):
                                 f"({sag_ref['kilde_url']})"
                             )
 
-        # Kompakt 'Resume af sagen' vises FØRST — det erstatter den
-        # tekstuelle "Kort resume af sagen"-pillar der ellers stod øverst
-        # i analysen. Pillars nedenfor springer derfor den gamle resume-
-        # sektion over (via skip_resume=True) så vi ikke gentager os selv.
-        _har_struktureret_resume = bool(st.session_state.get("sagsresume"))
-        if _har_struktureret_resume:
-            render_sagsresume(st.session_state.sagsresume)
-
-        # Juridisk førstevurdering som Apple-Health-inspirerede pillars —
-        # store overskrifter, accent-striber, fremhævede kildehenvisninger.
+        # Juridisk førstevurdering som Apple-Health-inspirerede pillars.
+        # Vi springer tre sektioner over for at undgå duplikater:
+        #   - resume (vises allerede som strukturelt kort ovenfor)
+        #   - referencer (vises allerede som visuelle kort ovenfor)
+        #   - sandsynlighedsvurdering (vises allerede i dashboardet øverst)
+        # Tilbage er den reelt nye analyse: juridisk argumentation og
+        # konklusion.
         if st.session_state.auto_vurdering_tekst:
             render_analyse_som_pillars(
                 st.session_state.auto_vurdering_tekst,
                 skip_resume=_har_struktureret_resume,
+                skip_referencer=bool(afgoerelser_ud),
+                skip_sandsynlighed=True,
             )
 
         # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
@@ -1569,12 +1557,16 @@ if st.session_state.get("aktuel_sag"):
             label_visibility="collapsed",
         )
 
-# ---------- SPØRGSMÅL / CHAT (kun synlig når der er en aktiv sag) ----------
-# Når ingen sag er uploadet, skjules hele sektionen så forsiden forbliver
-# ren og fokuseret på upload-flowet.
-spoergsmaal = ""
+# ---------- CHAT OM SAGEN (kun synlig når der er en aktiv sag) ----------
+# Chatbot-stil: brugeren stiller løbende spørgsmål og PAX svarer kort +
+# præcist. Hele samtalen bliver i samme sektion — spørgsmål som user-
+# bubbler, svar som assistant-bubbler.
 if st.session_state.get("aktuel_sag"):
     _sag_filer = st.session_state.aktuel_sag.get("filer") or []
+
+    # Initialisér chat-historik i session state hvis den ikke findes
+    if "chat_historik" not in st.session_state:
+        st.session_state.chat_historik = []
 
     # Apple Health-inspireret sektionsintro: mint-pastel med grøn accent
     st.markdown(
@@ -1586,72 +1578,97 @@ if st.session_state.get("aktuel_sag"):
             <div class="analyse-pillar-body">
                 <p>Samtalen tager udgangspunkt i den uploadede sag
                 ({len(_sag_filer)} filer), tidligere afgørelser fra
-                Pakkerejse-Ankenævnet og pakkerejseloven.</p>
+                Pakkerejse-Ankenævnet og pakkerejseloven. Svarene er
+                korte og præcise.</p>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    spoergsmaal = st.text_input(
-        "Hvad vil du vide?",
-        placeholder="fx 'Giv mig en komplet analyse af sagen' eller 'Hvilke tidligere sager minder mest om denne?'",
+    # Vis hele samtalen
+    for besked in st.session_state.chat_historik:
+        with st.chat_message(besked.get("role", "user")):
+            st.markdown(besked.get("content", ""))
+
+    # Ryd-chat-knap — kun synlig når der er beskeder i historikken
+    if st.session_state.chat_historik:
+        kol_ryd_chat, _ = st.columns([1, 5])
+        with kol_ryd_chat:
+            if st.button("Ryd samtale", key="ryd_chat_knap"):
+                st.session_state.chat_historik = []
+                st.rerun()
+
+    # Input-felt nederst
+    _nyt_spoergsmaal = st.chat_input(
+        "Skriv et spørgsmål om sagen...",
+        key="chat_input_sag",
     )
 
-if spoergsmaal:
-    with st.spinner("juriitech PAX analyserer..."):
-        sager = hent_alle_sager()
+    if _nyt_spoergsmaal:
+        # Tilføj brugerens spørgsmål til historikken og vis det
+        st.session_state.chat_historik.append({
+            "role": "user",
+            "content": _nyt_spoergsmaal,
+        })
+        with st.chat_message("user"):
+            st.markdown(_nyt_spoergsmaal)
 
-        if not sager:
-            st.warning("Vidensbanken er tom. Upload først nogle tidligere afgørelser i sidebaren.")
-        else:
-            if st.session_state.get("aktuel_sag"):
-                svar = spoerg_ai_med_sag(
-                    spoergsmaal,
-                    sager,
-                    st.session_state.aktuel_sag,
+        # Generér svar med historik som kontekst (ekskl. det lige-
+        # tilføjede spørgsmål — det sendes som 'nyt' til funktionen)
+        historik_til_ai = st.session_state.chat_historik[:-1]
+
+        with st.chat_message("assistant"):
+            with st.spinner("juriitech PAX tænker..."):
+                svar = chat_om_sag(
+                    spoergsmaal=_nyt_spoergsmaal,
+                    chat_historik=historik_til_ai,
+                    sag=st.session_state.aktuel_sag,
                     sagsakter=st.session_state.get("sagsakter", ""),
                 )
-                # Titel: brug første fil med rolle 'klageskema' eller 'høring', ellers første fil
-                sag_filer = st.session_state.aktuel_sag.get("filer") or []
-                hoved_filnavn = None
-                for rolle_prio in ("klageskema", "høring"):
-                    for fil in sag_filer:
-                        if fil.get("rolle") == rolle_prio:
-                            hoved_filnavn = fil["filnavn"]
-                            break
-                    if hoved_filnavn:
-                        break
-                if not hoved_filnavn and sag_filer:
-                    hoved_filnavn = sag_filer[0]["filnavn"]
-            else:
-                svar = spoerg_ai(spoergsmaal, sager)
-                hoved_filnavn = None
+            st.markdown(svar)
 
-            st.session_state.seneste_svar = {
-                "spoergsmaal": spoergsmaal,
-                "svar": svar,
-                "klage_filnavn": hoved_filnavn,
-            }
-            # Gem automatisk i arkivet så juristen kan finde den igen
-            titel = (
-                f"Analyse af sag — {hoved_filnavn}"
-                if hoved_filnavn
-                else f"Spørgsmål: {spoergsmaal[:60]}"
-            )
-            gem_i_arkiv(
-                titel=titel,
-                type_="analyse",
-                indhold=svar,
-                klage_filnavn=hoved_filnavn,
-                spoergsmaal=spoergsmaal,
-                sagsakter=st.session_state.get("sagsakter", "") or None,
-            )
-            # Vis dashboard med sandsynligheder øverst, derefter det fulde svar
-            vis_udfalds_dashboard(svar)
-            st.chat_message("assistant").write(svar)
+        # Gem svaret i historikken
+        st.session_state.chat_historik.append({
+            "role": "assistant",
+            "content": svar,
+        })
 
-# Download-knap til seneste analyse
+        # Gem også i arkivet så juristen kan finde samtalen igen
+        sag_filer_arkiv = st.session_state.aktuel_sag.get("filer") or []
+        hoved_filnavn_arkiv = None
+        for rolle_prio in ("klageskema", "høring"):
+            for fil in sag_filer_arkiv:
+                if fil.get("rolle") == rolle_prio:
+                    hoved_filnavn_arkiv = fil["filnavn"]
+                    break
+            if hoved_filnavn_arkiv:
+                break
+        if not hoved_filnavn_arkiv and sag_filer_arkiv:
+            hoved_filnavn_arkiv = sag_filer_arkiv[0]["filnavn"]
+
+        titel = (
+            f"Chat om sag — {hoved_filnavn_arkiv}"
+            if hoved_filnavn_arkiv
+            else f"Chat: {_nyt_spoergsmaal[:60]}"
+        )
+        gem_i_arkiv(
+            titel=titel,
+            type_="analyse",
+            indhold=svar,
+            klage_filnavn=hoved_filnavn_arkiv,
+            spoergsmaal=_nyt_spoergsmaal,
+            sagsakter=st.session_state.get("sagsakter", "") or None,
+        )
+
+        # Husk seneste for download-knap
+        st.session_state.seneste_svar = {
+            "spoergsmaal": _nyt_spoergsmaal,
+            "svar": svar,
+            "klage_filnavn": hoved_filnavn_arkiv,
+        }
+
+# Download-knap til seneste chat-svar
 if st.session_state.seneste_svar:
     senste = st.session_state.seneste_svar
     docx_bytes = analyse_til_docx(
@@ -1661,11 +1678,11 @@ if st.session_state.seneste_svar:
     )
     filnavn_base = (senste.get("klage_filnavn") or "analyse").rsplit(".", 1)[0]
     st.download_button(
-        label="Download analyse som Word",
+        label="Download seneste svar som Word",
         data=docx_bytes,
-        file_name=f"analyse_{filnavn_base}.docx",
+        file_name=f"chat_svar_{filnavn_base}.docx",
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        key="download_analyse",
+        key="download_chat_svar",
     )
 
 

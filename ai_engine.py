@@ -1416,6 +1416,113 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         return []
 
 
+def chat_om_sag(spoergsmaal, chat_historik, sag, sagsakter=None):
+    """
+    Kort, præcis chat-agtig besvarelse af et spørgsmål om en aktiv sag.
+    Bruges i "Stil spørgsmål til sagen"-sektionen hvor juristen har en
+    løbende samtale med PAX — ikke en fuld strukturel analyse.
+
+    Forskelle fra spoerg_ai_med_sag:
+      - Svarer KORT og præcist (typisk 1-4 afsnit, max ~300 ord)
+      - Ingen pillar-struktur, ingen sandsynlighedsvurdering, ingen
+        procenter — den del vises andre steder i UI'et
+      - Bruger hele chat-historikken som kontekst så PAX husker hvad
+        der allerede er talt om
+      - Henter fortsat relevant juridisk præcedens via RAG
+
+    Parametre:
+      spoergsmaal: nyt spørgsmål fra brugeren
+      chat_historik: liste af {"role": "user"|"assistant", "content": str}
+                      — tidligere beskeder i samtalen (ekskl. det nye)
+      sag: sag-dict med "filer"-liste
+      sagsakter: evt. tekstuelle sagsakter
+
+    Returnerer svartekst (string).
+    """
+    try:
+        sagsakter_tekst = (sagsakter or "").strip()
+
+        # Find relevant præcedens via RAG
+        soge_dele = [spoergsmaal]
+        # Brug også de seneste par user-beskeder som søgekontekst
+        for besked in (chat_historik or [])[-3:]:
+            if besked.get("role") == "user" and besked.get("content"):
+                soge_dele.append(besked["content"])
+        soge_tekst = "\n".join(soge_dele)
+
+        relevante, _ = _hent_relevante_eller_fald_tilbage(soge_tekst)
+        vidensbank = (
+            _byg_vidensbank_tekst(relevante) if relevante
+            else "(Ingen tidligere sager fundet i vidensbanken.)"
+        )
+
+        indled = (
+            "KONTEKST — relevante tidligere afgørelser, rejsevilkår og "
+            "pakkerejselov-paragraffer:\n"
+            f"{vidensbank}\n\n"
+            "SAGEN DU SKAL SVARE OM:"
+        )
+
+        sagsakter_blok = ""
+        if sagsakter_tekst:
+            sagsakter_blok = (
+                "\nSAGSAKTER (intern viden fra juristen):\n"
+                f"{sagsakter_tekst}\n"
+            )
+
+        chat_system = (
+            SYSTEM_PROMPT
+            + "\n\nDU ER NU I CHAT-TILSTAND. Svar KORT og præcist — "
+            "typisk 1-4 afsnit, max ca. 300 ord. Ingen overskrifter, "
+            "ingen pillar-struktur, ingen sandsynlighedsvurdering i "
+            "procent. Skriv direkte og jordnært som i en samtale med en "
+            "kollega. Henvis gerne til konkrete afgørelser (filnavn + "
+            "år) eller lovparagraffer når det er relevant, men undgå "
+            "lange udredninger. Hvis spørgsmålet er kort, er svaret kort."
+        )
+
+        # Byg sagskontekst som første user-message
+        sag_content = _byg_sag_content(
+            sag, indled, sagsakter_blok or "",
+        )
+
+        # Sammensæt messages: [sag-kontekst] + chat-historik + nyt spørgsmål
+        messages = [{"role": "user", "content": sag_content}]
+
+        # Føj et bekræftende assistant-svar så modellen ved at vi er
+        # klar til at modtage spørgsmål om sagen
+        messages.append({
+            "role": "assistant",
+            "content": (
+                "Jeg har læst sagen og er klar til spørgsmål. "
+                "Hvad vil du vide?"
+            ),
+        })
+
+        # Tilføj historik (trimmes til de seneste 20 beskeder for at
+        # holde prompten rimelig)
+        for besked in (chat_historik or [])[-20:]:
+            rolle = besked.get("role")
+            indhold = besked.get("content") or ""
+            if rolle in ("user", "assistant") and indhold.strip():
+                messages.append({"role": rolle, "content": indhold})
+
+        # Tilføj det nye spørgsmål
+        messages.append({"role": "user", "content": spoergsmaal})
+
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=1200,
+            temperature=0.2,
+            system=chat_system,
+            messages=messages,
+        )
+        return response.content[0].text
+
+    except Exception as e:
+        return f"Fejl i chat: {e}"
+
+
 def spoerg_ai_med_sag(
     spoergsmaal,
     sager,
