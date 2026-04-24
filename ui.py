@@ -26,59 +26,101 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
     ~4 sekunder. Samtidig kører en elapsed-timer der viser mm:ss så det
     er tydeligt for brugeren hvor langt processen er nået uden at lovne
     et urealistisk tidsestimat.
+
+    Til JS-drevet version bruger vi streamlit.components.v1.html — det
+    er nødvendigt fordi st.markdown af sikkerhedsgrunde fjerner
+    <script>-tags. Iframen holder sin egen timer kørende client-side
+    selv mens Python venter på Anthropic-svaret.
     """
     placeholder = st.empty()
 
     if faser:
-        # JS-drevet version med roterende faser + elapsed timer
+        # JS-drevet version med roterende faser + elapsed timer.
+        # Kører i en lille iframe via st.components.v1.html så JS'en
+        # faktisk eksekveres i browseren.
         import json as _json
-        import uuid as _uuid
-        uid = _uuid.uuid4().hex[:8]
+        from streamlit.components.v1 import html as _components_html
+
         faser_json = _json.dumps(list(faser))
-        placeholder.markdown(
-            f"""
-            <div class="thinking-wrapper">
-              <div class="thinking-dot"></div>
-              <div class="thinking-stack">
-                <span class="thinking-text">{tekst}</span>
-                <span class="thinking-fase" id="fase-{uid}">{faser[0]}</span>
-              </div>
-              <span class="thinking-timer" id="timer-{uid}">0:00</span>
-            </div>
-            <script>
-              (function() {{
-                const faser = {faser_json};
-                const faseEl = document.getElementById("fase-{uid}");
-                const timerEl = document.getElementById("timer-{uid}");
-                if (!faseEl || !timerEl) return;
-                let idx = 0;
-                const start = Date.now();
-                // Roter faser hvert 4. sekund
-                const faseInt = setInterval(() => {{
-                  idx = (idx + 1) % faser.length;
-                  if (faseEl) faseEl.textContent = faser[idx];
-                }}, 4000);
-                // Opdatér elapsed-timer hvert sekund
-                const timerInt = setInterval(() => {{
-                  const s = Math.floor((Date.now() - start) / 1000);
-                  const m = Math.floor(s / 60);
-                  const sek = String(s % 60).padStart(2, "0");
-                  if (timerEl) timerEl.textContent = m + ":" + sek;
-                }}, 1000);
-                // Stop når elementet fjernes
-                const obs = new MutationObserver(() => {{
-                  if (!document.getElementById("fase-{uid}")) {{
-                    clearInterval(faseInt);
-                    clearInterval(timerInt);
-                    obs.disconnect();
-                  }}
-                }});
-                obs.observe(document.body, {{ childList: true, subtree: true }});
-              }})();
-            </script>
-            """,
-            unsafe_allow_html=True,
-        )
+
+        # Hele widgetten er selvstændig i iframen — CSS skal derfor være
+        # inline her (kan ikke arve fra sidens CSS, da det er en isoleret
+        # kontekst).
+        widget_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body {{ margin: 0; padding: 0; background: transparent;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }}
+  .wrap {{
+    display: flex; align-items: center; gap: 14px;
+    padding: 20px 24px; border-radius: 12px;
+    background: rgba(99, 102, 241, 0.05);
+    border: 1px solid rgba(99, 102, 241, 0.12);
+  }}
+  .dot {{
+    width: 14px; height: 14px; border-radius: 50%; flex-shrink: 0;
+    background: radial-gradient(circle at 30% 30%, #A5B4FC, #6366F1 60%, #4F46E5);
+    box-shadow: 0 0 16px rgba(99, 102, 241, 0.45),
+                inset -2px -2px 6px rgba(0, 0, 0, 0.12);
+    animation: pulse 1.4s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }}
+  @keyframes pulse {{
+    0%, 100% {{ transform: scale(0.85); opacity: 0.75; }}
+    50%      {{ transform: scale(1.15); opacity: 1; }}
+  }}
+  .stack {{ display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }}
+  .tekst {{ color: #111827; font-weight: 600; font-size: 0.98rem; letter-spacing: 0.01em; }}
+  .fase {{
+    color: rgba(71, 85, 105, 0.85); font-size: 0.85rem;
+    font-weight: 400; letter-spacing: 0.01em;
+    transition: opacity 0.35s ease;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }}
+  .timer {{
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 0.82rem; color: rgba(71, 85, 105, 0.8);
+    background: rgba(99, 102, 241, 0.1);
+    padding: 3px 10px; border-radius: 999px;
+    flex-shrink: 0; font-variant-numeric: tabular-nums;
+  }}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="dot"></div>
+    <div class="stack">
+      <span class="tekst">{tekst}</span>
+      <span class="fase" id="fase">{faser[0]}</span>
+    </div>
+    <span class="timer" id="timer">0:00</span>
+  </div>
+  <script>
+    (function() {{
+      var faser = {faser_json};
+      var faseEl = document.getElementById("fase");
+      var timerEl = document.getElementById("timer");
+      var idx = 0;
+      var start = Date.now();
+      setInterval(function() {{
+        idx = (idx + 1) % faser.length;
+        faseEl.textContent = faser[idx];
+      }}, 4000);
+      setInterval(function() {{
+        var s = Math.floor((Date.now() - start) / 1000);
+        var m = Math.floor(s / 60);
+        var sek = String(s % 60);
+        if (sek.length < 2) sek = "0" + sek;
+        timerEl.textContent = m + ":" + sek;
+      }}, 1000);
+    }})();
+  </script>
+</body>
+</html>
+"""
+        with placeholder:
+            _components_html(widget_html, height=84)
     else:
         placeholder.markdown(
             f"""
