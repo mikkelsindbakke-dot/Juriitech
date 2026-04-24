@@ -363,6 +363,80 @@ st.markdown(
         border: 1px solid rgba(17, 24, 39, 0.06);
     }
 
+    /* ========== VIDENSTANK BENTO GRID — dark, bold, minimalistisk ========== */
+    .videnstank-bento {
+        background: linear-gradient(145deg, #0B1220 0%, #0F172A 60%, #111827 100%);
+        border-radius: 18px;
+        padding: 1.1rem 1rem 1.25rem 1rem;
+        margin: 1.25rem 0 1rem 0;
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 6px 24px -12px rgba(15, 23, 42, 0.4);
+    }
+    /* Subtile lysstriber i baggrunden (ligner inspirations-mockupen) */
+    .videnstank-bento::before {
+        content: "";
+        position: absolute;
+        top: -20%;
+        right: -30%;
+        width: 200%;
+        height: 180%;
+        background:
+            radial-gradient(ellipse at top right,
+                rgba(64, 224, 208, 0.08) 0%,
+                transparent 45%),
+            radial-gradient(ellipse at bottom left,
+                rgba(99, 102, 241, 0.06) 0%,
+                transparent 50%);
+        pointer-events: none;
+    }
+    .videnstank-titel {
+        position: relative;
+        color: rgba(203, 213, 225, 0.65);
+        font-family: 'Inter', sans-serif;
+        font-size: 0.68rem;
+        font-weight: 600;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        margin-bottom: 0.9rem;
+        padding-left: 2px;
+    }
+    .videnstank-grid {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+    .videnstank-tile {
+        background: rgba(255, 255, 255, 0.03);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        border-radius: 12px;
+        padding: 0.9rem 0.85rem;
+        min-height: 86px;
+        display: flex;
+        align-items: center;
+        transition: border-color 0.2s ease, background 0.2s ease;
+    }
+    .videnstank-tile:hover {
+        border-color: rgba(64, 224, 208, 0.25);
+        background: rgba(255, 255, 255, 0.05);
+    }
+    .videnstank-tekst {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.98rem;
+        font-weight: 700;
+        line-height: 1.18;
+        letter-spacing: -0.015em;
+        color: #FFFFFF;
+        hyphens: auto;
+        word-break: break-word;
+    }
+    .videnstank-plus {
+        color: #5EEAD4;
+        font-weight: 800;
+        margin-right: 2px;
+    }
+
     /* ========== RESUME AF SAGEN — lynoverblik efter førstevurdering ========== */
     .sagsresume-kort {
         background: #FFFFFF;
@@ -666,28 +740,35 @@ with st.sidebar:
     st.title("juriitech PAX")
     st.caption("Juridisk AI til Pakkerejse-Ankenævnet")
 
+    # ---------- VIDENSTANK — DARK BENTO GRID ----------
+    # 2x2 grid med én ren tekstlinje pr. tile. Mint accent på '+' for
+    # juriitech-signatur. Fed, minimalistisk typografi.
     st.markdown(
         """
-        <div style="margin-top: 1.5rem; margin-bottom: 1rem;">
-            <div style="font-size: 0.9rem; font-weight: 600; color: #374151;
-                        margin-bottom: 0.5rem;">
-                juriitech PAX's videnstank
+        <div class="videnstank-bento">
+            <div class="videnstank-titel">Videnstank</div>
+            <div class="videnstank-grid">
+                <div class="videnstank-tile">
+                    <div class="videnstank-tekst">
+                        <span class="videnstank-plus">+</span>500 afgørelser
+                    </div>
+                </div>
+                <div class="videnstank-tile">
+                    <div class="videnstank-tekst">
+                        Hele Pakke&shy;rejse&shy;loven
+                    </div>
+                </div>
+                <div class="videnstank-tile">
+                    <div class="videnstank-tekst">
+                        Anonymi&shy;serings&shy;regler
+                    </div>
+                </div>
+                <div class="videnstank-tile">
+                    <div class="videnstank-tekst">
+                        Dine uploadede sager
+                    </div>
+                </div>
             </div>
-            <ul style="list-style: none; padding: 0; margin: 0;
-                       font-size: 0.85rem; color: #4B5563;">
-                <li style="padding: 4px 0;">
-                    <span style="color: #6366F1;">•</span>
-                    +500 afgørelser fra Pakkerejse-Ankenævnet
-                </li>
-                <li style="padding: 4px 0;">
-                    <span style="color: #6366F1;">•</span>
-                    Pakkerejselovgivningen
-                </li>
-                <li style="padding: 4px 0;">
-                    <span style="color: #6366F1;">•</span>
-                    Brugerens uploadede sager
-                </li>
-            </ul>
         </div>
         """,
         unsafe_allow_html=True,
