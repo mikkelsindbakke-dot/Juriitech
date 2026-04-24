@@ -22,6 +22,7 @@ from ai_engine import (
     generer_tjekliste,
     anonymiser_sag,
     opsummer_matches_til_visning,
+    udled_sandsynligheder_strukturelt,
 )
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
@@ -131,6 +132,56 @@ st.markdown(
     [data-testid="stSidebar"] h1 {
         font-size: 1.55rem !important;
         margin-bottom: 0.25rem !important;
+    }
+
+    /* ========== NAV-MENU — afrundede pillers, ikon + tekst ========== */
+    [data-testid="stSidebarNav"] {
+        padding-top: 0.6rem !important;
+    }
+    [data-testid="stSidebarNav"] ul {
+        padding: 0 0.35rem !important;
+        margin: 0 !important;
+    }
+    [data-testid="stSidebarNav"] li {
+        margin: 2px 0 !important;
+        list-style: none !important;
+    }
+    /* Hver nav-link = pille-look med ikon + tekst side om side */
+    [data-testid="stSidebarNav"] a {
+        display: flex !important;
+        align-items: center !important;
+        gap: 12px !important;
+        padding: 9px 14px !important;
+        border-radius: 10px !important;
+        font-family: 'Inter', sans-serif !important;
+        font-size: 0.95rem !important;
+        font-weight: 500 !important;
+        color: #374151 !important;
+        text-decoration: none !important;
+        transition: background-color 0.12s ease, color 0.12s ease !important;
+        border: none !important;
+    }
+    [data-testid="stSidebarNav"] a:hover {
+        background-color: rgba(17, 24, 39, 0.05) !important;
+        color: #111827 !important;
+    }
+    /* Aktiv side — lysegrå baggrund som i billedet */
+    [data-testid="stSidebarNav"] a[aria-current="page"],
+    [data-testid="stSidebarNav"] a[data-selected="true"] {
+        background-color: rgba(17, 24, 39, 0.08) !important;
+        color: #111827 !important;
+        font-weight: 600 !important;
+    }
+    /* Ikoner — ensartet størrelse og neutral farve */
+    [data-testid="stSidebarNav"] a span[data-testid="stIconMaterial"],
+    [data-testid="stSidebarNav"] a [data-testid="stIconMaterial"] {
+        font-size: 20px !important;
+        color: #4B5563 !important;
+        font-weight: 400 !important;
+    }
+    [data-testid="stSidebarNav"] a[aria-current="page"] [data-testid="stIconMaterial"],
+    [data-testid="stSidebarNav"] a[data-selected="true"] [data-testid="stIconMaterial"] {
+        color: #111827 !important;
     }
 
     /* ========== HVIDT RUM OG LAYOUT (Stripe-inspireret) ========== */
@@ -418,6 +469,8 @@ if "relevante_sager" not in st.session_state:
     st.session_state.relevante_sager = []
 if "match_info" not in st.session_state:
     st.session_state.match_info = []
+if "sandsynligheder_dict" not in st.session_state:
+    st.session_state.sandsynligheder_dict = None
 
 
 def _auto_gem_klage_i_db(klage_dict):
@@ -769,6 +822,7 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.seneste_anonymisering = None
             st.session_state.relevante_sager = []
             st.session_state.match_info = []
+            st.session_state.sandsynligheder_dict = None
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -848,6 +902,22 @@ if st.session_state.get("aktuel_sag"):
                 st.session_state.relevante_sager = rel_sager
                 # Husk om denne genkørsel skyldtes sagsakter-ændring
                 st.session_state.sagsakter_opdaterede_vurdering = er_sagsakter_opdatering
+
+                # Sikr at dashboardet ALTID kan vises: prøv først tekst-parsing,
+                # og hvis den fejler, kør et struktureret fallback-AI-kald der
+                # tvinger tre procenter ud.
+                from vurdering import parse_sandsynligheder
+                _s = parse_sandsynligheder(auto_svar)
+                if not _s["fandt_alle_tre"]:
+                    with st.spinner("Finjusterer sandsynligheder..."):
+                        _strukt = udled_sandsynligheder_strukturelt(auto_svar)
+                    st.session_state.sandsynligheder_dict = _strukt
+                else:
+                    st.session_state.sandsynligheder_dict = {
+                        "fuld_medhold": _s["fuld_medhold"],
+                        "delvist_medhold": _s["delvist_medhold"],
+                        "afvist": _s["afvist"],
+                    }
 
                 # Generer struktureret metadata + match-begrundelse for hver
                 # relevant afgørelse (til de visuelle kort nedenfor)

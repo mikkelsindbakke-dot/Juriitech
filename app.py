@@ -51,10 +51,31 @@ if "er_admin" not in st.session_state:
 
 # ---------- MULTI-PAGE NAVIGATION ----------
 _pages = [
-    st.Page("forside.py", title="Forside", default=True, url_path="forside"),
-    st.Page("arkiv.py", title="Søg i arkivet", url_path="arkiv"),
-    st.Page("gemte_sager.py", title="Gemte sager", url_path="gemte-sager"),
-    st.Page("disclaimer.py", title="Disclaimer: læs inden brug", url_path="disclaimer"),
+    st.Page(
+        "forside.py",
+        title="Forside",
+        default=True,
+        url_path="forside",
+        icon=":material/home:",
+    ),
+    st.Page(
+        "arkiv.py",
+        title="Søg i arkivet",
+        url_path="arkiv",
+        icon=":material/search:",
+    ),
+    st.Page(
+        "gemte_sager.py",
+        title="Gemte sager",
+        url_path="gemte-sager",
+        icon=":material/folder:",
+    ),
+    st.Page(
+        "disclaimer.py",
+        title="Disclaimer",
+        url_path="disclaimer",
+        icon=":material/info:",
+    ),
 ]
 _pg = st.navigation(_pages)
 _pg.run()

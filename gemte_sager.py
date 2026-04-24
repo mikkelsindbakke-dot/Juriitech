@@ -54,6 +54,34 @@ st.markdown(
     .stApp, .main {
         background-color: #FFFFFF !important;
     }
+
+    /* ========== NAV-MENU — afrundede pillers, ikon + tekst ========== */
+    [data-testid="stSidebarNav"] { padding-top: 0.6rem !important; }
+    [data-testid="stSidebarNav"] ul { padding: 0 0.35rem !important; margin: 0 !important; }
+    [data-testid="stSidebarNav"] li { margin: 2px 0 !important; list-style: none !important; }
+    [data-testid="stSidebarNav"] a {
+        display: flex !important; align-items: center !important; gap: 12px !important;
+        padding: 9px 14px !important; border-radius: 10px !important;
+        font-family: 'Inter', sans-serif !important; font-size: 0.95rem !important;
+        font-weight: 500 !important; color: #374151 !important;
+        text-decoration: none !important; border: none !important;
+        transition: background-color 0.12s ease, color 0.12s ease !important;
+    }
+    [data-testid="stSidebarNav"] a:hover {
+        background-color: rgba(17, 24, 39, 0.05) !important; color: #111827 !important;
+    }
+    [data-testid="stSidebarNav"] a[aria-current="page"],
+    [data-testid="stSidebarNav"] a[data-selected="true"] {
+        background-color: rgba(17, 24, 39, 0.08) !important;
+        color: #111827 !important; font-weight: 600 !important;
+    }
+    [data-testid="stSidebarNav"] a [data-testid="stIconMaterial"] {
+        font-size: 20px !important; color: #4B5563 !important; font-weight: 400 !important;
+    }
+    [data-testid="stSidebarNav"] a[aria-current="page"] [data-testid="stIconMaterial"],
+    [data-testid="stSidebarNav"] a[data-selected="true"] [data-testid="stIconMaterial"] {
+        color: #111827 !important;
+    }
     .main .block-container {
         padding-top: 3rem !important;
         max-width: 1000px !important;
