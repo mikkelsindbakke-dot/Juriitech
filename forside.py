@@ -254,25 +254,25 @@ st.markdown(
     }
 
     /* ========== BADGES (Notion/Apple-style tags) ========== */
-    /* Mørkere, tungere tekstfarver så labels som 'Afvist', 'Delvist medhold'
-       er nemmere at læse på den lyse baggrund — matcher de mørke
-       tekstfarver i udfaldsdashboardet (#166534, #92400E, #9F1239). */
+    /* Mørke tekstfarver + øget opacitet på baggrunden så teksten er
+       let læselig på små pille-størrelser. Matcher paletten i
+       udfaldsdashboardet. */
     .badge {
         display: inline-block;
-        padding: 3px 10px;
+        padding: 4px 11px;
         border-radius: 100px;
-        font-size: 0.78rem;
-        font-weight: 700;
+        font-size: 0.8rem;
+        font-weight: 800;
         letter-spacing: 0.01em;
         line-height: 1.4;
         margin-right: 6px;
     }
-    .badge-green  { background: rgba(34, 197, 94, 0.22);  color: #166534; }
-    .badge-red    { background: rgba(239, 68, 68, 0.20);  color: #9F1239; }
-    .badge-yellow { background: rgba(234, 179, 8, 0.24);  color: #92400E; }
-    .badge-blue   { background: rgba(59, 130, 246, 0.18); color: #1E3A8A; }
-    .badge-gray   { background: rgba(100, 116, 139, 0.18); color: #334155; }
-    .badge-purple { background: rgba(139, 92, 246, 0.20); color: #581C87; }
+    .badge-green  { background: rgba(34, 197, 94, 0.32);  color: #14532D; }
+    .badge-red    { background: rgba(239, 68, 68, 0.30);  color: #881337; }
+    .badge-yellow { background: rgba(234, 179, 8, 0.34);  color: #713F12; }
+    .badge-blue   { background: rgba(59, 130, 246, 0.26); color: #172554; }
+    .badge-gray   { background: rgba(100, 116, 139, 0.22); color: #1E293B; }
+    .badge-purple { background: rgba(139, 92, 246, 0.26); color: #3B0764; }
 
     @media (prefers-color-scheme: dark) {
         .badge-green  { color: #86EFAC; }
