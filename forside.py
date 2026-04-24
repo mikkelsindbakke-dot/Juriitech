@@ -372,7 +372,7 @@ st.markdown(
     .jp-logo {
         display: inline-flex;
         align-items: center;
-        gap: 8px;
+        gap: 9px;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         font-weight: 800;
         font-size: 1.35rem;
@@ -381,6 +381,12 @@ st.markdown(
         margin: 0 0 0.35rem 0;
         user-select: none;
     }
+    /* Wordmark-wrapper sikrer at j + uriitech sidder som ét ord,
+       uden at flex-gap'et i den ydre container skyder dem fra hinanden. */
+    .jp-wordmark {
+        display: inline-flex;
+        align-items: baseline;
+    }
     .jp-j {
         color: #A5B4FC;     /* lys lavendel */
         font-weight: 800;
@@ -388,7 +394,6 @@ st.markdown(
     .jp-rest {
         color: #0A0B0F;
         font-weight: 800;
-        margin-right: 2px;
     }
     /* Den gule taleboble */
     .jp-pax {
@@ -769,8 +774,9 @@ with st.sidebar:
     # juriitech PAX-logo: lavendel 'j' + sort 'uriitech' + gul taleboble med PAX
     st.markdown(
         '<div class="jp-logo">'
-        '<span class="jp-j">j</span>'
-        '<span class="jp-rest">uriitech</span>'
+        '<span class="jp-wordmark">'
+        '<span class="jp-j">j</span><span class="jp-rest">uriitech</span>'
+        '</span>'
         '<span class="jp-pax">PAX</span>'
         '</div>',
         unsafe_allow_html=True,
