@@ -258,6 +258,65 @@ def _highlight_kildehenvisninger(tekst):
     )
 
 
+def render_sagsresume(resume_dict):
+    """
+    Renderer et kompakt 'Resume af sagen'-kort med fire felter:
+    emne, klagepunkter, krav og TUI's håndtering. Designet til at blive
+    placeret umiddelbart efter førstevurderingen så juristen lynhurtigt
+    kan fange essensen af sagen uden at læse hele analysen.
+
+    resume_dict forventes at indeholde nøglerne:
+        emne, klagepunkter (liste), krav, tui_handtering
+    """
+    if not resume_dict or not isinstance(resume_dict, dict):
+        return
+
+    import html as _html
+
+    emne = _html.escape(str(resume_dict.get("emne") or "").strip())
+    krav = _html.escape(str(resume_dict.get("krav") or "").strip())
+    tui = _html.escape(str(resume_dict.get("tui_handtering") or "").strip())
+    punkter = resume_dict.get("klagepunkter") or []
+
+    punkter_html = ""
+    if punkter:
+        punkter_html = "<ul class='sagsresume-liste'>"
+        for p in punkter:
+            punkter_html += f"<li>{_html.escape(str(p))}</li>"
+        punkter_html += "</ul>"
+    else:
+        punkter_html = (
+            "<p class='sagsresume-tom'>Ingen konkrete punkter udledt.</p>"
+        )
+
+    st.markdown(
+        f"""
+        <div class="sagsresume-kort">
+            <div class="sagsresume-header">
+                <span class="sagsresume-label">Resume af sagen</span>
+                <span class="sagsresume-hint">Lynoverblik</span>
+            </div>
+            <div class="sagsresume-emne">{emne}</div>
+            <div class="sagsresume-grid">
+                <div class="sagsresume-celle">
+                    <div class="sagsresume-celle-titel">Klagepunkter</div>
+                    <div class="sagsresume-celle-body">{punkter_html}</div>
+                </div>
+                <div class="sagsresume-celle">
+                    <div class="sagsresume-celle-titel">Klagers krav</div>
+                    <div class="sagsresume-celle-body"><p>{krav}</p></div>
+                </div>
+                <div class="sagsresume-celle sagsresume-celle-bred">
+                    <div class="sagsresume-celle-titel">TUI's håndtering indtil nu</div>
+                    <div class="sagsresume-celle-body"><p>{tui}</p></div>
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_analyse_som_pillars(svar_tekst):
     """
     Renderer en juridisk analyse som Apple-Health-inspirerede "pillars"

@@ -1068,6 +1068,93 @@ def udled_sandsynligheder_strukturelt(analyse_tekst):
     return None
 
 
+def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
+    """
+    Udtrækker et struktureret resume af sagen baseret på den allerede
+    genererede førstevurdering (og evt. sagsakter). Giver brugeren et
+    lynhurtigt overblik over hvad sagen handler om, klagepunkter, krav
+    og hvordan rejseselskabet har håndteret den indtil videre.
+
+    Returnerer en dict:
+      {
+        "emne": str,                 # 1-2 sætninger
+        "klagepunkter": [str, ...],  # 3-6 korte bullet points
+        "krav": str,                 # klagers krav med beløb hvis oplyst
+        "tui_handtering": str        # hvordan TUI har håndteret det indtil nu
+      }
+    eller None hvis udledningen fejler. Funktionen laver ét enkelt AI-kald
+    og er designet til at køre lige efter førstevurderingen.
+    """
+    import json as _json
+    import re as _re
+
+    if not analyse_tekst or not analyse_tekst.strip():
+        return None
+
+    ekstra_kontekst = ""
+    if sagsakter_tekst and sagsakter_tekst.strip():
+        ekstra_kontekst = (
+            f"\n\nSUPPLERENDE SAGSAKTER:\n{sagsakter_tekst[:3000]}"
+        )
+
+    prompt = (
+        "Baseret på nedenstående juridiske førstevurdering af en klagesag "
+        "fra Pakkerejse-Ankenævnet, udled et KORT struktureret resume af "
+        "sagen. Resuméet skal gøre det muligt for en jurist at få "
+        "lynhurtigt overblik over sagen.\n\n"
+        f"FØRSTEVURDERING:\n{analyse_tekst[:8000]}"
+        f"{ekstra_kontekst}\n\n"
+        "RETURNÉR KUN dette JSON-objekt — ingen forklaring, ingen "
+        "markdown, ingen kodeblok:\n"
+        "{\n"
+        '  "emne": "1-2 sætninger der forklarer hvad sagen handler om",\n'
+        '  "klagepunkter": ["kort punkt 1", "kort punkt 2", "..."],\n'
+        '  "krav": "en kort beskrivelse af hvad klager kræver, inkl. beløb hvis oplyst",\n'
+        '  "tui_handtering": "kort beskrivelse af hvordan rejseselskabet (TUI) har håndteret sagen INDEN Nævnet blev involveret"\n'
+        "}\n\n"
+        "KRAV:\n"
+        "- emne: 1-2 sætninger på dansk. Konkret, ikke generisk.\n"
+        "- klagepunkter: 3-6 bullet points, max ~15 ord hver.\n"
+        "- krav: skal indeholde beløb når de fremgår (fx '18.500 kr. i kompensation').\n"
+        "- tui_handtering: ærlig og kort. Hvis det ikke fremgår skriv 'fremgår ikke af bilagene'.\n"
+        "- Alt på dansk.\n"
+        "- Hvis en oplysning ikke fremgår, skriv 'fremgår ikke' frem for at opfinde."
+    )
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=800,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        svar = response.content[0].text.strip()
+        svar = _re.sub(r"^```(?:json)?\s*", "", svar)
+        svar = _re.sub(r"\s*```$", "", svar).strip()
+        data = _json.loads(svar)
+
+        emne = str(data.get("emne") or "").strip()
+        krav = str(data.get("krav") or "").strip()
+        tui = str(data.get("tui_handtering") or "").strip()
+        klagepunkter = data.get("klagepunkter") or []
+        if isinstance(klagepunkter, str):
+            klagepunkter = [klagepunkter]
+        klagepunkter = [str(k).strip() for k in klagepunkter if str(k).strip()]
+
+        if not emne:
+            return None
+
+        return {
+            "emne": emne,
+            "klagepunkter": klagepunkter,
+            "krav": krav or "fremgår ikke",
+            "tui_handtering": tui or "fremgår ikke af bilagene",
+        }
+    except Exception as e:
+        print(f"DEBUG: Sagsresume-udledning fejlede: {e}")
+        return None
+
+
 def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
     """
     Generér struktureret match-metadata for hver retriever-match, til brug i

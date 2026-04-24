@@ -23,11 +23,12 @@ from ai_engine import (
     anonymiser_sag,
     opsummer_matches_til_visning,
     udled_sandsynligheder_strukturelt,
+    udled_sagsresume_strukturelt,
 )
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
 from vurdering import vis_dashboard as vis_udfalds_dashboard
-from ui import thinking, render_analyse_som_pillars
+from ui import thinking, render_analyse_som_pillars, render_sagsresume
 
 
 # ---------- OPSÆTNING ----------
@@ -362,6 +363,106 @@ st.markdown(
         border: 1px solid rgba(17, 24, 39, 0.06);
     }
 
+    /* ========== RESUME AF SAGEN — lynoverblik efter førstevurdering ========== */
+    .sagsresume-kort {
+        background: #FFFFFF;
+        border: 1px solid rgba(17, 24, 39, 0.08);
+        border-radius: 18px;
+        padding: 1.75rem 2rem 1.5rem 2rem;
+        margin: 1.5rem 0;
+        box-shadow: 0 1px 3px rgba(17, 24, 39, 0.04);
+        position: relative;
+    }
+    .sagsresume-kort::before {
+        content: "";
+        position: absolute;
+        top: 1.75rem;
+        left: 0;
+        width: 3px;
+        height: 28px;
+        background: linear-gradient(180deg, #6366F1, #4F46E5);
+        border-radius: 0 3px 3px 0;
+    }
+    .sagsresume-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        margin-bottom: 0.5rem;
+    }
+    .sagsresume-label {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.78rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #6366F1;
+    }
+    .sagsresume-hint {
+        font-size: 0.75rem;
+        color: rgba(100, 116, 139, 0.8);
+        font-weight: 500;
+    }
+    .sagsresume-emne {
+        font-family: 'Source Serif 4', Georgia, serif;
+        font-size: 1.4rem;
+        font-weight: 600;
+        line-height: 1.35;
+        color: #0F172A;
+        letter-spacing: -0.015em;
+        margin-bottom: 1.25rem;
+    }
+    .sagsresume-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.1rem;
+    }
+    .sagsresume-celle {
+        background: #F8FAFC;
+        border: 1px solid rgba(17, 24, 39, 0.05);
+        border-radius: 12px;
+        padding: 0.95rem 1.1rem;
+    }
+    .sagsresume-celle-bred {
+        grid-column: 1 / -1;
+    }
+    .sagsresume-celle-titel {
+        font-size: 0.72rem;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: rgba(71, 85, 105, 0.9);
+        margin-bottom: 0.4rem;
+    }
+    .sagsresume-celle-body {
+        font-size: 0.92rem;
+        line-height: 1.55;
+        color: #1F2937;
+    }
+    .sagsresume-celle-body p {
+        margin: 0;
+        color: #1F2937;
+    }
+    .sagsresume-liste {
+        margin: 0;
+        padding-left: 1.1rem;
+    }
+    .sagsresume-liste li {
+        margin-bottom: 0.3rem;
+        color: #1F2937;
+    }
+    .sagsresume-liste li:last-child {
+        margin-bottom: 0;
+    }
+    .sagsresume-tom {
+        color: rgba(100, 116, 139, 0.8);
+        font-style: italic;
+        margin: 0;
+    }
+    @media (max-width: 720px) {
+        .sagsresume-grid { grid-template-columns: 1fr; }
+        .sagsresume-celle-bred { grid-column: auto; }
+    }
+
     /* ========== CUSTOM "THINKING"-ANIMATION (Claude-inspireret) ========== */
     .thinking-wrapper {
         display: flex;
@@ -509,6 +610,8 @@ if "match_info" not in st.session_state:
     st.session_state.match_info = []
 if "sandsynligheder_dict" not in st.session_state:
     st.session_state.sandsynligheder_dict = None
+if "sagsresume" not in st.session_state:
+    st.session_state.sagsresume = None
 
 
 def _auto_gem_klage_i_db(klage_dict):
@@ -861,6 +964,7 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.relevante_sager = []
             st.session_state.match_info = []
             st.session_state.sandsynligheder_dict = None
+            st.session_state.sagsresume = None
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -964,6 +1068,16 @@ if st.session_state.get("aktuel_sag"):
                         "delvist_medhold": _s["delvist_medhold"],
                         "afvist": _s["afvist"],
                     }
+
+                # Generér struktureret resume af sagen — lynoverblik der vises
+                # umiddelbart efter førstevurderingen så juristen hurtigt
+                # fanger sagens essens.
+                with st.spinner("Sammenfatter sagens essens..."):
+                    _resume = udled_sagsresume_strukturelt(
+                        analyse_tekst=auto_svar,
+                        sagsakter_tekst=st.session_state.get("sagsakter", ""),
+                    )
+                st.session_state.sagsresume = _resume
 
                 # Generer struktureret metadata + match-begrundelse for hver
                 # relevant afgørelse (til de visuelle kort nedenfor)
@@ -1150,6 +1264,12 @@ if st.session_state.get("aktuel_sag"):
         # store overskrifter, accent-striber, fremhævede kildehenvisninger.
         if st.session_state.auto_vurdering_tekst:
             render_analyse_som_pillars(st.session_state.auto_vurdering_tekst)
+
+        # Kompakt 'Resume af sagen' — lynoverblik efter førstevurderingen
+        # så juristen hurtigt ser hvad sagen handler om, klagepunkter,
+        # krav og hvordan TUI har håndteret den indtil videre.
+        if st.session_state.get("sagsresume"):
+            render_sagsresume(st.session_state.sagsresume)
 
         # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
         # (for ikke at rode UI'en). De bliver stadig automatisk brugt af Claude
@@ -1677,6 +1797,8 @@ if st.session_state.get("aktuel_sag"):
                 "auto_vurdering_tekst": st.session_state.get("auto_vurdering_tekst"),
                 "relevante_sager": st.session_state.get("relevante_sager") or [],
                 "match_info": st.session_state.get("match_info") or [],
+                "sandsynligheder_dict": st.session_state.get("sandsynligheder_dict"),
+                "sagsresume": st.session_state.get("sagsresume"),
                 "seneste_svar": st.session_state.get("seneste_svar"),
                 "seneste_svarbrev": st.session_state.get("seneste_svarbrev"),
                 "seneste_tjekliste": st.session_state.get("seneste_tjekliste"),

@@ -105,6 +105,8 @@ def _gendan_state_fra_json(state):
         "auto_vurdering_tekst",
         "relevante_sager",
         "match_info",
+        "sandsynligheder_dict",
+        "sagsresume",
         "seneste_svar",
         "seneste_svarbrev",
         "seneste_tjekliste",
