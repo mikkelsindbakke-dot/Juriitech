@@ -31,6 +31,7 @@ if "er_admin" not in st.session_state:
 _pages = [
     st.Page("forside.py", title="Forside", default=True, url_path="forside"),
     st.Page("arkiv.py", title="Søg i arkivet", url_path="arkiv"),
+    st.Page("gemte_sager.py", title="Gemte sager", url_path="gemte-sager"),
     st.Page("disclaimer.py", title="Disclaimer: læs inden brug", url_path="disclaimer"),
 ]
 _pg = st.navigation(_pages)

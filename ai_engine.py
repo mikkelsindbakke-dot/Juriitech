@@ -688,16 +688,17 @@ def generer_svarbrev(klage, sagsakter=None, ekstra_instrukser=None):
         return f"Fejl i generering af svarbrev: {str(e)}"
 
 
-def _byg_sag_content(sag, indled_tekst, slutnings_tekst):
+def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=None):
     """
-    Bygger Claude's message-content liste ud fra en sag (dict med 'filer'-nøgle).
+    Bygger Claude's message-content liste ud fra en sag og evt. sagsakter-filer.
 
-    Tekstfiler inlines som text-blokke med tydelige separatorer.
-    Scannede PDF'er (pdf_bytes) sendes som document-blokke så Claude
-    kan læse dem via vision.
+    Tekstfiler inlines som text-blokke.
+    Scannede PDF'er sendes som document-blokke (vision).
+    Billeder (PNG/JPEG) sendes som image-blokke (vision).
 
-    indled_tekst og slutnings_tekst er strenge der pakkes rundt om sagens filer
-    (typisk VIDENSBANK før og OPGAVE efter).
+    ekstra_sagsakter_filer (valgfri): liste af sagsakter-filer i samme format
+    som sag['filer']. Disse tilføjes efter sagens hovedfiler med egen
+    kategorisering som SAGSAKT.
     """
     import base64
 
@@ -712,14 +713,12 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst):
             rolle = fil.get("rolle", "ukendt")
             rolle_label = rolle.replace("_", " ").upper()
 
-            # Overskrift for filen
             header = (
                 f"\n--- FIL {i}/{len(filer)} — ROLLE: {rolle_label} — "
                 f"FILNAVN: {filnavn} ---\n"
             )
 
             if fil.get("type") == "pdf_bytes" and fil.get("bytes"):
-                # Scannet PDF — send som document-blok
                 content.append({
                     "type": "text",
                     "text": header + "[Scannet PDF — læs den via vision nedenfor]",
@@ -731,6 +730,61 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst):
                         "type": "base64",
                         "media_type": "application/pdf",
                         "data": pdf_b64,
+                    },
+                })
+            elif fil.get("type") == "image_bytes" and fil.get("bytes"):
+                content.append({
+                    "type": "text",
+                    "text": header + "[Billede — læs indholdet via vision]",
+                })
+                img_b64 = base64.standard_b64encode(fil["bytes"]).decode("utf-8")
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": fil.get("media_type", "image/png"),
+                        "data": img_b64,
+                    },
+                })
+            else:
+                tekst = fil.get("tekst") or "(tom)"
+                content.append({"type": "text", "text": header + tekst})
+
+    # Tilføj evt. sagsakter-filer (ekstra intern materiale uploadet af jurist)
+    if ekstra_sagsakter_filer:
+        content.append({
+            "type": "text",
+            "text": (
+                "\n\n========================================\n"
+                "SAGSAKTER — intern materiale fra rejseselskabet "
+                "(e-mails, screenshots, bookingdetaljer, mv.)\n"
+                "========================================\n"
+            ),
+        })
+        for j, fil in enumerate(ekstra_sagsakter_filer, 1):
+            filnavn = fil.get("filnavn", f"sagsakt{j}")
+            header = f"\n--- SAGSAKT {j} — FILNAVN: {filnavn} ---\n"
+
+            if fil.get("type") == "pdf_bytes" and fil.get("bytes"):
+                content.append({"type": "text", "text": header + "[Scannet PDF]"})
+                pdf_b64 = base64.standard_b64encode(fil["bytes"]).decode("utf-8")
+                content.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": pdf_b64,
+                    },
+                })
+            elif fil.get("type") == "image_bytes" and fil.get("bytes"):
+                content.append({"type": "text", "text": header + "[Screenshot/billede]"})
+                img_b64 = base64.standard_b64encode(fil["bytes"]).decode("utf-8")
+                content.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": fil.get("media_type", "image/png"),
+                        "data": img_b64,
                     },
                 })
             else:
@@ -856,7 +910,14 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         return []
 
 
-def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None, returner_relevante=False):
+def spoerg_ai_med_sag(
+    spoergsmaal,
+    sager,
+    sag,
+    sagsakter=None,
+    sagsakter_filer=None,
+    returner_relevante=False,
+):
     """
     Stil et spørgsmål mod vidensbanken MED en hel sag (flere filer) som
     udgangspunkt. Dette er den nye udgave af spoerg_ai_med_klage der
@@ -937,10 +998,14 @@ def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None, returner_relevant
             f"klageskema, og diverse bilag. Læs dem ALLE, krydsrefer mellem "
             f"klagerens påstande og bilagenes dokumentation, og identificér "
             f"uoverensstemmelser mellem klagerens version og rejseselskabets "
-            f"dokumentation. Brug vidensbanken til præcedens."
+            f"dokumentation. Brug vidensbanken til præcedens. Inddrag også "
+            f"eventuelle sagsakter-filer (screenshots, e-mails osv.) hvis "
+            f"de er vedhæftet."
         )
 
-        user_content = _byg_sag_content(sag, indled, slutning)
+        user_content = _byg_sag_content(
+            sag, indled, slutning, ekstra_sagsakter_filer=sagsakter_filer
+        )
 
         response = client.messages.create(
             model=MODEL,

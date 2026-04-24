@@ -96,6 +96,19 @@ def opret_tabeller():
             )
         """)
 
+        # 7. Gemte sager-tabel — hele sagens state (sag + sagsakter + vurdering)
+        #    gemmes som JSON så brugeren kan genoptage arbejde senere.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS gemte_sager (
+                id SERIAL PRIMARY KEY,
+                user_id TEXT,
+                titel TEXT NOT NULL,
+                state_json TEXT NOT NULL,
+                oprettet_dato TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                opdateret_dato TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         conn.commit()
         cur.close()
         conn.close()
@@ -354,6 +367,122 @@ def slet_arkiv_entry(entry_id):
         return True
     except Exception as e:
         print(f"DEBUG: Kunne ikke slette arkiv-indgang: {e}")
+        return False
+
+
+# ---------- GEMTE SAGER ----------
+
+def gem_sag_state(titel, state_json, user_id=None, sag_id=None):
+    """
+    Gemmer hele sagens state som JSON i gemte_sager-tabellen.
+    Hvis sag_id er angivet, opdateres en eksisterende række.
+    Ellers oprettes en ny.
+    Returnerer id'et på rækken.
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        if sag_id is not None:
+            cur.execute(
+                "UPDATE gemte_sager SET titel=%s, state_json=%s, "
+                "opdateret_dato=CURRENT_TIMESTAMP WHERE id=%s RETURNING id",
+                (titel, state_json, sag_id),
+            )
+            row = cur.fetchone()
+            ny_id = row[0] if row else None
+        else:
+            cur.execute(
+                "INSERT INTO gemte_sager (user_id, titel, state_json) "
+                "VALUES (%s, %s, %s) RETURNING id",
+                (user_id, titel, state_json),
+            )
+            ny_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return ny_id
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke gemme sag-state: {e}")
+        return None
+
+
+def hent_gemte_sager(user_id=None, begraens=50):
+    """
+    Returnerer listen af gemte sager sorteret efter opdateringsdato.
+    Hvis user_id=None returneres alle (til simpel brug indtil login indføres).
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        if user_id is None:
+            cur.execute(
+                "SELECT id, titel, oprettet_dato, opdateret_dato "
+                "FROM gemte_sager ORDER BY opdateret_dato DESC LIMIT %s",
+                (begraens,),
+            )
+        else:
+            cur.execute(
+                "SELECT id, titel, oprettet_dato, opdateret_dato "
+                "FROM gemte_sager WHERE user_id=%s "
+                "ORDER BY opdateret_dato DESC LIMIT %s",
+                (user_id, begraens),
+            )
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {
+                "id": r[0],
+                "titel": r[1],
+                "oprettet_dato": r[2],
+                "opdateret_dato": r[3],
+            }
+            for r in raekker
+        ]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente gemte sager: {e}")
+        return []
+
+
+def hent_gemt_sag(sag_id):
+    """Returnerer en gemt sag inklusive dens state-JSON, eller None."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, titel, state_json, oprettet_dato, opdateret_dato "
+            "FROM gemte_sager WHERE id=%s",
+            (sag_id,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "titel": row[1],
+            "state_json": row[2],
+            "oprettet_dato": row[3],
+            "opdateret_dato": row[4],
+        }
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente gemt sag: {e}")
+        return None
+
+
+def slet_gemt_sag(sag_id):
+    """Sletter en gemt sag permanent."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM gemte_sager WHERE id=%s", (sag_id,))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke slette gemt sag: {e}")
         return False
 
 

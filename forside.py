@@ -11,6 +11,7 @@ from database import (
     gem_i_arkiv,
     hent_arkiv,
     slet_arkiv_entry,
+    gem_sag_state,
 )
 from ai_engine import (
     spoerg_ai,
@@ -393,6 +394,14 @@ if "sidste_klage_filnavn" not in st.session_state:
     st.session_state.sidste_klage_filnavn = None
 if "sagsakter" not in st.session_state:
     st.session_state.sagsakter = ""
+if "sagsakter_filer" not in st.session_state:
+    # Liste af dicts: {filnavn, type ('tekst'|'pdf_bytes'|'image_bytes'),
+    # tekst, bytes, media_type}
+    st.session_state.sagsakter_filer = []
+if "sagsakter_signatur" not in st.session_state:
+    st.session_state.sagsakter_signatur = None
+if "sagsakter_opdaterede_vurdering" not in st.session_state:
+    st.session_state.sagsakter_opdaterede_vurdering = False
 if "seneste_svar" not in st.session_state:
     st.session_state.seneste_svar = None
 if "seneste_svarbrev" not in st.session_state:
@@ -677,6 +686,9 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.aktuel_sag = None
             st.session_state.sidste_sagsfil_signatur = None
             st.session_state.sagsakter = ""
+            st.session_state.sagsakter_filer = []
+            st.session_state.sagsakter_signatur = None
+            st.session_state.sagsakter_opdaterede_vurdering = False
             st.session_state.auto_vurdering_tekst = None
             st.session_state.auto_vurdering_for_signatur = None
             st.session_state.seneste_svar = None
@@ -698,12 +710,29 @@ if st.session_state.get("aktuel_sag"):
             st.markdown(f"**{i}. {fil['filnavn']}** · *{rolle}*{tegn_info}")
 
     # ---------- AUTOMATISK FØRSTEVURDERING ----------
-    # Når en sag er uploadet (ny signatur), kør en kort analyse med
-    # sandsynlighedsvurdering så brugeren får det farvekodede dashboard
-    # med det samme — uden at skulle stille et spørgsmål først.
+    # Beregn kombineret signatur af sag + sagsakter. Hvis den ændrer sig,
+    # genkøres vurderingen så den tager højde for nye sagsakter.
+    def _beregn_kombineret_signatur():
+        sag_sig = st.session_state.sidste_sagsfil_signatur or ()
+        sagsakter_tekst = st.session_state.get("sagsakter", "") or ""
+        sagsakter_filer = st.session_state.get("sagsakter_filer", []) or []
+        # Signatur = filnavne + total bytes + hash af teksten
+        sagsakter_sig = tuple(
+            (f["filnavn"], len(f.get("bytes") or b""), len(f.get("tekst") or ""))
+            for f in sagsakter_filer
+        )
+        return (sag_sig, hash(sagsakter_tekst), sagsakter_sig)
+
+    kombineret_sig = _beregn_kombineret_signatur()
     skal_auto_vurdere = (
-        st.session_state.auto_vurdering_for_signatur
-        != st.session_state.sidste_sagsfil_signatur
+        st.session_state.auto_vurdering_for_signatur != kombineret_sig
+    )
+
+    # Bestem om dette er en re-genkørsel pga. sagsakter (ikke første analyse)
+    er_sagsakter_opdatering = (
+        skal_auto_vurdere
+        and st.session_state.auto_vurdering_for_signatur is not None
+        and st.session_state.auto_vurdering_tekst is not None
     )
     if skal_auto_vurdere:
         with st.spinner(
@@ -740,10 +769,13 @@ if st.session_state.get("aktuel_sag"):
                     sager=[],
                     sag=st.session_state.aktuel_sag,
                     sagsakter=st.session_state.get("sagsakter", ""),
+                    sagsakter_filer=st.session_state.get("sagsakter_filer", []),
                     returner_relevante=True,
                 )
                 st.session_state.auto_vurdering_tekst = auto_svar
                 st.session_state.relevante_sager = rel_sager
+                # Husk om denne genkørsel skyldtes sagsakter-ændring
+                st.session_state.sagsakter_opdaterede_vurdering = er_sagsakter_opdatering
 
                 # Generer struktureret metadata + match-begrundelse for hver
                 # relevant afgørelse (til de visuelle kort nedenfor)
@@ -758,9 +790,9 @@ if st.session_state.get("aktuel_sag"):
                     )
                 else:
                     st.session_state.match_info = []
-                st.session_state.auto_vurdering_for_signatur = (
-                    st.session_state.sidste_sagsfil_signatur
-                )
+                # Gem den KOMBINEREDE signatur (sag + sagsakter), så vi
+                # detekterer ændringer i begge dele
+                st.session_state.auto_vurdering_for_signatur = kombineret_sig
 
                 # Gem også i arkivet
                 sag_filer_for_arkiv = st.session_state.aktuel_sag.get("filer") or []
@@ -785,6 +817,28 @@ if st.session_state.get("aktuel_sag"):
     # Vis dashboard + selve teksten hvis vi har en førstevurdering
     if st.session_state.auto_vurdering_tekst:
         st.markdown("### Førstevurdering af sagen")
+
+        # Opdateringsnotifikation — vises hvis sagsakter har ændret vurderingen
+        if st.session_state.get("sagsakter_opdaterede_vurdering"):
+            st.markdown(
+                """
+                <div style="
+                    background-color: #EEF2FF;
+                    color: #3730A3;
+                    padding: 12px 16px;
+                    border-radius: 8px;
+                    margin-bottom: 16px;
+                    border-left: 4px solid #6366F1;
+                    font-size: 0.92rem;
+                ">
+                    <strong>Opdateret vurdering:</strong> Disse afsnit er opdateret som
+                    følge af de uploadede sagsakter. Analysen tager nu højde for
+                    det nye materiale.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
         vis_udfalds_dashboard(st.session_state.auto_vurdering_tekst)
 
         # Visuelle kort for de 3-5 mest relevante tidligere sager
@@ -915,39 +969,150 @@ if st.session_state.get("aktuel_sag"):
         # og indgår i prompten uden at være synlige som visuelle kort.
 
 
-    # ---------- SAGSAKTER (C4C, e-mails, bookingdetaljer) ----------
-    with st.expander(
-        "Sagsakter til denne klage — C4C-notater, e-mails, bookingdetaljer",
-        expanded=False,
-    ):
-        st.caption(
-            "Paste al relevant intern information om *denne* klage ind her: "
-            "destinationens reklamationsrapport fra C4C, e-mail-korrespondance "
-            "med kunden, bookingbekræftelsen, tilkøb, osv. juriitech PAX bruger det "
-            "som ekstra kontekst i sin analyse. Teksten gemmes IKKE permanent "
-            "i vidensbanken — kun for denne specifikke analyse."
-        )
+    # ---------- SAGSAKTER — Apple Health-styled sektion ----------
+    # Farvet pillar (purple, matcher juriitech primary accent) der skiller sig ud
+    st.markdown(
+        """
+        <div class="analyse-pillar"
+             style="--pillar-bg: #F0EEFD; --pillar-accent: #6366F1;">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">Sagsakter til denne sag</h2>
+            <div class="analyse-pillar-body">
+                <p>Her kan du uploade yderligere filer om sagen, såsom
+                mailkorrespondancer, tekstbeskeder, bookingdetaljer,
+                screenshots m.m. — altså information som juriitech PAX
+                ikke automatisk har adgang til.</p>
+                <p>Når du tilføjer sagsakter, genberegnes analysen
+                automatisk, så vurderingen tager højde for den nye
+                information.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # File uploader — accepterer PDF, DOCX, PNG, JPG
+    nye_filer = st.file_uploader(
+        "Upload sagsakter (PDF, DOCX, PNG eller JPG)",
+        type=["pdf", "docx", "png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="sagsakter_uploader",
+        help=(
+            "Uploadede filer persisterer på tværs af handlinger. "
+            "Screenshots af skærmbilleder, tekstbeskeder osv. læses "
+            "via vision og indgår i analysen."
+        ),
+    )
+
+    # Håndter nye uploads — tilføj til listen, undgå dubletter
+    if nye_filer:
+        _eksisterende_navne = {f["filnavn"] for f in st.session_state.sagsakter_filer}
+        for f in nye_filer:
+            if f.name in _eksisterende_navne:
+                continue
+            data = f.getvalue()
+            navn_lower = f.name.lower()
+            if navn_lower.endswith((".png",)):
+                st.session_state.sagsakter_filer.append({
+                    "filnavn": f.name,
+                    "type": "image_bytes",
+                    "bytes": data,
+                    "media_type": "image/png",
+                    "tekst": "",
+                })
+            elif navn_lower.endswith((".jpg", ".jpeg")):
+                st.session_state.sagsakter_filer.append({
+                    "filnavn": f.name,
+                    "type": "image_bytes",
+                    "bytes": data,
+                    "media_type": "image/jpeg",
+                    "tekst": "",
+                })
+            elif navn_lower.endswith(".pdf"):
+                # Prøv tekstudtræk; hvis for lidt, behandl som scannet PDF
+                from io import BytesIO
+                from processor import laes_pdf_tekst, SCANNET_TAERSKEL
+                try:
+                    udtrukket = laes_pdf_tekst(BytesIO(data))
+                except Exception:
+                    udtrukket = ""
+                if len(udtrukket.strip()) >= SCANNET_TAERSKEL:
+                    st.session_state.sagsakter_filer.append({
+                        "filnavn": f.name,
+                        "type": "tekst",
+                        "tekst": udtrukket,
+                        "bytes": data,
+                        "media_type": "application/pdf",
+                    })
+                else:
+                    st.session_state.sagsakter_filer.append({
+                        "filnavn": f.name,
+                        "type": "pdf_bytes",
+                        "bytes": data,
+                        "tekst": "",
+                        "media_type": "application/pdf",
+                    })
+            elif navn_lower.endswith(".docx"):
+                from io import BytesIO
+                from processor import laes_word_tekst
+                try:
+                    udtrukket = laes_word_tekst(BytesIO(data))
+                except Exception:
+                    udtrukket = "[Kunne ikke læse DOCX]"
+                st.session_state.sagsakter_filer.append({
+                    "filnavn": f.name,
+                    "type": "tekst",
+                    "tekst": udtrukket,
+                    "bytes": data,
+                    "media_type": None,
+                })
+
+    # Vis liste af uploadede sagsakter med fjern-knapper
+    if st.session_state.sagsakter_filer:
+        st.markdown("**Uploadede sagsakter:**")
+        _fil_til_fjern = None
+        for idx, fil in enumerate(st.session_state.sagsakter_filer):
+            kol_a, kol_b = st.columns([10, 1])
+            with kol_a:
+                ikon = {
+                    "image_bytes": "🖼",
+                    "pdf_bytes": "📄",
+                    "tekst": "📄",
+                }.get(fil["type"], "📄")
+                laengde_info = ""
+                if fil["type"] == "tekst" and fil.get("tekst"):
+                    laengde_info = f" — {len(fil['tekst'])} tegn læst"
+                elif fil["type"] == "image_bytes":
+                    laengde_info = " — scannes via vision"
+                elif fil["type"] == "pdf_bytes":
+                    laengde_info = " — scannet PDF (læses via vision)"
+                st.markdown(
+                    f"<div style='padding: 6px 10px;'>"
+                    f"<strong>{fil['filnavn']}</strong>"
+                    f"<span style='color: #6B7280;'>{laengde_info}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with kol_b:
+                if st.button("✕", key=f"sagsakter_fjern_{idx}", help="Fjern fil"):
+                    _fil_til_fjern = idx
+
+        if _fil_til_fjern is not None:
+            st.session_state.sagsakter_filer.pop(_fil_til_fjern)
+            st.rerun()
+
+    # Free-text notater (bevares til backward compat + bruges til hurtige noter)
+    with st.expander("Skriv yderligere noter (valgfri)", expanded=False):
         st.session_state.sagsakter = st.text_area(
-            "Sagsakter",
+            "Noter",
             value=st.session_state.get("sagsakter", ""),
-            height=200,
+            height=160,
             placeholder=(
-                "Eksempel:\n\n"
-                "— C4C-reklamation fra destination (2024-08-14) —\n"
-                "Kunde klagede over rengøringsstandard dag 2. Destination "
-                "undersøgte og tilbød værelsesskift som kunde accepterede...\n\n"
-                "— E-mail fra kunde (2024-08-20) —\n"
-                "...\n\n"
-                "— Bookingdetaljer —\n"
-                "Boookingnr: 12345678, Afrejse 10/8-2024, TUI Blue Hotel Rhodos..."
+                "Yderligere noter du vil inkludere i analysen — fx kommentarer, "
+                "status eller sammenfattede oplysninger fra andre kilder."
             ),
             label_visibility="collapsed",
         )
-        if st.session_state.sagsakter:
-            st.caption(
-                f"✏️ {len(st.session_state.sagsakter)} tegn sagsakter — "
-                f"inkluderes i næste analyse"
-            )
 
 st.divider()
 
@@ -1235,6 +1400,103 @@ if st.session_state.get("aktuel_sag"):
             type="primary",
             key="download_svarbrev",
         )
+
+
+# ---------- GEM SAGEN ----------
+# Knappen vises kun hvis brugeren har en aktiv sag
+if st.session_state.get("aktuel_sag"):
+    st.divider()
+
+    st.markdown(
+        """
+        <div class="analyse-pillar"
+             style="--pillar-bg: #E7F5DD; --pillar-accent: #76D672;">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">Gem din sagsbehandling</h2>
+            <div class="analyse-pillar-body">
+                <p>Gem alt det du har lavet indtil videre. Du kan genoptage
+                sagen præcis hvor du slap — under menupunktet
+                <strong>Gemte sager</strong> til venstre.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Foreslået titel baseret på sagens hovedfil (klageskema)
+    _sag_filer_for_titel = st.session_state.aktuel_sag.get("filer") or []
+    _standard_titel = "Sag uden navn"
+    for _f in _sag_filer_for_titel:
+        if _f.get("rolle") == "klageskema":
+            _standard_titel = _f["filnavn"].rsplit(".", 1)[0]
+            break
+    if _standard_titel == "Sag uden navn" and _sag_filer_for_titel:
+        _standard_titel = _sag_filer_for_titel[0]["filnavn"].rsplit(".", 1)[0]
+
+    gem_titel = st.text_input(
+        "Titel på den gemte sag",
+        value=st.session_state.get("aktiv_gemt_sag_titel", _standard_titel),
+        help="Giv sagen et navn så du kan finde den igen under Gemte sager.",
+    )
+
+    kol_gem, kol_status = st.columns([1, 3])
+    with kol_gem:
+        if st.button("Gem sagen", type="primary", key="gem_sag_knap"):
+            import json as _json
+            import base64 as _b64
+
+            # Byg state-dict. bytes serialiseres som base64-strenge
+            def _serialiser_fil(fil):
+                d = dict(fil)
+                if d.get("bytes"):
+                    d["bytes_b64"] = _b64.b64encode(d["bytes"]).decode("ascii")
+                    d.pop("bytes", None)
+                return d
+
+            aktuel = st.session_state.aktuel_sag or {}
+            state = {
+                "aktuel_sag": {
+                    **{k: v for k, v in aktuel.items() if k != "filer"},
+                    "filer": [
+                        _serialiser_fil(f) for f in (aktuel.get("filer") or [])
+                    ],
+                },
+                "sagsakter": st.session_state.get("sagsakter", ""),
+                "sagsakter_filer": [
+                    _serialiser_fil(f)
+                    for f in (st.session_state.get("sagsakter_filer") or [])
+                ],
+                "auto_vurdering_tekst": st.session_state.get("auto_vurdering_tekst"),
+                "relevante_sager": st.session_state.get("relevante_sager") or [],
+                "match_info": st.session_state.get("match_info") or [],
+                "seneste_svar": st.session_state.get("seneste_svar"),
+                "seneste_svarbrev": st.session_state.get("seneste_svarbrev"),
+                "seneste_tjekliste": st.session_state.get("seneste_tjekliste"),
+                "seneste_anonymisering": st.session_state.get("seneste_anonymisering"),
+            }
+
+            # Gem — opdater eksisterende sag hvis vi allerede har et ID
+            eksisterende_id = st.session_state.get("aktiv_gemt_sag_id")
+            ny_id = gem_sag_state(
+                titel=gem_titel or "Sag uden navn",
+                state_json=_json.dumps(state, default=str, ensure_ascii=False),
+                user_id=None,
+                sag_id=eksisterende_id,
+            )
+            if ny_id:
+                st.session_state.aktiv_gemt_sag_id = ny_id
+                st.session_state.aktiv_gemt_sag_titel = gem_titel
+                st.session_state.sidst_gemt_besked = (
+                    f"Sagen '{gem_titel}' er gemt. Du kan finde den under "
+                    "'Gemte sager' i menuen."
+                )
+            else:
+                st.session_state.sidst_gemt_besked = "Kunne ikke gemme sagen."
+            st.rerun()
+
+    with kol_status:
+        if st.session_state.get("sidst_gemt_besked"):
+            st.success(st.session_state.sidst_gemt_besked)
 
 
 # ---------- ARKIV OVER TIDLIGERE ANALYSER OG SVARBREVE ----------
