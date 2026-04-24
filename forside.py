@@ -472,8 +472,32 @@ with st.sidebar:
     st.title("juriitech PAX")
     st.caption("Juridisk AI til Pakkerejse-Ankenævnet")
 
-    antal = hent_antal_sager()
-    st.metric(label="Sager i vidensbanken", value=antal)
+    st.markdown(
+        """
+        <div style="margin-top: 1.5rem; margin-bottom: 1rem;">
+            <div style="font-size: 0.9rem; font-weight: 600; color: #374151;
+                        margin-bottom: 0.5rem;">
+                juriitech PAX's videnstank
+            </div>
+            <ul style="list-style: none; padding: 0; margin: 0;
+                       font-size: 0.85rem; color: #4B5563;">
+                <li style="padding: 4px 0;">
+                    <span style="color: #6366F1;">•</span>
+                    +500 afgørelser fra Pakkerejse-Ankenævnet
+                </li>
+                <li style="padding: 4px 0;">
+                    <span style="color: #6366F1;">•</span>
+                    Pakkerejselovgivningen
+                </li>
+                <li style="padding: 4px 0;">
+                    <span style="color: #6366F1;">•</span>
+                    Brugerens uploadede sager
+                </li>
+            </ul>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
     if not ER_ADMIN:
         # Bruger-interface: kort og venligt
@@ -1192,11 +1216,11 @@ if st.session_state.get("aktuel_sag"):
     st.divider()
     st.header("Stil spørgsmål til sagen")
 
-    antal = hent_antal_sager()
     _sag_filer = st.session_state.aktuel_sag.get("filer") or []
     st.caption(
         f"Samtalen tager udgangspunkt i den uploadede sag "
-        f"({len(_sag_filer)} filer) og hele vidensbanken ({antal} sager)."
+        f"({len(_sag_filer)} filer), tidligere afgørelser fra "
+        f"Pakkerejse-Ankenævnet og pakkerejseloven."
     )
 
     spoergsmaal = st.text_input(
