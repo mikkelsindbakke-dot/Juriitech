@@ -224,3 +224,150 @@ def svarbrev_til_docx(svarbrev, klage_filnavn=None):
         titel="Udkast til svarbrev — Pakkerejseankenævnet",
         undertitel=undertitel,
     )
+
+
+# ---------- PDF-EKSPORT (bruges primært til anonymiserede bilag) ----------
+
+def markdown_til_pdf_bytes(markdown_tekst, titel="Dokument", undertitel=None):
+    """
+    Konverterer en markdown-tekst til en simpel, læsbar PDF.
+    Returnerer bytes. Bruges fx til anonymiserede bilag hvor brugeren
+    foretrækker PDF over Word.
+
+    Reportlab importes lokalt så evt. miljøer uden reportlab stadig kan
+    importere modulet (eksport til docx bliver ikke påvirket).
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.platypus import (
+        SimpleDocTemplate, Paragraph, Spacer, ListFlowable, ListItem,
+    )
+
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=A4,
+        leftMargin=2.2 * cm,
+        rightMargin=2.2 * cm,
+        topMargin=2.4 * cm,
+        bottomMargin=2.4 * cm,
+        title=titel,
+    )
+
+    styles = getSampleStyleSheet()
+    titel_style = ParagraphStyle(
+        "DocTitel",
+        parent=styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        spaceAfter=6,
+    )
+    undertitel_style = ParagraphStyle(
+        "DocUndertitel",
+        parent=styles["Italic"],
+        fontSize=10,
+        textColor="#64748B",
+        spaceAfter=18,
+    )
+    body_style = ParagraphStyle(
+        "Body",
+        parent=styles["BodyText"],
+        fontName="Helvetica",
+        fontSize=11,
+        leading=16,
+        spaceAfter=8,
+        alignment=TA_LEFT,
+    )
+    h2_style = ParagraphStyle(
+        "H2",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=13,
+        spaceBefore=12,
+        spaceAfter=6,
+    )
+    h3_style = ParagraphStyle(
+        "H3",
+        parent=styles["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        spaceBefore=10,
+        spaceAfter=4,
+    )
+
+    flow = []
+    flow.append(Paragraph(_escape_html(titel), titel_style))
+    if undertitel:
+        flow.append(Paragraph(_escape_html(undertitel), undertitel_style))
+
+    linjer = (markdown_tekst or "").split("\n")
+    bullet_buffer = []
+
+    def flush_bullets():
+        if not bullet_buffer:
+            return
+        items = [
+            ListItem(Paragraph(_md_inline_til_html(b), body_style))
+            for b in bullet_buffer
+        ]
+        flow.append(ListFlowable(
+            items,
+            bulletType="bullet",
+            start="•",
+            leftIndent=18,
+            bulletFontName="Helvetica",
+            bulletFontSize=10,
+        ))
+        bullet_buffer.clear()
+
+    for raa in linjer:
+        linje = raa.rstrip()
+        if not linje.strip():
+            flush_bullets()
+            flow.append(Spacer(1, 4))
+            continue
+
+        if linje.startswith("# "):
+            flush_bullets()
+            flow.append(Paragraph(_md_inline_til_html(linje[2:]), titel_style))
+        elif linje.startswith("## "):
+            flush_bullets()
+            flow.append(Paragraph(_md_inline_til_html(linje[3:]), h2_style))
+        elif linje.startswith("### "):
+            flush_bullets()
+            flow.append(Paragraph(_md_inline_til_html(linje[4:]), h3_style))
+        elif linje.lstrip().startswith(("- ", "* ")):
+            content = linje.lstrip()[2:]
+            bullet_buffer.append(content)
+        else:
+            flush_bullets()
+            flow.append(Paragraph(_md_inline_til_html(linje), body_style))
+
+    flush_bullets()
+
+    doc.build(flow)
+    return buf.getvalue()
+
+
+def _escape_html(s):
+    """Minimal HTML-escape til reportlab Paragraph."""
+    return (
+        (s or "")
+        .replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+    )
+
+
+def _md_inline_til_html(tekst):
+    """
+    Konverterer markdown inline-formatering til de mini-HTML-tags som
+    reportlab's Paragraph forstår. Understøtter **fed** og *kursiv*.
+    """
+    tekst = _escape_html(tekst)
+    tekst = INLINE_BOLD.sub(r"<b>\1</b>", tekst)
+    tekst = INLINE_ITALIC.sub(r"<i>\1</i>", tekst)
+    return tekst

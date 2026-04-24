@@ -34,6 +34,14 @@ TOP_K_FALLBACK = 8
 # prompten mod ekstremt lange dokumenter og holder svartiden nede.
 MAX_CHARS_PR_SAG = 15_000
 
+# ---------- ORGANISATIONS-KONSTANTER ----------
+# Indtil vi har et rigtigt login-system, hardcodes organisations-
+# specifikke værdier her. Når juriitech-kontoen bygges, flyttes disse
+# til brugerens organisations-profil (så TUI-brugere får 'TUI' og
+# 'After Travel team', Apollo-brugere får deres egne termer, osv.).
+REJSESELSKAB_NAVN = "TUI"
+REJSESELSKAB_SAGSBEHANDLER = "TUIs After Travel team"
+
 # Øvre grænse på samlet anonymiseringsreglerblok vi injicerer i prompten.
 # ~18000 tegn ≈ 4500 tokens — rummeligt nok til at dække Datatilsynets
 # vejledninger + de centrale dele af Article 29 WP216, uden at gøre
@@ -469,6 +477,111 @@ def anonymiser_tekst(tekst, filnavn=None):
         return f"[Fejl i anonymisering: {str(e)}]"
 
 
+def _anonymiser_enkeltfil(fil):
+    """
+    Anonymiserer én fil (dict med nøglerne 'filnavn', 'type', 'tekst',
+    'rolle'). Returnerer et resultat-dict med samme format som
+    anonymiser_sag returnerer for hvert element.
+    """
+    filnavn = fil.get("filnavn", "ukendt")
+    rolle = fil.get("rolle", "ukendt")
+
+    # Vejledninger/retningslinjer fra Nævnet skal ikke anonymiseres
+    if rolle == "vejledning":
+        return {
+            "filnavn": filnavn,
+            "original_laengde": 0,
+            "anonymiseret_tekst": "",
+            "status": "sprunget_over",
+            "bemaerkning": (
+                "Vejledning/retningslinjer fra Nævnet — "
+                "ikke relevant at anonymisere"
+            ),
+        }
+
+    if rolle == "høring":
+        return {
+            "filnavn": filnavn,
+            "original_laengde": 0,
+            "anonymiseret_tekst": "",
+            "status": "sprunget_over",
+            "bemaerkning": (
+                "Høringsbrev fra Nævnet — skal ikke sendes tilbage, "
+                "anonymiseres ikke"
+            ),
+        }
+
+    if fil.get("type") == "pdf_bytes":
+        return {
+            "filnavn": filnavn,
+            "original_laengde": 0,
+            "anonymiseret_tekst": "",
+            "status": "sprunget_over",
+            "bemaerkning": (
+                "Scannet PDF — kan ikke anonymiseres automatisk "
+                "(kræver OCR). Anonymisér manuelt eller konvertér først "
+                "til søgbar PDF."
+            ),
+        }
+
+    if fil.get("type") in ("image_bytes", "mp4_skipped"):
+        return {
+            "filnavn": filnavn,
+            "original_laengde": 0,
+            "anonymiseret_tekst": "",
+            "status": "sprunget_over",
+            "bemaerkning": (
+                "Billede eller video — kan ikke anonymiseres tekstuelt. "
+                "Gennemse manuelt inden sagsfremstilling."
+            ),
+        }
+
+    tekst = fil.get("tekst") or ""
+    if not tekst.strip():
+        return {
+            "filnavn": filnavn,
+            "original_laengde": 0,
+            "anonymiseret_tekst": "",
+            "status": "sprunget_over",
+            "bemaerkning": "Tom fil — intet at anonymisere",
+        }
+
+    try:
+        anonymiseret = anonymiser_tekst(tekst, filnavn=filnavn)
+        return {
+            "filnavn": filnavn,
+            "original_laengde": len(tekst),
+            "anonymiseret_tekst": anonymiseret,
+            "status": "ok",
+            "bemaerkning": (
+                f"Anonymiseret. Original: {len(tekst)} tegn, "
+                f"anonymiseret: {len(anonymiseret)} tegn."
+            ),
+        }
+    except Exception as e:
+        return {
+            "filnavn": filnavn,
+            "original_laengde": len(tekst),
+            "anonymiseret_tekst": "",
+            "status": "fejl",
+            "bemaerkning": f"Fejl: {e}",
+        }
+
+
+def anonymiser_valgte_filer(filer_liste):
+    """
+    Anonymiserer en LISTE af filer (enhver blanding af sag-filer og
+    sagsakter-filer). Bruges når brugeren selv vælger hvilke filer der
+    skal anonymiseres via checkboxes i UI'et.
+
+    Returnerer en liste af resultat-dicts — ét pr. fil, i samme
+    rækkefølge som input.
+    """
+    if not filer_liste:
+        return []
+    return [_anonymiser_enkeltfil(f) for f in filer_liste]
+
+
 def anonymiser_sag(sag):
     """
     Anonymiserer alle tekst-baserede filer i en sag. Returnerer en liste af
@@ -642,26 +755,44 @@ def generer_tjekliste(sag):
         return f"Fejl i generering af tjekliste: {str(e)}"
 
 
-SVARBREV_OPGAVE = """
-OPGAVE: Generer et KOMPLET UDKAST til svarbrev fra rejseselskabet til
-Pakkerejseankenævnet, struktureret som nedenfor. Skriv i et formelt,
-professionelt juridisk sprog — men ikke stivt. Brug præcise henvisninger
-til rejsevilkårene, sagsakterne og pakkerejseloven.
+SVARBREV_OPGAVE = f"""
+OPGAVE: Generer et KOMPLET UDKAST til svarbrev fra {REJSESELSKAB_NAVN} til
+Pakkerejseankenævnet. Skriv i et formelt, professionelt juridisk sprog —
+men ikke stivt. Brug præcise henvisninger til rejsevilkårene, sagsakterne
+og pakkerejseloven.
+
+LÆNGDE — ABSOLUT KRAV:
+Brevet skal være KORT. Maksimalt 1-2 A4-sider (omtrent 500-900 ord samlet).
+Pakkerejse-Ankenævnet ønsker ikke lange retsskrivelser — hold dig kort,
+præcist og juridisk skarpt. Undlad fyld, gentagelser og retoriske
+formuleringer. Den bedste svarbrev er det korte, klare og velfunderede.
 
 UNDLAD bevidst at citere tidligere afgørelser fra Nævnet — det forventes
 ikke i rejsearrangørens svar og gør brevet for detaljeret.
 
+UNDLAD også alt der lyder for 'domstolsagtigt':
+  - Ingen "påstand"-sektion
+  - Ingen formel "konklusion"-sektion med "anmoder Nævnet om at ..."
+  - Ingen udtrykkelig "stillingtagen til kravet"-overskrift
+  Pakkerejse-Ankenævnet er ikke en domstol. Skriv direkte og jordnært.
+
+TERMINOLOGI — brug disse konsekvent:
+  • Rejseselskabet omtales ALTID som "{REJSESELSKAB_NAVN}" — aldrig "rejseselskabet", "vi", "rejsearrangøren" eller lignende.
+  • Klageren omtales ALTID som "Klager" (ikke "K", ikke klagerens rigtige navn, ikke fornavn).
+  • Ved flere klagere: "Klager 1", "Klager 2", osv.
+  • Underskriftslinje/afsender skal altid være "{REJSESELSKAB_SAGSBEHANDLER}" — aldrig "[Navn på sagsbehandler]" eller personnavne.
+
 ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
 Svarbrevet til Nævnet MÅ UNDER INGEN OMSTÆNDIGHEDER indeholde klagerens
-navn eller andre personhenførbare oplysninger i nogen som helst form —
-hverken for- eller efternavn, heller ikke i overskrifter, indledning,
-underskrift, bilagshenvisninger, citater, e-mails eller andre steder.
-Følg disse regler konsekvent i HELE brevet:
+navn eller andre personhenførbare oplysninger — hverken for- eller
+efternavn, heller ikke i overskrifter, indledning, underskrift,
+bilagshenvisninger, citater, e-mails eller andre steder. Følg disse
+regler konsekvent i HELE brevet:
 
-  • Klager: omtales ALTID som 'klager' eller kode 'K' (ved flere klagere: K1, K2, K3 ...)
-  • Rejsearrangørens medarbejdere: omtales ALTID som 'R' (ved flere: R1, R2 ...)
-  • Bipersoner (medrejsende ægtefælle, børn, rejseledsagere): 'B1', 'B2' ...
-  • Guider, hotelpersonale, chauffører m.v.: 'G' eller 'G1', 'G2'
+  • Klager: ALTID "Klager" (eller "Klager 1", "Klager 2" ved flere)
+  • {REJSESELSKAB_NAVN}s medarbejdere: omtales ikke ved navn — skriv i stedet "{REJSESELSKAB_SAGSBEHANDLER}" eller "{REJSESELSKAB_NAVN}"
+  • Bipersoner (medrejsende ægtefælle, børn, rejseledsagere): "medrejsende" eller "Biperson 1", "Biperson 2"
+  • Guider, hotelpersonale: "guiden", "hotelpersonalet" — ingen navne
   • CPR-numre → '[CPR fjernet]'
   • Fødselsdatoer (bortset fra rejsedatoer) → '[fødselsdato fjernet]'
   • Adresser (gadenavn + nr.) → '[adresse fjernet]'
@@ -671,66 +802,51 @@ Følg disse regler konsekvent i HELE brevet:
   • Bankoplysninger/kontonumre → '[bankoplysninger fjernet]'
 
 Hvis klagen eller sagsakterne indeholder klagerens navn, SKAL du selv
-anonymisere det i brevet — selv hvis originalkilden ikke er anonymiseret.
-Dette gælder også ved direkte citater: omskriv citatet med K i stedet for
-navnet. Tjek hele brevet igennem til sidst og sikr at INGEN navne er
-sluppet forbi.
+anonymisere det — omskriv citater så navnet er erstattet med "Klager".
 
 Hotelnavne, destinationer, lufthavne, rejsedatoer, beløb og klagepunkter
 bevares (de er nødvendige for sagens afgørelse).
 
-STRUKTUR — følg nøjagtigt denne rækkefølge, med overskrifterne som vist:
+STRUKTUR — følg præcist denne todelte struktur:
 
 **1. Indledning**
-En kort, formel indledning der bekræfter modtagelsen af klagen fra K og
-angiver klagens sagsnummer (hvis tilgængeligt i klagen/sagsakterne) og dato.
-Brug 'K' — ikke klagerens rigtige navn.
+Kort, formel indledning (2-3 linjer). Bekræft modtagelsen af klagen fra
+Klager og angiv klagens sagsnummer (hvis det fremgår) og dato.
 
-**2. Sagens faktuelle omstændigheder**
-En neutral, kronologisk gennemgang af hvad der faktisk skete, baseret på
-klagen, sagsakterne (C4C, e-mails, booking), og rejsevilkårene. Skelner
-tydeligt mellem hvad der er dokumenteret og hvad der er påstand fra K.
-Brug konsekvent 'K' — aldrig klagerens navn.
+**2. Juridisk vurdering**
+Dette er brevets hoveddel og det eneste reelle argumenterende afsnit.
+Kombinér her det nødvendige faktum-grundlag og den juridiske argumentation
+— vægten skal klart ligge på argumentationen. Struktur:
 
-**3. Rejseselskabets stillingtagen til kravet**
-Klar angivelse af om kravet bestrides helt, delvist, eller anerkendes.
-Én linje: "Rejseselskabet [bestrider kravet / bestrider kravet delvist /
-anerkender kravet delvist]."
+  - Indled med 2-4 sætninger der opsummerer det relevante faktum
+    (kort, neutralt, kun det der understøtter argumentationen).
+  - Gennemgå derefter de stærkeste forsvarsargumenter baseret på:
+      a) REJSEVILKÅRENE — henvis konkret til punkter (fx "jf. vilkårenes
+         pkt. 5.1")
+      b) PAKKEREJSELOVEN — henvis til konkrete paragraffer når relevant
+         (fx "§ 19 om mangler", "§ 22 om forholdsmæssigt afslag")
+      c) SAGSAKTERNES faktuelle oplysninger — brug C4C, e-mails og
+         bookingdetaljer til at understøtte {REJSESELSKAB_NAVN}s version
+  - Afslut afsnittet med en kort afslutningsformulering. Én til to linjer
+    der sammenfatter {REJSESELSKAB_NAVN}s stilling (fx "Det er på den
+    baggrund {REJSESELSKAB_NAVN}s vurdering, at kravet bør afvises"),
+    efterfulgt af "Med venlig hilsen" og "{REJSESELSKAB_SAGSBEHANDLER}".
 
-**4. Juridisk argumentation**
-De stærkeste forsvarsargumenter baseret på:
-  a) REJSEVILKÅRENE — citér konkret hvilke punkter der gælder
-  b) SAGSAKTERNES faktuelle oplysninger — brug C4C, e-mails og booking-
-     detaljer til at understøtte rejseselskabets version
-  c) PAKKEREJSELOVEN — henvis til konkrete paragraffer hvor det er
-     relevant (fx § 19 om mangler, § 22 om forholdsmæssigt afslag)
+INGEN AFSNIT 3, 4, 5 ELLER 6. Brevet består KUN af afsnit 1 og 2.
 
-VIGTIGT: Inkludér IKKE referencer til tidligere afgørelser fra Nævnet i
-svarbrevet. Tidligere afgørelser bruges til at VURDERE sandsynligheden
-for udfaldet (i analysen), men Nævnet forventer IKKE citater af deres
-egne afgørelser i rejsearrangørens svarbrev. Det gør brevet unødvendigt
-langt og detaljeret. Argumentér udelukkende ud fra sagens egne fakta,
-rejsevilkårene og pakkerejselovens paragraffer.
-
-**5. Konklusion og påstand**
-En klar afslutning hvor rejseselskabet anmoder Nævnet om at
-[afvise klagen / fastsætte delvis kompensation på X kr. / ...].
-Inkludér eventuelt subsidiær påstand.
-
-**6. Afslutning**
-Formel afslutning ("Med venlig hilsen, ..."). Brug placeholder
-"[Navn på sagsbehandler]" hvis intet navn er oplyst.
+VIGTIGT: Inkludér IKKE referencer til tidligere afgørelser fra Nævnet.
+Nævnet forventer IKKE citater af deres egne afgørelser i
+rejsearrangørens svarbrev. Argumentér udelukkende ud fra sagens egne
+fakta, rejsevilkårene og pakkerejselovens paragraffer.
 
 STRENGE KRAV:
+- Max 1-2 A4-sider samlet. Hvis du er i tvivl, skriv kortere.
 - Opfind ALDRIG fakta der ikke står i klagen, sagsakterne eller vidensbanken.
-- Henvis ALTID til konkrete kilder (filnavn + år for afgørelser, punkt + overskrift for vilkår).
 - Skriv på dansk i et formelt, professionelt juridisk sprog.
-- Hvis en oplysning mangler der er nødvendig for et solidt brev, skriv
-  "[SAGSBEHANDLER UDFYLDER: ...]" som placeholder i stedet for at gætte.
-- ANONYMISERING: Klagerens navn må IKKE stå noget sted i brevet. Brug altid
-  'K' (eller K1/K2 ved flere klagere). Tjek brevet igennem til sidst og
-  sikr at ingen personnavne er sluppet forbi — heller ikke i citater,
-  bilagsreferencer eller underskriftslinjer.
+- Hvis en oplysning mangler der er nødvendig, skriv "[SAGSBEHANDLER UDFYLDER: ...]" som placeholder.
+- Brug "{REJSESELSKAB_NAVN}" og "Klager" konsekvent. Aldrig "rejseselskabet" eller "K".
+- Underskriftslinjen skal altid være "{REJSESELSKAB_SAGSBEHANDLER}".
+- Tjek brevet igennem til sidst: ingen personnavne, ingen afsnit 3/4/5/6, ingen "domstols"-formuleringer.
 """
 
 
@@ -848,15 +964,20 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
             return svarbrev_tekst
 
         instruktion = (
-            "Du modtager et allerede færdigskrevet svarbrev fra en rejse-"
-            "arrangør til Pakkerejse-Ankenævnet. Din ENESTE opgave er at "
-            "sikre at svarbrevet er fuldt anonymiseret — klagerens navn "
-            "og personhenførbare oplysninger MÅ IKKE stå noget sted.\n\n"
+            "Du modtager et allerede færdigskrevet svarbrev fra "
+            f"{REJSESELSKAB_NAVN} til Pakkerejse-Ankenævnet. Din ENESTE "
+            "opgave er at sikre at svarbrevet er fuldt anonymiseret — "
+            "klagerens navn og personhenførbare oplysninger MÅ IKKE stå "
+            "noget sted.\n\n"
             "REGLER:\n"
-            "- Personnavne på klager → erstat med K (eller K1, K2 ... ved flere klagere)\n"
-            "- Personnavne på rejsearrangørens medarbejdere → R (eller R1, R2 ...)\n"
-            "- Personnavne på medrejsende (ægtefælle, børn, rejseledsagere) → B1, B2 ...\n"
-            "- Guider/hotelpersonale → G (eller G1, G2)\n"
+            "- Personnavne på klager → erstat med 'Klager' (eller 'Klager 1', "
+            "'Klager 2' ved flere klagere)\n"
+            f"- Personnavne på {REJSESELSKAB_NAVN}s medarbejdere → omtales "
+            f"ikke ved navn. Skriv i stedet '{REJSESELSKAB_SAGSBEHANDLER}' "
+            f"eller '{REJSESELSKAB_NAVN}'\n"
+            "- Personnavne på medrejsende (ægtefælle, børn, rejseledsagere) "
+            "→ 'medrejsende' eller 'Biperson 1', 'Biperson 2'\n"
+            "- Guider/hotelpersonale → 'guiden' eller 'hotelpersonalet'\n"
             "- CPR-numre → '[CPR fjernet]'\n"
             "- Fødselsdatoer (bortset fra rejsedatoer) → '[fødselsdato fjernet]'\n"
             "- Adresser (gadenavn + nr.) → '[adresse fjernet]'\n"
@@ -864,9 +985,11 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
             "- E-mailadresser → '[e-mail fjernet]'\n"
             "- Booking-/kundenumre → maskeres (fx '12345678' → '12****78')\n"
             "- Bankoplysninger → '[bankoplysninger fjernet]'\n\n"
-            "BEVAR: hotelnavne, destinationer, lufthavne, rejsedatoer, beløb, "
-            "klagepunkter, juridiske henvisninger, samt brevets struktur og "
-            "sproglige tone. Rør IKKE ved andet end personhenførbare data.\n\n"
+            f"BEVAR: navnet '{REJSESELSKAB_NAVN}' (det er ikke en person "
+            "men en virksomhed), hotelnavne, destinationer, lufthavne, "
+            "rejsedatoer, beløb, klagepunkter, juridiske henvisninger, "
+            "samt brevets struktur og sproglige tone. Rør IKKE ved andet "
+            "end personhenførbare data.\n\n"
             "Returnér kun det rettede svarbrev — ingen forklaringer, ingen "
             "intro, ingen afslutningskommentar. Start direkte med brevteksten.\n\n"
             "SVARBREV DER SKAL GENNEMGÅS:\n"
@@ -966,6 +1089,20 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=
                         "data": img_b64,
                     },
                 })
+            elif fil.get("type") == "mp4_skipped":
+                # Video — PAX læser ikke MP4. Vi nævner eksistensen så
+                # Claude ved at der findes yderligere materiale, men
+                # beder eksplicit om at juristen selv gennemser filen.
+                content.append({
+                    "type": "text",
+                    "text": (
+                        header
+                        + "[MP4-videofil. juriitech PAX læser ikke video — "
+                        "denne fil er IKKE analyseret. Nævn i vurderingen at "
+                        "juristen selv skal gennemse videoen manuelt som "
+                        "supplement til analysen.]"
+                    ),
+                })
             else:
                 tekst = fil.get("tekst") or "(tom)"
                 content.append({"type": "text", "text": header + tekst})
@@ -1006,6 +1143,15 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=
                         "media_type": fil.get("media_type", "image/png"),
                         "data": img_b64,
                     },
+                })
+            elif fil.get("type") == "mp4_skipped":
+                content.append({
+                    "type": "text",
+                    "text": (
+                        header
+                        + "[MP4-videofil. IKKE analyseret — juristen "
+                        "gennemser selv manuelt.]"
+                    ),
                 })
             else:
                 tekst = fil.get("tekst") or "(tom)"

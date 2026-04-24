@@ -21,6 +21,7 @@ from ai_engine import (
     generer_svarbrev_til_sag,
     generer_tjekliste,
     anonymiser_sag,
+    anonymiser_valgte_filer,
     opsummer_matches_til_visning,
     udled_sandsynligheder_strukturelt,
     udled_sagsresume_strukturelt,
@@ -962,15 +963,20 @@ if not _har_aktiv_sag:
     with _kol_upload:
         uploadede_sagsfiler = st.file_uploader(
             "Upload sagsfilerne her",
-            type=["zip", "pdf", "docx"],
+            type=["zip", "pdf", "docx", "png", "jpg", "jpeg", "mp4"],
             accept_multiple_files=True,
             key="sag_uploader",
-            help="Understøtter ZIP, PDF og Word. Flere filer kan vælges samtidigt.",
+            help=(
+                "Understøtter ZIP, PDF, Word, billeder (PNG/JPG) og MP4. "
+                "MP4 læses ikke af juriitech PAX, men sagen analyseres "
+                "fortsat på basis af de øvrige filer. Flere filer kan "
+                "vælges samtidigt."
+            ),
         )
 else:
     uploadede_sagsfiler = st.file_uploader(
         "Upload sagsfilerne",
-        type=["zip", "pdf", "docx"],
+        type=["zip", "pdf", "docx", "png", "jpg", "jpeg", "mp4"],
         accept_multiple_files=True,
         key="sag_uploader",
     )
@@ -1200,6 +1206,41 @@ if st.session_state.get("aktuel_sag"):
     # Vis dashboard + selve teksten hvis vi har en førstevurdering
     if st.session_state.auto_vurdering_tekst:
         st.markdown("### Førstevurdering af sagen")
+
+        # ---------- MP4-ADVARSEL ----------
+        # Hvis sagen indeholder video-filer som PAX ikke læser, så gør
+        # juristen opmærksom på det øverst i analysen. Førstevurderingen
+        # er stadig genereret fra de læsbare filer.
+        _sag_filer = (st.session_state.aktuel_sag or {}).get("filer") or []
+        _mp4_filer = [
+            f.get("filnavn", "ukendt.mp4")
+            for f in _sag_filer
+            if f.get("type") == "mp4_skipped"
+        ]
+        if _mp4_filer:
+            _mp4_liste = ", ".join(f"<code>{navn}</code>" for navn in _mp4_filer)
+            st.markdown(
+                f"""
+                <div style="
+                    background-color: #FEF3C7;
+                    color: #92400E;
+                    padding: 12px 16px;
+                    border-radius: 8px;
+                    margin-bottom: 16px;
+                    border-left: 4px solid #F59E0B;
+                    font-size: 0.92rem;
+                ">
+                    <strong>Bemærk — video-filer ikke analyseret:</strong>
+                    juriitech PAX læser ikke MP4-filer. Følgende fil(er) skal
+                    gennemses manuelt som supplement til analysen nedenfor:
+                    {_mp4_liste}.
+                    Selve førstevurderingen er lavet på basis af de øvrige
+                    uploadede filer, tidligere afgørelser og
+                    pakkerejselovgivningen.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
         # Opdateringsnotifikation — vises hvis sagsakter har ændret vurderingen
         if st.session_state.get("sagsakter_opdaterede_vurdering"):
@@ -1599,90 +1640,240 @@ if st.session_state.get("aktuel_sag"):
     st.divider()
     st.header("Anonymisér bilag til Nævnet")
     st.caption(
-        "juriitech PAX producerer anonymiserede versioner af alle tekst-baserede bilag "
-        "efter Pakkerejse-Ankenævnets retningslinjer (K for klager, R for "
-        "rejsearrangør, B1/B2 for bipersoner, CPR-numre fjernes, osv.). "
-        "Høringsbrev og vejledninger springes automatisk over — de skal ikke "
-        "sendes tilbage. Scannede PDF'er kræver manuel behandling."
+        "Vælg de bilag du ønsker at anonymisere — både sagsfiler og sagsakter "
+        "du selv har uploadet. juriitech PAX producerer anonymiserede "
+        "versioner efter Pakkerejse-Ankenævnets retningslinjer (Klager for "
+        "klager, medrejsende for bipersoner, CPR-numre fjernes osv.), og "
+        "nye sagsakter du uploader dukker automatisk op i listen herunder."
     )
 
-    if st.button("Anonymisér alle bilag", type="secondary"):
-        filer = st.session_state.aktuel_sag.get("filer") or []
-        tekstfiler_der_skal_behandles = [
-            f for f in filer
-            if f.get("type") == "tekst"
-            and f.get("rolle") not in ("vejledning", "høring")
-            and (f.get("tekst") or "").strip()
-        ]
-        antal = len(tekstfiler_der_skal_behandles)
+    # ---------- BYG SAMLET LISTE AF KANDIDAT-FILER ----------
+    # Kombinér sagens hovedfiler + sagsakter i én liste. Markér kilden
+    # så brugeren kan se hvad der kommer hvorfra. Filer der alligevel
+    # ikke kan anonymiseres (høringsbrev, vejledninger, scannede PDF'er)
+    # vises som grå/deaktiverede med forklaring.
+    _sag_filer = (st.session_state.aktuel_sag or {}).get("filer") or []
+    _sagsakter_filer = st.session_state.get("sagsakter_filer") or []
 
-        with thinking(
-            f"juriitech PAX anonymiserer {antal} bilag",
-            faser=[
-                "Identificerer personnavne, CPR, adresser og kontaktdata...",
-                "Erstatter klagers navn konsekvent med K (evt. K1, K2)...",
-                "Maskerer booking-numre og bankoplysninger...",
-                "Bevarer hotelnavne, destinationer og rejsedatoer...",
-                "Tjekker hver fil igennem for missede oplysninger...",
-            ],
-        ):
-            resultater = anonymiser_sag(st.session_state.aktuel_sag)
-            st.session_state.seneste_anonymisering = resultater
+    _anon_kandidater = []
+    for f in _sag_filer:
+        _anon_kandidater.append({**f, "_kilde": "sag"})
+    for f in _sagsakter_filer:
+        _anon_kandidater.append({**f, "_kilde": "sagsakt"})
 
-    if st.session_state.seneste_anonymisering:
-        resultater = st.session_state.seneste_anonymisering
-        ok_antal = sum(1 for r in resultater if r["status"] == "ok")
-        sprunget_antal = sum(1 for r in resultater if r["status"] == "sprunget_over")
-        fejl_antal = sum(1 for r in resultater if r["status"] == "fejl")
+    def _kan_anonymiseres(fil):
+        """True hvis filen kan anonymiseres tekstuelt af PAX."""
+        if fil.get("rolle") in ("vejledning", "høring"):
+            return False
+        if fil.get("type") in ("pdf_bytes", "image_bytes", "mp4_skipped"):
+            return False
+        if fil.get("type") != "tekst":
+            return False
+        return bool((fil.get("tekst") or "").strip())
 
-        st.success(
-            f"Anonymisering færdig. {ok_antal} anonymiseret, "
-            f"{sprunget_antal} sprunget over, "
-            f"{fejl_antal} fejlede."
+    def _hvorfor_ikke(fil):
+        """Forklaring når en fil ikke kan anonymiseres automatisk."""
+        if fil.get("rolle") == "vejledning":
+            return "Vejledning fra Nævnet — anonymiseres ikke"
+        if fil.get("rolle") == "høring":
+            return "Høringsbrev fra Nævnet — skal ikke sendes tilbage"
+        if fil.get("type") == "pdf_bytes":
+            return "Scannet PDF — kræver OCR, gør manuelt"
+        if fil.get("type") == "image_bytes":
+            return "Billede — kan ikke anonymiseres tekstuelt"
+        if fil.get("type") == "mp4_skipped":
+            return "Video — kan ikke anonymiseres tekstuelt"
+        if fil.get("type") != "tekst":
+            return "Filformat understøttes ikke"
+        if not (fil.get("tekst") or "").strip():
+            return "Tom fil"
+        return ""
+
+    if not _anon_kandidater:
+        st.info(
+            "Ingen bilag at anonymisere endnu. Upload sagsfiler eller "
+            "sagsakter ovenfor."
         )
+    else:
+        # Initialiser persistent map (filnavn → resultat) så allerede
+        # anonymiserede filer overlever re-render og nye uploads.
+        if "anon_resultater_per_fil" not in st.session_state:
+            st.session_state.anon_resultater_per_fil = {}
 
-        st.caption(
-            "**Tjek resultaterne manuelt før du sender til Nævnet.** "
-            "AI-anonymisering er et hjælpeværktøj, ikke en garanti. "
-            "Gennemgå hver fil for at sikre at alle personhenførbare oplysninger "
-            "er fjernet korrekt."
-        )
+        # ---------- CHECKBOX-LISTE ----------
+        st.markdown("**Vælg de bilag du ønsker at anonymisere:**")
 
-        for r in resultater:
-            if r["status"] == "ok":
-                prefix = "[OK]"
-            elif r["status"] == "sprunget_over":
-                prefix = "[Sprunget over]"
-            else:
-                prefix = "[Fejl]"
+        _valgte_filnavne = []
+        for i, fil in enumerate(_anon_kandidater):
+            filnavn = fil.get("filnavn", f"fil{i}")
+            kilde_label = "Sagsakt" if fil.get("_kilde") == "sagsakt" else "Sag"
+            rolle_label = (fil.get("rolle") or "").replace("_", " ")
 
-            with st.expander(f"{prefix} {r['filnavn']}  —  {r['bemaerkning']}"):
-                if r["status"] == "ok":
-                    st.markdown("**Anonymiseret tekst:**")
+            kol_cb, kol_meta, kol_status = st.columns([5, 2, 3])
+
+            with kol_cb:
+                if _kan_anonymiseres(fil):
+                    checked = st.checkbox(
+                        filnavn,
+                        key=f"anon_valg_{i}_{filnavn}",
+                    )
+                    if checked:
+                        _valgte_filnavne.append(filnavn)
+                else:
+                    st.markdown(
+                        f"<span style='color:rgba(100,116,139,0.75);"
+                        f"font-size:0.92rem;'>☐ {filnavn}</span>",
+                        unsafe_allow_html=True,
+                    )
+
+            with kol_meta:
+                st.markdown(
+                    f"<span style='color:rgba(100,116,139,0.8);"
+                    f"font-size:0.8rem;'>{kilde_label}"
+                    + (f" · {rolle_label}" if rolle_label and rolle_label != "ukendt" else "")
+                    + "</span>",
+                    unsafe_allow_html=True,
+                )
+
+            with kol_status:
+                if filnavn in st.session_state.anon_resultater_per_fil:
+                    res = st.session_state.anon_resultater_per_fil[filnavn]
+                    if res.get("status") == "ok":
+                        st.markdown(
+                            "<span style='color:#15803D;font-size:0.82rem;"
+                            "font-weight:500;'>✓ Anonymiseret</span>",
+                            unsafe_allow_html=True,
+                        )
+                    elif res.get("status") == "fejl":
+                        st.markdown(
+                            "<span style='color:#B91C1C;font-size:0.82rem;'>Fejl</span>",
+                            unsafe_allow_html=True,
+                        )
+                elif not _kan_anonymiseres(fil):
+                    st.markdown(
+                        f"<span style='color:rgba(100,116,139,0.7);"
+                        f"font-size:0.78rem;font-style:italic;'>"
+                        f"{_hvorfor_ikke(fil)}</span>",
+                        unsafe_allow_html=True,
+                    )
+
+        # ---------- KNAP: ANONYMISÉR VALGTE ----------
+        kol_btn1, kol_btn2 = st.columns([2, 5])
+        with kol_btn1:
+            anon_disabled = len(_valgte_filnavne) == 0
+            if st.button(
+                f"Anonymisér {len(_valgte_filnavne)} valgte" if not anon_disabled else "Anonymisér valgte",
+                type="primary",
+                disabled=anon_disabled,
+                key="anon_start_knap",
+            ):
+                # Byg liste af fil-dicts der matcher filnavnene
+                valgte_filer = [
+                    fil for fil in _anon_kandidater
+                    if fil.get("filnavn") in _valgte_filnavne
+                    and _kan_anonymiseres(fil)
+                ]
+
+                with thinking(
+                    f"juriitech PAX anonymiserer {len(valgte_filer)} bilag",
+                    faser=[
+                        "Identificerer personnavne, CPR, adresser og kontaktdata...",
+                        "Erstatter klagers navn konsekvent med 'Klager'...",
+                        "Maskerer booking-numre og bankoplysninger...",
+                        "Bevarer hotelnavne, destinationer og rejsedatoer...",
+                        "Tjekker hver fil igennem for missede oplysninger...",
+                    ],
+                ):
+                    nye_resultater = anonymiser_valgte_filer(valgte_filer)
+
+                # Flet ind i den persistente map, så tidligere resultater
+                # bevares hvis de ikke er blevet genkørt nu
+                for r in nye_resultater:
+                    st.session_state.anon_resultater_per_fil[r["filnavn"]] = r
+
+                st.rerun()
+
+        # ---------- RESULTAT-BOKSE ----------
+        resultater_map = st.session_state.anon_resultater_per_fil
+        færdige = [r for r in resultater_map.values() if r.get("status") == "ok"]
+
+        if færdige:
+            st.markdown("---")
+            st.markdown("**Anonymiserede bilag — klar til download:**")
+            st.caption(
+                "Tjek resultatet manuelt før du sender til Nævnet. "
+                "AI-anonymisering er et hjælpeværktøj, ikke en garanti."
+            )
+
+            for r in færdige:
+                fn_base = r["filnavn"].rsplit(".", 1)[0]
+
+                with st.expander(f"✓ {r['filnavn']}  —  {r['bemaerkning']}", expanded=False):
                     st.text_area(
                         "Anonymiseret indhold",
                         value=r["anonymiseret_tekst"],
-                        height=400,
+                        height=320,
                         key=f"anon_visning_{r['filnavn']}",
                         label_visibility="collapsed",
                     )
-                    # Download som Word
-                    from eksport import markdown_til_docx_bytes
-                    docx_bytes = markdown_til_docx_bytes(
-                        r["anonymiseret_tekst"],
-                        titel=f"Anonymiseret: {r['filnavn']}",
-                        undertitel="Anonymiseret efter Pakkerejse-Ankenævnets retningslinjer",
+
+                    from eksport import (
+                        markdown_til_docx_bytes,
+                        markdown_til_pdf_bytes,
                     )
-                    fn_base = r["filnavn"].rsplit(".", 1)[0]
-                    st.download_button(
-                        label="Download anonymiseret version som Word",
-                        data=docx_bytes,
-                        file_name=f"anonymiseret_{fn_base}.docx",
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                        key=f"anon_download_{r['filnavn']}",
-                    )
-                else:
-                    st.info(r["bemaerkning"])
+
+                    kol_docx, kol_pdf = st.columns(2)
+                    with kol_docx:
+                        try:
+                            docx_bytes = markdown_til_docx_bytes(
+                                r["anonymiseret_tekst"],
+                                titel=f"Anonymiseret: {r['filnavn']}",
+                                undertitel=(
+                                    "Anonymiseret efter Pakkerejse-"
+                                    "Ankenævnets retningslinjer"
+                                ),
+                            )
+                            st.download_button(
+                                label="Download som Word",
+                                data=docx_bytes,
+                                file_name=f"anonymiseret_{fn_base}.docx",
+                                mime=(
+                                    "application/vnd.openxmlformats-"
+                                    "officedocument.wordprocessingml.document"
+                                ),
+                                key=f"anon_docx_{r['filnavn']}",
+                                use_container_width=True,
+                            )
+                        except Exception as e:
+                            st.caption(f"Word-eksport fejlede: {e}")
+
+                    with kol_pdf:
+                        try:
+                            pdf_bytes = markdown_til_pdf_bytes(
+                                r["anonymiseret_tekst"],
+                                titel=f"Anonymiseret: {r['filnavn']}",
+                                undertitel=(
+                                    "Anonymiseret efter Pakkerejse-"
+                                    "Ankenævnets retningslinjer"
+                                ),
+                            )
+                            st.download_button(
+                                label="Download som PDF",
+                                data=pdf_bytes,
+                                file_name=f"anonymiseret_{fn_base}.pdf",
+                                mime="application/pdf",
+                                key=f"anon_pdf_{r['filnavn']}",
+                                use_container_width=True,
+                            )
+                        except Exception as e:
+                            st.caption(f"PDF-eksport fejlede: {e}")
+
+        # Fejlede filer vises separat i en kort linje
+        fejlede = [r for r in resultater_map.values() if r.get("status") == "fejl"]
+        if fejlede:
+            with st.expander(f"⚠ {len(fejlede)} fil(er) fejlede", expanded=False):
+                for r in fejlede:
+                    st.markdown(f"- **{r['filnavn']}:** {r['bemaerkning']}")
 
 
 # ---------- AUTO-TJEKLISTE MOD HØRINGSBREV ----------
