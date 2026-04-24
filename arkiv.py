@@ -108,20 +108,14 @@ st.markdown(
         line-height: 1.4;
         margin-right: 6px;
     }
-    .badge-green  { background: rgba(34, 197, 94, 0.32);  color: #14532D; }
-    .badge-red    { background: rgba(239, 68, 68, 0.30);  color: #881337; }
-    .badge-yellow { background: rgba(234, 179, 8, 0.34);  color: #713F12; }
-    .badge-blue   { background: rgba(59, 130, 246, 0.26); color: #172554; }
-    .badge-gray   { background: rgba(100, 116, 139, 0.22); color: #1E293B; }
-    .badge-purple { background: rgba(139, 92, 246, 0.26); color: #3B0764; }
-    @media (prefers-color-scheme: dark) {
-        .badge-green  { color: #86EFAC; }
-        .badge-red    { color: #FCA5A5; }
-        .badge-yellow { color: #FDE047; }
-        .badge-blue   { color: #93C5FD; }
-        .badge-gray   { color: #CBD5E1; }
-        .badge-purple { color: #C4B5FD; }
-    }
+    .badge-green  { background: rgba(34, 197, 94, 0.32) !important;  color: #14532D !important; }
+    .badge-red    { background: rgba(239, 68, 68, 0.30) !important;  color: #881337 !important; }
+    .badge-yellow { background: rgba(234, 179, 8, 0.34) !important;  color: #713F12 !important; }
+    .badge-blue   { background: rgba(59, 130, 246, 0.26) !important; color: #172554 !important; }
+    .badge-gray   { background: rgba(100, 116, 139, 0.22) !important; color: #1E293B !important; }
+    .badge-purple { background: rgba(139, 92, 246, 0.26) !important; color: #3B0764 !important; }
+    /* Dark-mode badge-override fjernet: Streamlit er låst til light-theme,
+       så dark-mode tekstfarverne endte som lys tekst på lys baggrund. */
     </style>
     """,
     unsafe_allow_html=True,
