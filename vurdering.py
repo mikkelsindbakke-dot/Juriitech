@@ -172,6 +172,41 @@ def vis_dashboard(svar_tekst, struktureret_data=None):
     delvist = s["delvist_medhold"]
     afvist = s["afvist"]
 
+    # ---------- NORMALISER TIL 100 % ----------
+    # Selvom prompten beder modellen om at sum=100, kan der snige sig
+    # afrundingsfejl ind (fx 95, 98, 103). Vi skalerer proportionalt
+    # så de tre tal ALTID summer til præcis 100 — og håndterer
+    # afrundingsrest ved at lægge den på den største kategori.
+    _raw_sum = (fuld or 0) + (delvist or 0) + (afvist or 0)
+    if _raw_sum > 0 and _raw_sum != 100:
+        _skala = 100.0 / _raw_sum
+        _fuld_f = (fuld or 0) * _skala
+        _delvist_f = (delvist or 0) * _skala
+        _afvist_f = (afvist or 0) * _skala
+        fuld = round(_fuld_f)
+        delvist = round(_delvist_f)
+        afvist = round(_afvist_f)
+        # Korrigér afrundingsrest på den kategori med største floating-
+        # point-værdi, så summen altid rammer præcis 100.
+        rest = 100 - (fuld + delvist + afvist)
+        if rest != 0:
+            kategorier = [
+                ("fuld", _fuld_f), ("delvist", _delvist_f), ("afvist", _afvist_f),
+            ]
+            kategorier.sort(key=lambda x: x[1], reverse=True)
+            navn = kategorier[0][0]
+            if navn == "fuld":
+                fuld += rest
+            elif navn == "delvist":
+                delvist += rest
+            else:
+                afvist += rest
+        # Skriv de normaliserede tal tilbage i dict'et så
+        # _mest_sandsynlige beregner ud fra de rettede tal.
+        s["fuld_medhold"] = fuld
+        s["delvist_medhold"] = delvist
+        s["afvist"] = afvist
+
     mest_key, mest_pct, mest_label = _mest_sandsynlige(s)
 
     # Farvekodning — pastel-palette matchende videnstank-sidebaren,
@@ -287,12 +322,5 @@ def vis_dashboard(svar_tekst, struktureret_data=None):
     with k3:
         _render_udfalds_kort("Afvisning af klagen", afvist, "afvist")
 
-    # Tjek at det summer til ~100 (tolerance for afrunding)
-    sum_pct = fuld + delvist + afvist
-    if sum_pct < 95 or sum_pct > 105:
-        st.caption(
-            f"⚠️ De tre procenter summer til {sum_pct} % (bør være ~100). "
-            "Tjek den fulde begrundelse nedenfor."
-        )
-
+    # Procenterne er allerede normaliseret ovenfor, så sum er altid 100.
     return True

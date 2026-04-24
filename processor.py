@@ -105,8 +105,20 @@ def _gaet_rolle(filnavn):
 def _laes_fra_bytes(filnavn, data):
     """
     Læser én fil (bytes + filnavn) og returnerer en sag-fil dict:
-      {"filnavn": str, "type": "tekst"|"pdf_bytes", "tekst": str eller "",
-       "bytes": bytes eller None, "rolle": str}
+      {"filnavn": str,
+       "type": "tekst" | "pdf_bytes" | "image_bytes" | "mp4_skipped",
+       "tekst": str eller "",
+       "bytes": bytes eller None,
+       "media_type": str eller None,      # kun for image_bytes
+       "rolle": str}
+
+    Understøttede formater:
+      - DOCX  → tekstudtræk
+      - PDF   → tekstudtræk (eller vision via bytes hvis scannet)
+      - PNG/JPG/JPEG → sendes som billede til Claude vision
+      - MP4   → springes over med besked; PAX læser ikke video endnu
+      - DOC   → bevares som filreference (lokal parser mangler)
+      - øvrige → markeres som ikke-understøttet
     """
     navn_lower = filnavn.lower()
     rolle = _gaet_rolle(filnavn)
@@ -114,27 +126,57 @@ def _laes_fra_bytes(filnavn, data):
     if navn_lower.endswith(".docx"):
         try:
             tekst = laes_word_tekst(BytesIO(data))
+            if not tekst.strip():
+                # Tom DOCX — behandles som ulæselig
+                return {
+                    "filnavn": filnavn,
+                    "type": "fil_ikke_laest",
+                    "tekst": "",
+                    "bytes": None,
+                    "media_type": None,
+                    "rolle": rolle,
+                    "aarsag": "Word-dokumentet indeholder ingen tekst",
+                }
+            return {
+                "filnavn": filnavn,
+                "type": "tekst",
+                "tekst": tekst,
+                "bytes": None,
+                "media_type": None,
+                "rolle": rolle,
+            }
         except Exception as e:
-            tekst = f"[Kunne ikke læse DOCX: {e}]"
-        return {
-            "filnavn": filnavn,
-            "type": "tekst",
-            "tekst": tekst,
-            "bytes": None,
-            "rolle": rolle,
-        }
+            return {
+                "filnavn": filnavn,
+                "type": "fil_ikke_laest",
+                "tekst": "",
+                "bytes": None,
+                "media_type": None,
+                "rolle": rolle,
+                "aarsag": f"DOCX-filen kunne ikke læses ({e})",
+            }
 
     if navn_lower.endswith(".pdf"):
         try:
             tekst = laes_pdf_tekst(BytesIO(data))
-        except Exception:
-            tekst = ""
+        except Exception as e:
+            # PDF helt korrupt — kan hverken læses som tekst eller vision
+            return {
+                "filnavn": filnavn,
+                "type": "fil_ikke_laest",
+                "tekst": "",
+                "bytes": data,
+                "media_type": None,
+                "rolle": rolle,
+                "aarsag": f"PDF-filen kunne ikke åbnes ({e})",
+            }
         if len(tekst.strip()) >= SCANNET_TAERSKEL:
             return {
                 "filnavn": filnavn,
                 "type": "tekst",
                 "tekst": tekst,
                 "bytes": data,  # bevar bytes også, så anonymisering kan bruge dem
+                "media_type": None,
                 "rolle": rolle,
             }
         return {
@@ -142,26 +184,77 @@ def _laes_fra_bytes(filnavn, data):
             "type": "pdf_bytes",
             "tekst": "",
             "bytes": data,
+            "media_type": None,
+            "rolle": rolle,
+        }
+
+    # ---------- BILLEDER (PNG / JPG / JPEG) ----------
+    # Sendes direkte til Claude vision som billede-blokke i _byg_sag_content.
+    # media_type matcher Anthropic's forventede værdier.
+    if navn_lower.endswith(".png"):
+        return {
+            "filnavn": filnavn,
+            "type": "image_bytes",
+            "tekst": "",
+            "bytes": data,
+            "media_type": "image/png",
+            "rolle": rolle,
+        }
+    if navn_lower.endswith(".jpg") or navn_lower.endswith(".jpeg"):
+        return {
+            "filnavn": filnavn,
+            "type": "image_bytes",
+            "tekst": "",
+            "bytes": data,
+            "media_type": "image/jpeg",
+            "rolle": rolle,
+        }
+
+    # ---------- VIDEO (MP4) ----------
+    # juriitech PAX læser ikke video endnu — vi springer over og markerer
+    # filen så UI'et kan vise en advarsel om at brugeren skal gennemse den
+    # manuelt. Førstevurderingen fortsætter med de øvrige filer.
+    if navn_lower.endswith(".mp4"):
+        return {
+            "filnavn": filnavn,
+            "type": "mp4_skipped",
+            "tekst": (
+                f"[MP4-fil ikke analyseret af juriitech PAX. "
+                f"Skal gennemses manuelt af brugeren. Filnavn: {filnavn}]"
+            ),
+            "bytes": None,  # behold ikke video-bytes — de er store og ikke brugbare
+            "media_type": None,
             "rolle": rolle,
         }
 
     if navn_lower.endswith(".doc"):
-        # Gammelt Word-format — ikke understøttet lokalt, men vi bevarer filen
+        # Gammelt Word-format — kan ikke parses lokalt, markeres som ikke-læst
         return {
             "filnavn": filnavn,
-            "type": "tekst",
-            "tekst": f"[Gammelt .doc-format — ikke læst lokalt. Filnavn: {filnavn}]",
+            "type": "fil_ikke_laest",
+            "tekst": "",
             "bytes": data,
+            "media_type": None,
             "rolle": rolle,
+            "aarsag": (
+                "Gammelt .doc-format (Word 97-2003). Konvertér til .docx "
+                "eller PDF for at juriitech PAX kan læse indholdet."
+            ),
         }
 
     # Ukendt format — gem metadata så brugeren kan se det, men kan ikke bruges
+    endelse = navn_lower.rsplit(".", 1)[-1] if "." in navn_lower else "ukendt"
     return {
         "filnavn": filnavn,
-        "type": "tekst",
-        "tekst": f"[Filformat ikke understøttet: {filnavn}]",
+        "type": "fil_ikke_laest",
+        "tekst": "",
         "bytes": data,
+        "media_type": None,
         "rolle": rolle,
+        "aarsag": (
+            f"Filformatet .{endelse} understøttes ikke af juriitech PAX. "
+            "Understøttede formater er PDF, DOCX, PNG, JPG, JPEG, MP4 og ZIP."
+        ),
     }
 
 

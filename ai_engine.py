@@ -1175,6 +1175,19 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=
                         "supplement til analysen.]"
                     ),
                 })
+            elif fil.get("type") == "fil_ikke_laest":
+                aarsag = fil.get("aarsag") or "filen kunne ikke læses"
+                content.append({
+                    "type": "text",
+                    "text": (
+                        header
+                        + f"[Filen kunne IKKE læses af juriitech PAX. "
+                        f"Årsag: {aarsag}. Lav analysen ud fra de "
+                        "øvrige filer der KAN læses — men bemærk at "
+                        "denne fil kan indeholde information der "
+                        "ændrer sagen.]"
+                    ),
+                })
             else:
                 tekst = fil.get("tekst") or "(tom)"
                 content.append({"type": "text", "text": header + tekst})
@@ -1224,6 +1237,12 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=
                         + "[MP4-videofil. IKKE analyseret — juristen "
                         "gennemser selv manuelt.]"
                     ),
+                })
+            elif fil.get("type") == "fil_ikke_laest":
+                aarsag = fil.get("aarsag") or "filen kunne ikke læses"
+                content.append({
+                    "type": "text",
+                    "text": header + f"[Filen kunne IKKE læses. Årsag: {aarsag}]",
                 })
             else:
                 tekst = fil.get("tekst") or "(tom)"

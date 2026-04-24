@@ -1339,16 +1339,29 @@ if st.session_state.get("aktuel_sag"):
     if st.session_state.auto_vurdering_tekst:
         st.markdown("### Førstevurdering af sagen")
 
-        # ---------- MP4-ADVARSEL ----------
-        # Hvis sagen indeholder video-filer som PAX ikke læser, så gør
-        # juristen opmærksom på det øverst i analysen. Førstevurderingen
-        # er stadig genereret fra de læsbare filer.
+        # ---------- ADVARSLER OM FILER DER IKKE ER LÆST ----------
+        # To kategorier:
+        #   1) MP4-videoer — understøttede, men læses ikke (skal gennemses manuelt)
+        #   2) Filer i ikke-understøttede formater, korrupte PDF'er, tomme
+        #      DOCX'er osv. — markeret som 'fil_ikke_laest' i processor
+        # I begge tilfælde er førstevurderingen lavet ud fra resten af
+        # filerne. Vi gør det tydeligt for brugeren hvilke filer der
+        # ikke indgår — og hvorfor.
         _sag_filer = (st.session_state.aktuel_sag or {}).get("filer") or []
+        _sagsakter_filer = st.session_state.get("sagsakter_filer") or []
+        _alle_filer = _sag_filer + _sagsakter_filer
+
         _mp4_filer = [
             f.get("filnavn", "ukendt.mp4")
-            for f in _sag_filer
+            for f in _alle_filer
             if f.get("type") == "mp4_skipped"
         ]
+        _ulaeselige_filer = [
+            (f.get("filnavn", "ukendt"), f.get("aarsag", "kunne ikke læses"))
+            for f in _alle_filer
+            if f.get("type") == "fil_ikke_laest"
+        ]
+
         if _mp4_filer:
             _mp4_liste = ", ".join(f"<code>{navn}</code>" for navn in _mp4_filer)
             st.markdown(
@@ -1358,7 +1371,7 @@ if st.session_state.get("aktuel_sag"):
                     color: #92400E;
                     padding: 12px 16px;
                     border-radius: 8px;
-                    margin-bottom: 16px;
+                    margin-bottom: 10px;
                     border-left: 4px solid #F59E0B;
                     font-size: 0.92rem;
                 ">
@@ -1366,9 +1379,36 @@ if st.session_state.get("aktuel_sag"):
                     juriitech PAX læser ikke MP4-filer. Følgende fil(er) skal
                     gennemses manuelt som supplement til analysen nedenfor:
                     {_mp4_liste}.
-                    Selve førstevurderingen er lavet på basis af de øvrige
-                    uploadede filer, tidligere afgørelser og
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        if _ulaeselige_filer:
+            _liste_html = "".join(
+                f"<li><code>{navn}</code> — "
+                f"<span style='opacity:0.85;'>{aarsag}</span></li>"
+                for navn, aarsag in _ulaeselige_filer
+            )
+            st.markdown(
+                f"""
+                <div style="
+                    background-color: #FEF3C7;
+                    color: #92400E;
+                    padding: 12px 16px 10px 16px;
+                    border-radius: 8px;
+                    margin-bottom: 16px;
+                    border-left: 4px solid #F59E0B;
+                    font-size: 0.92rem;
+                ">
+                    <strong>Bemærk — filer der ikke kunne læses:</strong>
+                    juriitech PAX kunne ikke læse følgende fil(er), og de
+                    indgår derfor ikke i analysen nedenfor. Førstevurderingen
+                    er lavet ud fra de øvrige filer, tidligere afgørelser og
                     pakkerejselovgivningen.
+                    <ul style="margin: 6px 0 0 0; padding-left: 20px;">
+                        {_liste_html}
+                    </ul>
                 </div>
                 """,
                 unsafe_allow_html=True,
