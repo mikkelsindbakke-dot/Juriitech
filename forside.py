@@ -388,7 +388,7 @@ st.markdown(
         align-items: baseline;
     }
     .jp-j {
-        color: #A5B4FC;     /* lys lavendel */
+        color: #818CF8;     /* lidt mørkere indigo/lavendel — matcher logoet */
         font-weight: 800;
     }
     .jp-rest {
