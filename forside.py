@@ -570,6 +570,30 @@ st.markdown(
         .sagsresume-grid { grid-template-columns: 1fr; }
         .sagsresume-celle-bred { grid-column: auto; }
     }
+    /* Forventet udfald — fremhævet som det sidste, vigtigste felt i kortet. */
+    .sagsresume-udfald {
+        margin-top: 1.1rem;
+        padding: 0.95rem 1.15rem;
+        background: rgba(255, 255, 255, 0.8);
+        border-radius: 12px;
+        border-left: 4px solid var(--pillar-accent, #00D4C2);
+    }
+    .sagsresume-udfald-label {
+        font-size: 0.72rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: rgba(71, 85, 105, 0.95);
+        margin-bottom: 0.3rem;
+    }
+    .sagsresume-udfald-tekst {
+        font-family: 'Source Serif 4', Georgia, serif;
+        font-size: 1.1rem;
+        font-weight: 600;
+        line-height: 1.35;
+        color: #0F172A;
+        letter-spacing: -0.01em;
+    }
 
     /* ========== CUSTOM "THINKING"-ANIMATION (Claude-inspireret) ========== */
     .thinking-wrapper {
@@ -1590,6 +1614,9 @@ if st.session_state.get("aktuel_sag"):
                 skip_resume=_har_struktureret_resume,
                 skip_referencer=bool(afgoerelser_ud),
                 skip_sandsynlighed=True,
+                # Konklusion flyttes op som 'Forventet udfald' i sagsresume-
+                # kortet ovenfor — vi undgår at duplikere den her.
+                skip_konklusion=_har_struktureret_resume,
             )
 
         # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
@@ -1743,133 +1770,10 @@ if st.session_state.get("aktuel_sag"):
             label_visibility="collapsed",
         )
 
-# ---------- CHAT OM SAGEN (kun synlig når der er en aktiv sag) ----------
-# Chatbot-stil: brugeren stiller løbende spørgsmål og PAX svarer kort +
-# præcist. Hele samtalen bliver i samme sektion — spørgsmål som user-
-# bubbler, svar som assistant-bubbler.
-if st.session_state.get("aktuel_sag"):
-    _sag_filer = st.session_state.aktuel_sag.get("filer") or []
-
-    # Initialisér chat-historik i session state hvis den ikke findes
-    if "chat_historik" not in st.session_state:
-        st.session_state.chat_historik = []
-
-    # Apple Health-inspireret sektionsintro: mint-pastel med grøn accent
-    st.markdown(
-        f"""
-        <div class="analyse-pillar"
-             style="--pillar-bg: #E7F5DD; --pillar-accent: #76D672;">
-            <div class="analyse-pillar-accent-dot"></div>
-            <h2 class="analyse-pillar-title">Stil spørgsmål til sagen</h2>
-            <div class="analyse-pillar-body">
-                <p>Samtalen tager udgangspunkt i den uploadede sag
-                ({len(_sag_filer)} filer), tidligere afgørelser fra
-                Pakkerejse-Ankenævnet og pakkerejseloven. Svarene er
-                korte og præcise.</p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Vis hele samtalen
-    for besked in st.session_state.chat_historik:
-        with st.chat_message(besked.get("role", "user")):
-            st.markdown(besked.get("content", ""))
-
-    # Ryd-chat-knap — kun synlig når der er beskeder i historikken
-    if st.session_state.chat_historik:
-        kol_ryd_chat, _ = st.columns([1, 5])
-        with kol_ryd_chat:
-            if st.button("Ryd samtale", key="ryd_chat_knap"):
-                st.session_state.chat_historik = []
-                st.rerun()
-
-    # Input-felt nederst
-    _nyt_spoergsmaal = st.chat_input(
-        "Skriv et spørgsmål om sagen...",
-        key="chat_input_sag",
-    )
-
-    if _nyt_spoergsmaal:
-        # Tilføj brugerens spørgsmål til historikken og vis det
-        st.session_state.chat_historik.append({
-            "role": "user",
-            "content": _nyt_spoergsmaal,
-        })
-        with st.chat_message("user"):
-            st.markdown(_nyt_spoergsmaal)
-
-        # Generér svar med historik som kontekst (ekskl. det lige-
-        # tilføjede spørgsmål — det sendes som 'nyt' til funktionen)
-        historik_til_ai = st.session_state.chat_historik[:-1]
-
-        with st.chat_message("assistant"):
-            with st.spinner("juriitech PAX tænker..."):
-                svar = chat_om_sag(
-                    spoergsmaal=_nyt_spoergsmaal,
-                    chat_historik=historik_til_ai,
-                    sag=st.session_state.aktuel_sag,
-                    sagsakter=st.session_state.get("sagsakter", ""),
-                )
-            st.markdown(svar)
-
-        # Gem svaret i historikken
-        st.session_state.chat_historik.append({
-            "role": "assistant",
-            "content": svar,
-        })
-
-        # Gem også i arkivet så juristen kan finde samtalen igen
-        sag_filer_arkiv = st.session_state.aktuel_sag.get("filer") or []
-        hoved_filnavn_arkiv = None
-        for rolle_prio in ("klageskema", "høring"):
-            for fil in sag_filer_arkiv:
-                if fil.get("rolle") == rolle_prio:
-                    hoved_filnavn_arkiv = fil["filnavn"]
-                    break
-            if hoved_filnavn_arkiv:
-                break
-        if not hoved_filnavn_arkiv and sag_filer_arkiv:
-            hoved_filnavn_arkiv = sag_filer_arkiv[0]["filnavn"]
-
-        titel = (
-            f"Chat om sag — {hoved_filnavn_arkiv}"
-            if hoved_filnavn_arkiv
-            else f"Chat: {_nyt_spoergsmaal[:60]}"
-        )
-        gem_i_arkiv(
-            titel=titel,
-            type_="analyse",
-            indhold=svar,
-            klage_filnavn=hoved_filnavn_arkiv,
-            spoergsmaal=_nyt_spoergsmaal,
-            sagsakter=st.session_state.get("sagsakter", "") or None,
-        )
-
-        # Husk seneste for download-knap
-        st.session_state.seneste_svar = {
-            "spoergsmaal": _nyt_spoergsmaal,
-            "svar": svar,
-            "klage_filnavn": hoved_filnavn_arkiv,
-        }
-
-# Download-knap til seneste chat-svar
-if st.session_state.seneste_svar:
-    senste = st.session_state.seneste_svar
-    docx_bytes = analyse_til_docx(
-        senste["spoergsmaal"],
-        senste["svar"],
-        klage_filnavn=senste.get("klage_filnavn"),
-    )
-    filnavn_base = (senste.get("klage_filnavn") or "analyse").rsplit(".", 1)[0]
-    st.download_button(
-        label="Download seneste svar som Word",
-        data=docx_bytes,
-        file_name=f"chat_svar_{filnavn_base}.docx",
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        key="download_chat_svar",
-    )
+# ---------- 'Stil spørgsmål til sagen'-sektionen er fjernet bevidst ----------
+# Den gentog i praksis bare førstevurderingen + sagsresume og var ikke
+# nødvendig for det primære flow. chat_om_sag() i ai_engine.py bevares
+# til evt. fremtidig genbrug, men ingen UI kalder den længere.
 
 
 # ---------- ANONYMISERINGSASSISTENT ----------

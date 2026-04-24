@@ -318,6 +318,7 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
     emne = _html.escape(str(resume_dict.get("emne") or "").strip())
     krav = _html.escape(str(resume_dict.get("krav") or "").strip())
     tui = _html.escape(str(resume_dict.get("tui_handtering") or "").strip())
+    udfald = _html.escape(str(resume_dict.get("forventet_udfald") or "").strip())
     punkter = resume_dict.get("klagepunkter") or []
 
     punkter_html = ""
@@ -353,6 +354,10 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
                         <div class="sagsresume-celle-body"><p>{tui}</p></div>
                     </div>
                 </div>
+                <div class="sagsresume-udfald">
+                    <div class="sagsresume-udfald-label">Forventet udfald</div>
+                    <div class="sagsresume-udfald-tekst">{udfald}</div>
+                </div>
             </div>
         </div>
         """,
@@ -365,6 +370,7 @@ def render_analyse_som_pillars(
     skip_resume=False,
     skip_referencer=False,
     skip_sandsynlighed=False,
+    skip_konklusion=False,
 ):
     """
     Renderer en juridisk analyse som Apple-Health-inspirerede "pillars"
@@ -373,9 +379,10 @@ def render_analyse_som_pillars(
 
     Optional skip-flags fjerner sektioner der vises andre steder, så vi
     undgår duplikeret indhold:
-      skip_resume       — hvis det strukturerede sagsresume vises separat
-      skip_referencer   — hvis referencer vises som visuelle kort separat
-      skip_sandsynlighed— hvis udfalds-dashboardet allerede vises øverst
+      skip_resume        — hvis det strukturerede sagsresume vises separat
+      skip_referencer    — hvis referencer vises som visuelle kort separat
+      skip_sandsynlighed — hvis udfalds-dashboardet allerede vises øverst
+      skip_konklusion    — hvis konklusion-en-linje vises i sagsresume-kortet
     """
     if not svar_tekst:
         return
@@ -401,6 +408,10 @@ def render_analyse_som_pillars(
             continue
         if skip_sandsynlighed and _matcher_nogleord(titel, (
             "sandsynlighedsvurdering", "sandsynlighed",
+        )):
+            continue
+        if skip_konklusion and _matcher_nogleord(titel, (
+            "konklusion", "afsluttende vurdering",
         )):
             continue
         filtreret.append((titel, body))

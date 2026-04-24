@@ -1317,7 +1317,8 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         "emne": str,                 # 1-2 sætninger
         "klagepunkter": [str, ...],  # 3-6 korte bullet points
         "krav": str,                 # klagers krav med beløb hvis oplyst
-        "tui_handtering": str        # hvordan TUI har håndteret det indtil nu
+        "tui_handtering": str,       # hvordan TUI har håndteret det indtil nu
+        "forventet_udfald": str      # ultrakort vurdering: udfald + beløb
       }
     eller None hvis udledningen fejler. Funktionen laver ét enkelt AI-kald
     og er designet til at køre lige efter førstevurderingen.
@@ -1347,13 +1348,20 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         '  "emne": "1-2 sætninger der forklarer hvad sagen handler om",\n'
         '  "klagepunkter": ["kort punkt 1", "kort punkt 2", "..."],\n'
         '  "krav": "en kort beskrivelse af hvad klager kræver, inkl. beløb hvis oplyst",\n'
-        '  "tui_handtering": "kort beskrivelse af hvordan rejseselskabet (TUI) har håndteret sagen INDEN Nævnet blev involveret"\n'
+        '  "tui_handtering": "kort beskrivelse af hvordan rejseselskabet (TUI) har håndteret sagen INDEN Nævnet blev involveret",\n'
+        '  "forventet_udfald": "ULTRAKORT vurdering (max 15 ord) af det mest sandsynlige udfald + beløbsmæssigt estimat"\n'
         "}\n\n"
         "KRAV:\n"
         "- emne: 1-2 sætninger på dansk. Konkret, ikke generisk.\n"
         "- klagepunkter: 3-6 bullet points, max ~15 ord hver.\n"
         "- krav: skal indeholde beløb når de fremgår (fx '18.500 kr. i kompensation').\n"
         "- tui_handtering: ærlig og kort. Hvis det ikke fremgår skriv 'fremgår ikke af bilagene'.\n"
+        "- forventet_udfald: ULTRAKORT — max 15 ord. Formater som én linje med det sandsynlige udfald og beløb.\n"
+        "  Eksempler:\n"
+        "    'Delvist medhold — formentlig 1.000-2.500 kr. i kompensation'\n"
+        "    'Afvisning af klagen — TUI får medhold'\n"
+        "    'Fuld medhold — kompensation på ca. 18.500 kr.'\n"
+        "    'Forligstilbud på 2.000-4.000 kr. er den mest realistiske udgang'\n"
         "- Alt på dansk.\n"
         "- Hvis en oplysning ikke fremgår, skriv 'fremgår ikke' frem for at opfinde."
     )
@@ -1373,6 +1381,7 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         emne = str(data.get("emne") or "").strip()
         krav = str(data.get("krav") or "").strip()
         tui = str(data.get("tui_handtering") or "").strip()
+        udfald = str(data.get("forventet_udfald") or "").strip()
         klagepunkter = data.get("klagepunkter") or []
         if isinstance(klagepunkter, str):
             klagepunkter = [klagepunkter]
@@ -1386,6 +1395,7 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
             "klagepunkter": klagepunkter,
             "krav": krav or "fremgår ikke",
             "tui_handtering": tui or "fremgår ikke af bilagene",
+            "forventet_udfald": udfald or "fremgår ikke af grundlaget",
         }
     except Exception as e:
         print(f"DEBUG: Sagsresume-udledning fejlede: {e}")
