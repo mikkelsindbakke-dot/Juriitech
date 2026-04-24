@@ -1402,16 +1402,21 @@ if st.session_state.get("aktuel_sag"):
                                 f"({sag_ref['kilde_url']})"
                             )
 
+        # Kompakt 'Resume af sagen' vises FØRST — det erstatter den
+        # tekstuelle "Kort resume af sagen"-pillar der ellers stod øverst
+        # i analysen. Pillars nedenfor springer derfor den gamle resume-
+        # sektion over (via skip_resume=True) så vi ikke gentager os selv.
+        _har_struktureret_resume = bool(st.session_state.get("sagsresume"))
+        if _har_struktureret_resume:
+            render_sagsresume(st.session_state.sagsresume)
+
         # Juridisk førstevurdering som Apple-Health-inspirerede pillars —
         # store overskrifter, accent-striber, fremhævede kildehenvisninger.
         if st.session_state.auto_vurdering_tekst:
-            render_analyse_som_pillars(st.session_state.auto_vurdering_tekst)
-
-        # Kompakt 'Resume af sagen' — lynoverblik efter førstevurderingen
-        # så juristen hurtigt ser hvad sagen handler om, klagepunkter,
-        # krav og hvordan TUI har håndteret den indtil videre.
-        if st.session_state.get("sagsresume"):
-            render_sagsresume(st.session_state.sagsresume)
+            render_analyse_som_pillars(
+                st.session_state.auto_vurdering_tekst,
+                skip_resume=_har_struktureret_resume,
+            )
 
         # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
         # (for ikke at rode UI'en). De bliver stadig automatisk brugt af Claude

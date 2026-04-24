@@ -359,16 +359,30 @@ def render_sagsresume(resume_dict):
     )
 
 
-def render_analyse_som_pillars(svar_tekst):
+def render_analyse_som_pillars(svar_tekst, skip_resume=False):
     """
     Renderer en juridisk analyse som Apple-Health-inspirerede "pillars"
     med farvede baggrunde per sektion, store serif-overskrifter, og
     fremhævede kildehenvisninger.
+
+    skip_resume: hvis True, springes den første sektion over hvis den
+    ligner et resume (overskrift starter med 'resume', 'kort resume',
+    'opsummering', 'oversigt'). Bruges når det strukturerede sagsresume
+    allerede vises separat, så vi undgår dobbelt-indhold.
     """
     if not svar_tekst:
         return
 
     sektioner = _split_analyse_i_sektioner(svar_tekst)
+
+    # Evt. skip første sektion hvis den er et resume
+    if skip_resume and sektioner:
+        foerste_titel = (sektioner[0][0] or "").lower()
+        if any(nogleord in foerste_titel for nogleord in (
+            "resume", "resumé", "opsummering", "oversigt"
+        )):
+            sektioner = sektioner[1:]
+
     for i, (titel, body) in enumerate(sektioner):
         accent, bg = _PILLAR_PALETTER[i % len(_PILLAR_PALETTER)]
 
