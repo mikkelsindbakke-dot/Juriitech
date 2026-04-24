@@ -683,6 +683,42 @@ st.markdown(
 
 opret_tabeller()
 
+# ---------- SCROLL-TIL-TOP EFTER GENÅBNING AF GEMT SAG ----------
+# Når brugeren åbner en gemt sag, sætter gemte_sager.py flaget
+# '_scroll_til_top'. Her tjekker vi for det og injicerer en lille
+# JS-snippet der scroller forsiden op øverst, så brugeren lander ved
+# første vurdering — ikke nede ved 'Gem sagen'-knappen.
+if st.session_state.pop("_scroll_til_top", False):
+    from streamlit.components.v1 import html as _scroll_html
+    _scroll_html(
+        """
+        <script>
+          (function() {
+            // Kør flere gange så vi rammer efter Streamlit har tegnet
+            // alt indholdet færdigt.
+            function toTop() {
+              try {
+                var doc = window.parent.document;
+                var container =
+                  doc.querySelector('section.main') ||
+                  doc.querySelector('[data-testid="stAppViewContainer"]') ||
+                  doc.querySelector('[data-testid="stMain"]');
+                if (container) {
+                  container.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+                }
+                window.parent.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+              } catch (e) { /* ignorer */ }
+            }
+            toTop();
+            setTimeout(toTop, 120);
+            setTimeout(toTop, 400);
+            setTimeout(toTop, 900);
+          })();
+        </script>
+        """,
+        height=0,
+    )
+
 # Session state til den aktuelle sag (så den overlever reruns)
 if "aktuel_sag" not in st.session_state:
     st.session_state.aktuel_sag = None

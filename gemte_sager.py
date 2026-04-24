@@ -238,6 +238,11 @@ def _genaabn_gemt_sag(sag_id, titel):
         _gendan_state_fra_json(state)
         st.session_state.aktiv_gemt_sag_id = sag_id
 
+        # Signalér til forsiden at den skal scrolle til toppen efter
+        # at siden er loaded (ellers lander brugeren nederst ved
+        # 'Gem sagen'-knappen fordi hele indholdet er renderet).
+        st.session_state._scroll_til_top = True
+
         # Navigér til forsiden — det er dér brugeren skal lande, ikke
         # blive stående på gemte-sager med en lille success-besked.
         try:
