@@ -758,44 +758,28 @@ with st.sidebar:
     # Vertikal stabel af fire små pillers, hver i sin egen Apple Health-
     # pastel der matcher en sektion i hovedindholdet. Lys æstetik,
     # minimalistisk typografi — flugter med resten af siden.
+    # VIGTIGT: HTML må ikke indrykkes med 4+ mellemrum, ellers opfatter
+    # markdown-parseren det som kodeblok.
     st.markdown(
-        """
-        <div class="videnstank-stak">
-            <div class="videnstank-titel">Videnstank</div>
-
-            <div class="videnstank-kort" style="
-                background: #E7F5DD;
-                --accent: #76D672;
-            ">
-                <span class="videnstank-plus">+</span>
-                <span class="videnstank-navn">500 afgørelser</span>
-            </div>
-
-            <div class="videnstank-kort" style="
-                background: #F0EEFD;
-                --accent: #6366F1;
-            ">
-                <span class="videnstank-dot"></span>
-                <span class="videnstank-navn">Hele Pakkerejseloven</span>
-            </div>
-
-            <div class="videnstank-kort" style="
-                background: #FDE9EE;
-                --accent: #EC4899;
-            ">
-                <span class="videnstank-dot"></span>
-                <span class="videnstank-navn">Anonymiseringsregler</span>
-            </div>
-
-            <div class="videnstank-kort" style="
-                background: #FDEFD7;
-                --accent: #F59E0B;
-            ">
-                <span class="videnstank-dot"></span>
-                <span class="videnstank-navn">Dine uploadede sager</span>
-            </div>
-        </div>
-        """,
+        '<div class="videnstank-stak">'
+        '<div class="videnstank-titel">Videnstank</div>'
+        '<div class="videnstank-kort" style="background:#E7F5DD;--accent:#76D672;">'
+        '<span class="videnstank-plus">+</span>'
+        '<span class="videnstank-navn">500 afgørelser</span>'
+        '</div>'
+        '<div class="videnstank-kort" style="background:#F0EEFD;--accent:#6366F1;">'
+        '<span class="videnstank-dot"></span>'
+        '<span class="videnstank-navn">Hele Pakkerejseloven</span>'
+        '</div>'
+        '<div class="videnstank-kort" style="background:#FDE9EE;--accent:#EC4899;">'
+        '<span class="videnstank-dot"></span>'
+        '<span class="videnstank-navn">Anonymiseringsregler</span>'
+        '</div>'
+        '<div class="videnstank-kort" style="background:#FDEFD7;--accent:#F59E0B;">'
+        '<span class="videnstank-dot"></span>'
+        '<span class="videnstank-navn">Dine uploadede sager</span>'
+        '</div>'
+        '</div>',
         unsafe_allow_html=True,
     )
 
