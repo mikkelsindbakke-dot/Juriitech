@@ -14,7 +14,7 @@ import streamlit as st
 
 
 @contextmanager
-def thinking(tekst="Juriitech arbejder..."):
+def thinking(tekst="juriitech PAX arbejder..."):
     """
     Context manager der viser en Claude-inspireret pulsende gradient-prik
     med tekst ved siden af, mens kode i with-blokken kører. Forsvinder

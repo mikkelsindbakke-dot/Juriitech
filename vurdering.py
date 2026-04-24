@@ -36,42 +36,55 @@ def parse_sandsynligheder(tekst):
 
     resultat = {"fuld_medhold": None, "delvist_medhold": None, "afvist": None}
 
-    # Fjern markdown-markører så regex er mere robust
+    # Normaliser: fjern markdown-markører, konvertér kolon til mellemrum,
+    # sørg for ensartet whitespace
     ren = re.sub(r"\*{1,3}", "", tekst)
+    ren = re.sub(r"[–—]", "-", ren)  # forskellige bindestreger → standard
 
-    # FULD MEDHOLD — fang mange variationer:
-    # "fuld medhold til klager: 30%", "fuldt medhold: 30 %", "Fuld medhold: 30 pct"
+    # FULD MEDHOLD — utroligt permissiv
     patterns_fuld = [
-        r"fuld(?:t|\s+)?\s+medhold(?:\s+til\s+klage(?:r|n))?[^0-9\n]{0,40}(\d{1,3})\s*(?:%|pct|procent)",
-        r"(\d{1,3})\s*(?:%|pct|procent)[^0-9\n]{0,20}fuld(?:t|\s+)?\s+medhold",
+        r"fuld(?:t|\s+)?\s+medhold(?:\s+til\s+klage(?:r|n))?[^0-9\n]{0,60}(\d{1,3})\s*(?:%|pct\.?|procent)",
+        r"(\d{1,3})\s*(?:%|pct\.?|procent)[^0-9\n]{0,30}fuld(?:t|\s+)?\s+medhold",
+        r"fuld(?:t|\s+)?\s+medhold[^\n]*?:\s*(\d{1,3})",
+        r"fuld(?:t|\s+)?\s+medhold.{0,80}?(\d{1,3})",
     ]
     for p in patterns_fuld:
-        m = re.search(p, ren, re.IGNORECASE)
+        m = re.search(p, ren, re.IGNORECASE | re.DOTALL)
         if m:
-            resultat["fuld_medhold"] = int(m.group(1))
-            break
+            val = int(m.group(1))
+            if 0 <= val <= 100:
+                resultat["fuld_medhold"] = val
+                break
 
     # DELVIST MEDHOLD
     patterns_delvist = [
-        r"delvis(?:t|\s+)?\s+medhold(?:\s+til\s+klage(?:r|n))?[^0-9\n]{0,40}(\d{1,3})\s*(?:%|pct|procent)",
-        r"(\d{1,3})\s*(?:%|pct|procent)[^0-9\n]{0,20}delvis(?:t|\s+)?\s+medhold",
+        r"delvis(?:t|\s+)?\s+medhold(?:\s+til\s+klage(?:r|n))?[^0-9\n]{0,60}(\d{1,3})\s*(?:%|pct\.?|procent)",
+        r"(\d{1,3})\s*(?:%|pct\.?|procent)[^0-9\n]{0,30}delvis(?:t|\s+)?\s+medhold",
+        r"delvis(?:t|\s+)?\s+medhold[^\n]*?:\s*(\d{1,3})",
+        r"delvis(?:t|\s+)?\s+medhold.{0,80}?(\d{1,3})",
     ]
     for p in patterns_delvist:
-        m = re.search(p, ren, re.IGNORECASE)
+        m = re.search(p, ren, re.IGNORECASE | re.DOTALL)
         if m:
-            resultat["delvist_medhold"] = int(m.group(1))
-            break
+            val = int(m.group(1))
+            if 0 <= val <= 100:
+                resultat["delvist_medhold"] = val
+                break
 
     # AFVISNING
     patterns_afvist = [
-        r"afvis(?:ning|t)(?:\s+af\s+klage(?:n|r)?)?[^0-9\n]{0,50}(\d{1,3})\s*(?:%|pct|procent)",
-        r"(\d{1,3})\s*(?:%|pct|procent)[^0-9\n]{0,20}afvis(?:ning|t)",
+        r"afvis(?:ning|t|else)(?:\s+af\s+klage(?:n|r)?)?[^0-9\n]{0,70}(\d{1,3})\s*(?:%|pct\.?|procent)",
+        r"(\d{1,3})\s*(?:%|pct\.?|procent)[^0-9\n]{0,30}afvis(?:ning|t|else)",
+        r"afvis(?:ning|t|else)[^\n]*?:\s*(\d{1,3})",
+        r"afvis(?:ning|t|else).{0,80}?(\d{1,3})",
     ]
     for p in patterns_afvist:
-        m = re.search(p, ren, re.IGNORECASE)
+        m = re.search(p, ren, re.IGNORECASE | re.DOTALL)
         if m:
-            resultat["afvist"] = int(m.group(1))
-            break
+            val = int(m.group(1))
+            if 0 <= val <= 100:
+                resultat["afvist"] = val
+                break
 
     resultat["fandt_alle_tre"] = all(
         resultat[k] is not None
@@ -92,15 +105,50 @@ def _mest_sandsynlige(sandsynligheder):
     return kandidater[0]
 
 
+def _render_fallback_dashboard():
+    """
+    Render et neutralt dashboard når procenter ikke kan udledes.
+    Bruges så sektionen ALTID viser noget meningsfuldt.
+    """
+    st.markdown(
+        """
+        <div style="
+            background-color: #F3F4F6;
+            color: #1F2937;
+            padding: 14px 18px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            border-left: 4px solid #6B7280;
+        ">
+            <div style="font-size: 0.85em; opacity: 0.85;">
+                UDFALDSVURDERING
+            </div>
+            <div style="font-size: 1.1em; font-weight: 600; margin-top: 4px;">
+                Procentfordelingen fremgår af den fulde juridiske vurdering nedenfor
+            </div>
+            <div style="font-size: 0.9em; margin-top: 8px; opacity: 0.85;">
+                juriitech PAX kunne ikke udlede tre præcise procenter fra sagen —
+                sandsynligvis fordi materialet er for sparsomt eller udfaldet
+                usædvanligt. Læs analysen og sammenhold med relevante afgørelser.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def vis_dashboard(svar_tekst):
     """
     Viser et visuelt dashboard med de tre sandsynligheder.
-    Kaldes før selve AI-svaret renderes.
+    Hvis parsing fejler, vises et fallback-dashboard så sektionen
+    ALDRIG er tom.
 
-    Returnerer True hvis dashboard blev vist, False hvis parsing fejlede.
+    Returnerer True hvis fuldt dashboard blev vist, False ved fallback.
     """
     s = parse_sandsynligheder(svar_tekst)
     if not s["fandt_alle_tre"]:
+        # Fallback: altid vis noget i stedet for at skjule sektionen helt
+        _render_fallback_dashboard()
         return False
 
     fuld = s["fuld_medhold"]

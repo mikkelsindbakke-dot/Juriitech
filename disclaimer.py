@@ -82,10 +82,16 @@ st.title("Disclaimer: læs inden brug")
 
 st.markdown(
     """
-    Juriitech er et digitalt værktøj, der bruger kunstig intelligens (AI) til
-    at analysere klagesager fra Pakkerejse-Ankenævnet og foreslå juridiske
-    vurderinger og svarbreve. Programmet er bygget fra bunden som et
-    specialiseret værktøj til rejsebranchen.
+    **juriitech PAX** er et digitalt værktøj, der bruger kunstig intelligens
+    (AI) til at analysere klagesager fra Pakkerejse-Ankenævnet og foreslå
+    juridiske vurderinger og svarbreve. Programmet er bygget fra bunden som
+    et specialiseret værktøj til rejsebranchen.
+
+    juriitech PAX er udviklet af **juriitech** — en virksomhed der bygger
+    specialiserede AI-værktøjer til juridiske nicheområder. "PAX" refererer
+    til at dette produkt er skræddersyet til pakkerejsesager. Fremtidige
+    produkter fra juriitech vil have deres egne modelnavne efter samme
+    princip.
     """
 )
 
@@ -94,7 +100,7 @@ with st.container(border=True):
         """
         ### Hvad programmet gør
 
-        Juriitech hjælper din arbejdsgang ved at:
+        juriitech PAX hjælper din arbejdsgang ved at:
 
         - læse sagens dokumenter (høringsbrev, klageskema, bilag)
         - finde de 3-5 mest relevante tidligere afgørelser fra Ankenævnet
@@ -118,7 +124,7 @@ with st.container(border=True):
         - sammenblande lignende sagstyper
         - fejltolke et beløb eller en dato
 
-        Derfor **skal alle resultater fra Juriitech gennemlæses og
+        Derfor **skal alle resultater fra juriitech PAX gennemlæses og
         verificeres af en jurist**, før de bruges i en formel sammenhæng.
         Programmet er et beslutningsstøtteværktøj — ikke en erstatning for
         juridisk dømmekraft.
@@ -130,7 +136,7 @@ with st.container(border=True):
         """
         ### Kildehenvisninger — sådan tjekker du AI'ens påstande
 
-        For at gøre verificering så hurtig som muligt, er Juriitech trænet
+        For at gøre verificering så hurtig som muligt, er juriitech PAX trænet
         til at **angive kilden umiddelbart efter hver påstand**. Hver gang
         programmet fremsætter et faktum, en pris, en dato eller en juridisk
         konklusion, står der en kildehenvisning i kantet parentes lige
@@ -151,7 +157,7 @@ with st.container(border=True):
         - **[Afgørelse YY-NNNN (ÅÅÅÅ)]** — tidligere afgørelser fra
           Pakkerejse-Ankenævnet
         - **[Rejsevilkår, punkt X.Y]** — et rejseselskabs egne rejsevilkår,
-          såfremt disse er hentet af Juriitech
+          såfremt disse er hentet af juriitech PAX
         """
     )
 
@@ -160,20 +166,20 @@ with st.container(border=True):
         """
         ### Din rolle som bruger
 
-        Når du bruger Juriitech, bør du:
+        Når du bruger juriitech PAX, bør du:
 
         1. Læse AI'ens vurdering kritisk og se den som et **udkast**, ikke et facit
         2. Stikprøvekontrollere kildehenvisningerne — især de centrale argumenter
         3. Bruge din egen juridiske dømmekraft som den endelige filter
         4. Være særligt opmærksom hvis sagen afviger fra normale mønstre
 
-        Når disse forholdsregler tages, er Juriitech et værdifuldt værktøj
+        Når disse forholdsregler tages, er juriitech PAX et værdifuldt værktøj
         der kan spare dig mange timers manuelt læsearbejde — men det
         endelige juridiske ansvar ligger altid hos dig.
         """
     )
 
 st.caption(
-    "Juriitech er under løbende udvikling. Har du observationer eller "
+    "juriitech PAX er under løbende udvikling. Har du observationer eller "
     "forslag til forbedringer, er feedback meget velkommen."
 )

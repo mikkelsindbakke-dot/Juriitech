@@ -283,7 +283,7 @@ def spoerg_ai(spoergsmaal, sager=None):
         return response.content[0].text
 
     except Exception as e:
-        return f"Fejl i forbindelsen til Juriitech: {str(e)}"
+        return f"Fejl i forbindelsen til juriitech PAX: {str(e)}"
 
 
 ANONYMISERING_PROMPT = """
@@ -955,7 +955,7 @@ def spoerg_ai_med_sag(spoergsmaal, sager, sag, sagsakter=None, returner_relevant
         return svar_tekst
 
     except Exception as e:
-        fejl = f"Fejl i forbindelsen til Juriitech: {str(e)}"
+        fejl = f"Fejl i forbindelsen til juriitech PAX: {str(e)}"
         if returner_relevante:
             return fejl, []
         return fejl
@@ -1144,4 +1144,4 @@ def spoerg_ai_med_klage(spoergsmaal, sager, klage, sagsakter=None):
         return response.content[0].text
 
     except Exception as e:
-        return f"Fejl i forbindelsen til Juriitech: {str(e)}"
+        return f"Fejl i forbindelsen til juriitech PAX: {str(e)}"

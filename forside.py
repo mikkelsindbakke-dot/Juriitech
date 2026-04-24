@@ -30,7 +30,7 @@ from ui import thinking, render_analyse_som_pillars
 
 # ---------- OPSÆTNING ----------
 st.set_page_config(
-    page_title="Juriitech",
+    page_title="juriitech PAX",
     page_icon=None,
     layout="wide",
 )
@@ -427,11 +427,11 @@ def _auto_gem_klage_i_db(klage_dict):
         indhold = klage_dict.get("tekst") or ""
     else:
         # Scannet PDF — vi har ikke udtrukket tekst lokalt. Gem et tydeligt placeholder,
-        # så vidensbanken ved at filen findes. Selve analysen sker via Juriitechs vision
+        # så vidensbanken ved at filen findes. Selve analysen sker via juriitech PAX' vision
         # på den fil der ligger i session state.
         indhold = (
             f"[Scannet klage — tekst ikke udtrukket lokalt. "
-            f"Analyseres ved upload via Juriitechs vision. Filnavn: {filnavn}]"
+            f"Analyseres ved upload via juriitech PAX' vision. Filnavn: {filnavn}]"
         )
 
     # Generer embedding hvis vi har rigtig tekst. For scannede PDF'er gør
@@ -460,8 +460,8 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-    st.title("Juriitech")
-    st.caption("Juridisk AI til pakkerejseklager")
+    st.title("juriitech PAX")
+    st.caption("Juridisk AI til Pakkerejse-Ankenævnet")
 
     antal = hent_antal_sager()
     st.metric(label="Sager i vidensbanken", value=antal)
@@ -492,7 +492,7 @@ with st.sidebar:
         st.caption(
             "Scrape nye kendelser direkte fra pakkerejseankenaevnet.dk. "
             "Hver sag dedupes på URL, så du kan trykke flere gange uden at duplikere. "
-            "Scannede PDF'er gemmes også, men uden embedding (Juriitech læser dem via vision)."
+            "Scannede PDF'er gemmes også, men uden embedding (juriitech PAX læser dem via vision)."
         )
 
         max_pr_koersel = st.selectbox(
@@ -707,7 +707,7 @@ if st.session_state.get("aktuel_sag"):
     )
     if skal_auto_vurdere:
         with st.spinner(
-            "Juriitech laver en første vurdering af sagen — tager 20-40 sekunder..."
+            "juriitech PAX laver en første vurdering af sagen — tager 20-40 sekunder..."
         ):
             try:
                 auto_svar, rel_sager = spoerg_ai_med_sag(
@@ -796,7 +796,7 @@ if st.session_state.get("aktuel_sag"):
             st.markdown("### De mest relevante tidligere afgørelser")
             st.caption(
                 "Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om din nuværende sag. "
-                "Juriitech bruger dem aktivt som juridisk præcedens i analysen ovenfor."
+                "juriitech PAX bruger dem aktivt som juridisk præcedens i analysen ovenfor."
             )
             from badges import udled_afgoerelsesdato, badge
 
@@ -888,7 +888,7 @@ if st.session_state.get("aktuel_sag"):
 
                         # Match-begrundelse (hvorfor Juriitech ser den som match)
                         if match_begrundelse:
-                            st.markdown("**Hvorfor Juriitech ser det som et match**")
+                            st.markdown("**Hvorfor juriitech PAX ser det som et match**")
                             for b in match_begrundelse:
                                 st.markdown(f"- {b}")
                             st.markdown("")
@@ -923,7 +923,7 @@ if st.session_state.get("aktuel_sag"):
         st.caption(
             "Paste al relevant intern information om *denne* klage ind her: "
             "destinationens reklamationsrapport fra C4C, e-mail-korrespondance "
-            "med kunden, bookingbekræftelsen, tilkøb, osv. Juriitech bruger det "
+            "med kunden, bookingbekræftelsen, tilkøb, osv. juriitech PAX bruger det "
             "som ekstra kontekst i sin analyse. Teksten gemmes IKKE permanent "
             "i vidensbanken — kun for denne specifikke analyse."
         )
@@ -976,7 +976,7 @@ spoergsmaal = st.text_input(
 )
 
 if spoergsmaal:
-    with st.spinner("Juriitech analyserer..."):
+    with st.spinner("juriitech PAX analyserer..."):
         sager = hent_alle_sager()
 
         if not sager:
@@ -1051,7 +1051,7 @@ if st.session_state.get("aktuel_sag"):
     st.divider()
     st.header("Anonymisér bilag til Nævnet")
     st.caption(
-        "Juriitech producerer anonymiserede versioner af alle tekst-baserede bilag "
+        "juriitech PAX producerer anonymiserede versioner af alle tekst-baserede bilag "
         "efter Pakkerejse-Ankenævnets retningslinjer (K for klager, R for "
         "rejsearrangør, B1/B2 for bipersoner, CPR-numre fjernes, osv.). "
         "Høringsbrev og vejledninger springes automatisk over — de skal ikke "
@@ -1069,7 +1069,7 @@ if st.session_state.get("aktuel_sag"):
         antal = len(tekstfiler_der_skal_behandles)
 
         with st.spinner(
-            f"Juriitech anonymiserer {antal} bilag — tager ca. {antal * 15} sekunder..."
+            f"juriitech PAX anonymiserer {antal} bilag — tager ca. {antal * 15} sekunder..."
         ):
             resultater = anonymiser_sag(st.session_state.aktuel_sag)
             st.session_state.seneste_anonymisering = resultater
@@ -1141,7 +1141,7 @@ if st.session_state.get("aktuel_sag"):
     )
 
     if st.button("Generer tjekliste", type="secondary"):
-        with st.spinner("Juriitech læser høringsbrevet og gennemgår bilagene — 20-40 sekunder..."):
+        with st.spinner("juriitech PAX læser høringsbrevet og gennemgår bilagene — 20-40 sekunder..."):
             tjekliste = generer_tjekliste(sag=st.session_state.aktuel_sag)
             st.session_state.seneste_tjekliste = {
                 "indhold": tjekliste,
@@ -1183,7 +1183,7 @@ if st.session_state.get("aktuel_sag"):
     )
 
     if st.button("Generer udkast til svarbrev", type="primary"):
-        with st.spinner("Juriitech udarbejder svarbrevet — tager 30-60 sekunder..."):
+        with st.spinner("juriitech PAX udarbejder svarbrevet — tager 30-60 sekunder..."):
             svarbrev = generer_svarbrev_til_sag(
                 sag=st.session_state.aktuel_sag,
                 sagsakter=st.session_state.get("sagsakter", ""),
