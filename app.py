@@ -19,6 +19,28 @@ from dotenv import load_dotenv
 load_dotenv()
 _ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
+
+# ---------- AUTO-LOAD PAKKEREJSELOVEN ----------
+# Sikrer at lovens paragraffer er i vidensbanken. Kører kun én gang pr.
+# server-instans takket være @st.cache_resource — første gang appen
+# starter scrapes loven stille; derefter gør funktionen ingenting.
+@st.cache_resource
+def _sikr_pakkerejseloven_i_db():
+    """Indlæs pakkerejseloven hvis den ikke allerede er der. Fejler
+    stille, så appen aldrig blokeres hvis scraping fejler."""
+    try:
+        from database import opret_tabeller, antal_af_type
+        opret_tabeller()
+        antal = antal_af_type("lovgivning")
+        if antal == 0:
+            from pakkerejselov_scraper import scrape_og_gem_pakkerejseloven
+            scrape_og_gem_pakkerejseloven()
+    except Exception as e:
+        print(f"DEBUG: Auto-load af pakkerejselov fejlede (ikke kritisk): {e}")
+    return True
+
+_sikr_pakkerejseloven_i_db()
+
 # ---------- ADMIN-DETEKTION FRA URL ----------
 # Skal ske FØR st.navigation så admin-mode er sat når siderne køres
 _query = st.query_params

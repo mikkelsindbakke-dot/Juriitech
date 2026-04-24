@@ -220,6 +220,23 @@ def hent_antal_sager():
         return 0
 
 
+def antal_af_type(dokumenttype):
+    """Returnerer antal dokumenter af en given type (fx 'lovgivning')."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM mine_dokumenter WHERE dokumenttype = %s",
+            (dokumenttype,),
+        )
+        antal = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return antal
+    except Exception:
+        return 0
+
+
 def hent_sager_uden_embedding():
     """
     Returnerer sager der mangler embedding — bruges af backfill-scriptet.

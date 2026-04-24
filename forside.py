@@ -611,45 +611,6 @@ with st.sidebar:
                 except Exception as e:
                     st.error(f"TUI-scraping fejlede: {e}")
 
-        st.divider()
-
-        # ---------- SCRAPE PAKKEREJSELOVEN ----------
-        st.subheader("Hent pakkerejseloven")
-        st.caption(
-            "Scraper den danske pakkerejselov fra danskelove.dk og gemmer "
-            "hver paragraf som separat dokument i vidensbanken. AI'en bruger "
-            "paragrafferne som juridisk grundlag i analyser og svarbreve."
-        )
-
-        if st.button("Hent pakkerejseloven", type="secondary", key="lov_hent"):
-            from pakkerejselov_scraper import scrape_og_gem_pakkerejseloven
-
-            lov_log_placeholder = st.empty()
-            lov_log_linjer = []
-
-            def _lov_progress(msg):
-                lov_log_linjer.append(msg)
-                if len(lov_log_linjer) % 3 == 0 or msg.startswith("✅") or msg.startswith("❌"):
-                    lov_log_placeholder.code(
-                        "\n".join(lov_log_linjer[-25:]), language="text"
-                    )
-
-            with st.spinner("Scraper pakkerejseloven..."):
-                try:
-                    lov_stats = scrape_og_gem_pakkerejseloven(
-                        progress_callback=_lov_progress,
-                    )
-                    lov_log_placeholder.code(
-                        "\n".join(lov_log_linjer[-25:]), language="text"
-                    )
-                    st.success(
-                        f"Pakkerejseloven hentet. Gemt: {lov_stats['gemt']}, "
-                        f"sprunget over: {lov_stats['sprunget_over']}, "
-                        f"fejlede: {lov_stats['fejlede']}."
-                    )
-                except Exception as e:
-                    st.error(f"Scraping fejlede: {e}")
-
 
 # ---------- HOVEDSKÆRM ----------
 # Empty state: stor hero-sektion med cream/peach-baggrund (Apple Health palette)
