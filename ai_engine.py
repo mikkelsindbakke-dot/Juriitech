@@ -11,10 +11,11 @@ load_dotenv()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 MODEL = "claude-sonnet-4-6"
-# Default loft for AI-svar. 8000 tokens = ca. 6000 ord — det dækker den
-# fulde strukturerede førstevurdering med alle afsnit uden at blive
-# klippet midt i en sætning. Specifikke kald kan overskrive dette.
-MAX_TOKENS = 8000
+# Default loft for AI-svar. 16000 tokens = ca. 12000 ord — rigeligt til
+# den fulde strukturerede førstevurdering. Hvis modellen alligevel
+# rammer loftet, detekteres det af _faerdiggoer_hvis_afkortet() og en
+# fortsættelses-kald sikrer at svaret ikke er klippet midt i en sætning.
+MAX_TOKENS = 16000
 
 # Antal AFGØRELSER vi henter pr. spørgsmål — 5 giver Claude nok juridisk
 # præcedens til at finde de 3-5 mest relevante referencer.
@@ -284,6 +285,71 @@ def _hent_relevante_eller_fald_tilbage(soge_tekst, udeluk_filnavn=None):
     return alle[:TOP_K_FALLBACK], "fallback"
 
 
+def _faerdiggoer_hvis_afkortet(
+    response,
+    system_prompt,
+    messages,
+    max_tokens=None,
+    max_rounds=3,
+):
+    """
+    Tjekker om et svar fra Anthropic er blevet afkortet (stop_reason ==
+    'max_tokens'). Hvis ja, laves ét eller flere fortsættelses-kald hvor
+    modellen bliver bedt om at skrive videre, indtil svaret er komplet
+    eller vi har ramt max_rounds.
+
+    Returnerer den samlede tekst — altid afsluttet med en hel sætning.
+
+    response:      det initielle message-response fra client.messages.create
+    system_prompt: samme system-prompt som i det initielle kald
+    messages:      samme messages-liste som i det initielle kald
+    max_tokens:    max_tokens for hvert fortsættelses-kald (default MAX_TOKENS)
+    max_rounds:    maksimalt antal fortsættelser (sikkerhedsnet)
+    """
+    if max_tokens is None:
+        max_tokens = MAX_TOKENS
+
+    try:
+        samlet_tekst = response.content[0].text
+    except Exception:
+        return ""
+
+    stop = getattr(response, "stop_reason", None)
+    runder = 0
+
+    while stop == "max_tokens" and runder < max_rounds:
+        runder += 1
+        print(
+            f"DEBUG: Svar afkortet (runde {runder}) — fortsætter via "
+            "continuation-kald"
+        )
+        try:
+            # Byg nye messages der inkluderer det delvise svar som
+            # assistant-turn og beder modellen om at fortsætte
+            # præcis hvor den slap. Vi tilføjer ikke et nyt bruger-
+            # spørgsmål — Anthropic forstår 'prefill'-mønstret.
+            fortsaet_msgs = list(messages) + [
+                {"role": "assistant", "content": samlet_tekst},
+            ]
+            fortsaettelse = client.messages.create(
+                model=MODEL,
+                max_tokens=max_tokens,
+                temperature=0,
+                system=system_prompt,
+                messages=fortsaet_msgs,
+            )
+            ekstra = fortsaettelse.content[0].text or ""
+            if not ekstra.strip():
+                break
+            samlet_tekst += ekstra
+            stop = getattr(fortsaettelse, "stop_reason", None)
+        except Exception as e:
+            print(f"DEBUG: Continuation-kald fejlede: {e}")
+            break
+
+    return samlet_tekst
+
+
 def spoerg_ai(spoergsmaal, sager=None):
     """
     Stil et spørgsmål mod vidensbanken uden nogen ny klage vedhæftet.
@@ -309,14 +375,17 @@ def spoerg_ai(spoergsmaal, sager=None):
             f"{_opgave_tekst()}"
         )
 
+        messages = [{"role": "user", "content": user_content}]
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
+            messages=messages,
         )
-        return response.content[0].text
+        return _faerdiggoer_hvis_afkortet(
+            response, SYSTEM_PROMPT, messages,
+        )
 
     except Exception as e:
         return f"Fejl i forbindelsen til juriitech PAX: {str(e)}"
@@ -1628,14 +1697,20 @@ def spoerg_ai_med_sag(
             sag, indled, slutning, ekstra_sagsakter_filer=sagsakter_filer
         )
 
+        messages = [{"role": "user", "content": user_content}]
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
             system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_content}],
+            messages=messages,
         )
-        svar_tekst = response.content[0].text
+        # Automatisk fortsættelse hvis modellen blev afbrudt af
+        # token-loftet — sikrer at førstevurderingen aldrig afkortes
+        # midt i en sætning for betalende brugere.
+        svar_tekst = _faerdiggoer_hvis_afkortet(
+            response, SYSTEM_PROMPT, messages,
+        )
         if returner_relevante:
             return svar_tekst, relevante
         return svar_tekst

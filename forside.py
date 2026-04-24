@@ -1572,7 +1572,7 @@ if st.session_state.get("aktuel_sag"):
                 screenshots m.m. — altså information som juriitech PAX
                 ikke automatisk har adgang til.</p>
                 <p>Når du tilføjer sagsakter, genberegnes analysen
-                automatisk, så vurderingen tager højde for den nye
+                automatisk, så vurderingen tager højde for ny
                 information.</p>
             </div>
         </div>
