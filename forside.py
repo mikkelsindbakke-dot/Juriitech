@@ -25,7 +25,7 @@ from ai_engine import (
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
 from vurdering import vis_dashboard as vis_udfalds_dashboard
-from ui import thinking
+from ui import thinking, render_analyse_som_pillars
 
 
 # ---------- OPSÆTNING ----------
@@ -115,19 +115,15 @@ st.markdown(
         font-weight: 400 !important;
     }
 
-    /* ========== GENNEMSIGTIG SIDEBAR MED BLUR (iOS/macOS-look) ========== */
+    /* ========== SIDEBAR — ren hvid/lys æstetik ========== */
     section[data-testid="stSidebar"] {
-        backdrop-filter: saturate(180%) blur(24px) !important;
-        -webkit-backdrop-filter: saturate(180%) blur(24px) !important;
-        background-color: rgba(250, 250, 252, 0.72) !important;
+        background-color: #FAFAFA !important;
         border-right: 1px solid rgba(0, 0, 0, 0.06) !important;
     }
 
-    @media (prefers-color-scheme: dark) {
-        section[data-testid="stSidebar"] {
-            background-color: rgba(25, 27, 32, 0.72) !important;
-            border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
-        }
+    /* Hovedindholds-baggrund tvinges hvid */
+    .stApp, .main, [data-testid="stAppViewContainer"] {
+        background-color: #FFFFFF !important;
     }
 
     /* Sidebarens titel — lidt mindre og mere elegant */
@@ -233,6 +229,85 @@ st.markdown(
     .streamlit-expanderHeader {
         font-weight: 500 !important;
         font-size: 0.95rem !important;
+    }
+
+    /* ========== APPLE-HEALTH PILLARS MED FARVEDE BAGGRUNDE ========== */
+    /* Bruger præcis de pastelfarver Apple selv bruger på apple.com/apple-watch/health */
+    .analyse-pillar {
+        background: var(--pillar-bg);
+        padding: 3rem 2.5rem;
+        border-radius: 24px;
+        margin: 1.5rem 0;
+        position: relative;
+        overflow: hidden;
+        color: #111827 !important;
+    }
+
+    .analyse-pillar-accent-dot {
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        background: var(--pillar-accent);
+        margin-bottom: 1.75rem;
+    }
+
+    .analyse-pillar-title {
+        font-family: 'Source Serif 4', Georgia, serif !important;
+        font-size: 2.4rem !important;
+        font-weight: 700 !important;
+        line-height: 1.08 !important;
+        letter-spacing: -0.025em !important;
+        margin: 0 0 1.25rem 0 !important;
+        padding: 0 !important;
+        border: none !important;
+        background: none !important;
+        color: #111827 !important;
+    }
+
+    .analyse-pillar-body {
+        font-family: 'Inter', sans-serif;
+        font-size: 1.08rem;
+        line-height: 1.75;
+        color: #1F2937 !important;
+    }
+
+    .analyse-pillar-body p {
+        margin: 0 0 1rem 0;
+        color: #1F2937 !important;
+    }
+
+    .analyse-pillar-body p:last-child {
+        margin-bottom: 0;
+    }
+
+    .analyse-pillar-body ul {
+        padding-left: 1.3rem;
+        margin: 0.75rem 0;
+    }
+
+    .analyse-pillar-body li {
+        margin-bottom: 0.5rem;
+        line-height: 1.6;
+        color: #1F2937 !important;
+    }
+
+    .analyse-pillar-body strong {
+        font-weight: 600;
+        color: #111827 !important;
+    }
+
+    /* Kildehenvisninger — fremhævet i accent-farve på hvid pille */
+    .analyse-citation {
+        display: inline-block;
+        color: #111827 !important;
+        font-weight: 600;
+        font-size: 0.88em;
+        padding: 2px 9px;
+        border-radius: 100px;
+        background: rgba(255, 255, 255, 0.75);
+        white-space: nowrap;
+        margin: 0 2px;
+        border: 1px solid rgba(17, 24, 39, 0.06);
     }
 
     /* ========== CUSTOM "THINKING"-ANIMATION (Claude-inspireret) ========== */
@@ -829,17 +904,10 @@ if st.session_state.get("aktuel_sag"):
                                 f"({sag_ref['kilde_url']})"
                             )
 
-        # Juridisk førstevurdering som tekst — placeret efter afgørelses-kortene
-        # så man kan læse analysen med de relevante sager friskt i hukommelsen
+        # Juridisk førstevurdering som Apple-Health-inspirerede pillars —
+        # store overskrifter, accent-striber, fremhævede kildehenvisninger.
         if st.session_state.auto_vurdering_tekst:
-            st.markdown("### Juridisk resume og vurdering")
-            st.caption(
-                "Juriitechs strukturerede vurdering af sagen — resume, klagens "
-                "kernepunkter, rejseselskabets hidtidige stillingtagen, og "
-                "juridisk vurdering."
-            )
-            with st.container(border=True):
-                st.markdown(st.session_state.auto_vurdering_tekst)
+            render_analyse_som_pillars(st.session_state.auto_vurdering_tekst)
 
         # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
         # (for ikke at rode UI'en). De bliver stadig automatisk brugt af Claude

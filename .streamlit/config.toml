@@ -1,0 +1,15 @@
+# Juriitech Streamlit-tema
+# Tvunget lys-tema med hvid baggrund, så sektionernes Apple-Health-pastelfarver
+# kommer tydeligt til sin ret uanset brugerens system-preference.
+
+[theme]
+base = "light"
+primaryColor = "#6366F1"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F9FAFB"
+textColor = "#111827"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
+showErrorDetails = false
