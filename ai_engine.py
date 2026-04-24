@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import anthropic
 
 from embeddings import embed_sporgsmaal
-from database import find_relevante_sager, hent_alle_sager
+from database import find_relevante_sager, hent_alle_sager, hent_sager_af_type
 
 # Læs API-nøgle fra .env (ikke hardcoded i koden)
 load_dotenv()
@@ -33,6 +33,16 @@ TOP_K_FALLBACK = 8
 # Øvre grænse på hvor lang en tekst vi sender pr. sag. Dette beskytter
 # prompten mod ekstremt lange dokumenter og holder svartiden nede.
 MAX_CHARS_PR_SAG = 15_000
+
+# Øvre grænse på samlet anonymiseringsreglerblok vi injicerer i prompten.
+# ~18000 tegn ≈ 4500 tokens — rummeligt nok til at dække Datatilsynets
+# vejledninger + de centrale dele af Article 29 WP216, uden at gøre
+# selve anonymiseringsprompten overdrevent lang.
+MAX_CHARS_ANONYMISERINGSREGLER = 18_000
+
+# Cache for anonymiseringsregler så vi ikke rammer databasen ved hver
+# anonymisering. Nulstilles når Python-processen genstarter.
+_ANONYMISERINGSREGLER_CACHE = None
 
 SYSTEM_PROMPT = (
     "Du er en højt specialiseret juridisk konsulent for et rejseselskab "
@@ -301,10 +311,70 @@ def spoerg_ai(spoergsmaal, sager=None):
         return f"Fejl i forbindelsen til juriitech PAX: {str(e)}"
 
 
+def _hent_anonymiseringsregler_tekst(max_tegn=MAX_CHARS_ANONYMISERINGSREGLER):
+    """
+    Henter ALLE anonymiseringsregler fra vidensbanken og returnerer dem
+    som én konkateneret tekst der kan injiceres i anonymiserings-prompter.
+
+    Disse stammer fra de fire autoritative kilder der auto-loades ved
+    app-start (Datatilsynet x2, Jurabibliotek, EU Article 29 WP216) og er
+    dermed en fast del af modellens forståelse — IKKE noget brugeren
+    behøver scrape eller uploade.
+
+    Resultatet caches i memory så vi ikke rammer databasen ved hver
+    anonymisering. Returnerer tom streng hvis reglerne mangler (så
+    anonymisering stadig virker, bare uden ekstern kontekst).
+    """
+    global _ANONYMISERINGSREGLER_CACHE
+    if _ANONYMISERINGSREGLER_CACHE is not None:
+        return _ANONYMISERINGSREGLER_CACHE
+
+    try:
+        chunks = hent_sager_af_type("anonymisering_regler")
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente anonymiseringsregler: {e}")
+        _ANONYMISERINGSREGLER_CACHE = ""
+        return ""
+
+    if not chunks:
+        _ANONYMISERINGSREGLER_CACHE = ""
+        return ""
+
+    dele = []
+    samlet_laengde = 0
+    for c in chunks:
+        indhold = (c.get("indhold") or "").strip()
+        if not indhold:
+            continue
+        kilde = c.get("kilde_url") or ""
+        blok_header = f"\n--- {c.get('filnavn','')} ({kilde}) ---\n"
+        blok = blok_header + indhold
+        if samlet_laengde + len(blok) > max_tegn:
+            # Inkludér kun det der er plads til, så prompten aldrig
+            # sprænger max-tokens
+            resterende = max_tegn - samlet_laengde
+            if resterende > 500:
+                dele.append(blok[:resterende] + "\n[...afkortet...]")
+            break
+        dele.append(blok)
+        samlet_laengde += len(blok)
+
+    samlet = (
+        "AUTORITATIVE ANONYMISERINGSREGLER (fast del af din træning — "
+        "disse skal du altid følge):\n"
+        + "\n".join(dele)
+        + "\n\n--- SLUT PÅ AUTORITATIVE REGLER ---\n"
+    )
+    _ANONYMISERINGSREGLER_CACHE = samlet
+    return samlet
+
+
 ANONYMISERING_PROMPT = """
 Du er en anonymiseringsassistent der arbejder efter Pakkerejse-Ankenævnets
 officielle retningslinjer (Retningslinjer for anonymisering 2023 + Vejledning
-til rejsearrangøren om besvarelse af klagesager og anonymisering 2022).
+til rejsearrangøren om besvarelse af klagesager og anonymisering 2022), samt
+de autoritative anonymiseringsregler der er indlæst i systemets vidensbank
+fra Datatilsynet, Jurabibliotek og EU Article 29 Working Party.
 
 REGLER DU SKAL FØLGE:
 
@@ -355,7 +425,10 @@ TEKST DER SKAL ANONYMISERES:
 
 def anonymiser_tekst(tekst, filnavn=None):
     """
-    Anonymiserer en enkelt tekstfil efter Ankenævnets regler.
+    Anonymiserer en enkelt tekstfil efter Ankenævnets regler + de
+    autoritative anonymiseringsregler fra Datatilsynet, Jurabibliotek og
+    EU Article 29 WP216 (loades automatisk ind i systemet).
+
     Returnerer den anonymiserede tekst.
     """
     try:
@@ -366,16 +439,25 @@ def anonymiser_tekst(tekst, filnavn=None):
             tekst = tekst[:50_000] + "\n\n[...teksten er trunkeret på grund af længde...]"
 
         header = f"\n[Filnavn: {filnavn}]\n" if filnavn else ""
+        regler = _hent_anonymiseringsregler_tekst()
+
+        # System-prompten får reglerne som fast baggrund — så modellen
+        # altid har dem i "hjernen" uanset inputtets længde.
+        system_prompt = (
+            "Du er en præcis og regel-tro anonymiseringsassistent for "
+            "rejsearrangører der skal svare Pakkerejse-Ankenævnet. Du "
+            "følger Ankenævnets officielle retningslinjer nøje, samt de "
+            "autoritative anonymiseringsregler du er trænet i (Datatilsynet, "
+            "Jurabibliotek, EU Article 29 WP216)."
+        )
+        if regler:
+            system_prompt += "\n\n" + regler
 
         response = client.messages.create(
             model=MODEL,
             max_tokens=8000,
             temperature=0,
-            system=(
-                "Du er en præcis og regel-tro anonymiseringsassistent for "
-                "rejsearrangører der skal svare Pakkerejse-Ankenævnet. Du "
-                "følger Ankenævnets officielle retningslinjer nøje."
-            ),
+            system=system_prompt,
             messages=[{
                 "role": "user",
                 "content": ANONYMISERING_PROMPT + header + tekst,
@@ -790,14 +872,21 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
             "SVARBREV DER SKAL GENNEMGÅS:\n"
         )
 
+        regler = _hent_anonymiseringsregler_tekst()
+        system_prompt = (
+            "Du er en præcis og regel-tro anonymiseringsassistent for "
+            "rejsearrangører der skal svare Pakkerejse-Ankenævnet. Du er "
+            "trænet på de autoritative danske og europæiske anonymiserings-"
+            "regler (Datatilsynet, Jurabibliotek, EU Article 29 WP216)."
+        )
+        if regler:
+            system_prompt += "\n\n" + regler
+
         response = client.messages.create(
             model=MODEL,
             max_tokens=6000,
             temperature=0,
-            system=(
-                "Du er en præcis og regel-tro anonymiseringsassistent for "
-                "rejsearrangører der skal svare Pakkerejse-Ankenævnet."
-            ),
+            system=system_prompt,
             messages=[{
                 "role": "user",
                 "content": instruktion + svarbrev_tekst,

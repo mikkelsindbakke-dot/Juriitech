@@ -41,6 +41,32 @@ def _sikr_pakkerejseloven_i_db():
 
 _sikr_pakkerejseloven_i_db()
 
+
+# ---------- AUTO-LOAD ANONYMISERINGSREGLER ----------
+# Sikrer at de fire autoritative kilder om anonymisering/pseudonymisering
+# ligger i vidensbanken som 'anonymisering_regler'. Disse bliver
+# automatisk en del af modellens forståelse når anonymisering udføres —
+# brugeren skal ikke selv scrape eller uploade. Fejler stille.
+@st.cache_resource
+def _sikr_anonymiseringsregler_i_db():
+    try:
+        from database import opret_tabeller, antal_af_type
+        opret_tabeller()
+        antal = antal_af_type("anonymisering_regler")
+        if antal == 0:
+            from anonymisering_regler_scraper import (
+                scrape_og_gem_anonymiseringsregler,
+            )
+            scrape_og_gem_anonymiseringsregler()
+    except Exception as e:
+        print(
+            "DEBUG: Auto-load af anonymiseringsregler fejlede "
+            f"(ikke kritisk): {e}"
+        )
+    return True
+
+_sikr_anonymiseringsregler_i_db()
+
 # ---------- ADMIN-DETEKTION FRA URL ----------
 # Skal ske FØR st.navigation så admin-mode er sat når siderne køres
 _query = st.query_params

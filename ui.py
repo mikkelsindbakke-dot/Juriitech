@@ -14,22 +14,82 @@ import streamlit as st
 
 
 @contextmanager
-def thinking(tekst="juriitech PAX arbejder..."):
+def thinking(tekst="juriitech PAX arbejder...", faser=None):
     """
     Context manager der viser en Claude-inspireret pulsende gradient-prik
     med tekst ved siden af, mens kode i with-blokken kører. Forsvinder
     automatisk når blokken er færdig.
+
+    Hvis 'faser' er en liste af strenge, bruges den til at cykle igennem
+    beskrivelser af hvad PAX arbejder på lige nu (fx 'Læser sagsakterne',
+    'Søger i vidensbanken', 'Vurderer sandsynligheder') — hver vises i
+    ~4 sekunder. Samtidig kører en elapsed-timer der viser mm:ss så det
+    er tydeligt for brugeren hvor langt processen er nået uden at lovne
+    et urealistisk tidsestimat.
     """
     placeholder = st.empty()
-    placeholder.markdown(
-        f"""
-        <div class="thinking-wrapper">
-          <div class="thinking-dot"></div>
-          <span class="thinking-text">{tekst}</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+
+    if faser:
+        # JS-drevet version med roterende faser + elapsed timer
+        import json as _json
+        import uuid as _uuid
+        uid = _uuid.uuid4().hex[:8]
+        faser_json = _json.dumps(list(faser))
+        placeholder.markdown(
+            f"""
+            <div class="thinking-wrapper">
+              <div class="thinking-dot"></div>
+              <div class="thinking-stack">
+                <span class="thinking-text">{tekst}</span>
+                <span class="thinking-fase" id="fase-{uid}">{faser[0]}</span>
+              </div>
+              <span class="thinking-timer" id="timer-{uid}">0:00</span>
+            </div>
+            <script>
+              (function() {{
+                const faser = {faser_json};
+                const faseEl = document.getElementById("fase-{uid}");
+                const timerEl = document.getElementById("timer-{uid}");
+                if (!faseEl || !timerEl) return;
+                let idx = 0;
+                const start = Date.now();
+                // Roter faser hvert 4. sekund
+                const faseInt = setInterval(() => {{
+                  idx = (idx + 1) % faser.length;
+                  if (faseEl) faseEl.textContent = faser[idx];
+                }}, 4000);
+                // Opdatér elapsed-timer hvert sekund
+                const timerInt = setInterval(() => {{
+                  const s = Math.floor((Date.now() - start) / 1000);
+                  const m = Math.floor(s / 60);
+                  const sek = String(s % 60).padStart(2, "0");
+                  if (timerEl) timerEl.textContent = m + ":" + sek;
+                }}, 1000);
+                // Stop når elementet fjernes
+                const obs = new MutationObserver(() => {{
+                  if (!document.getElementById("fase-{uid}")) {{
+                    clearInterval(faseInt);
+                    clearInterval(timerInt);
+                    obs.disconnect();
+                  }}
+                }});
+                obs.observe(document.body, {{ childList: true, subtree: true }});
+              }})();
+            </script>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        placeholder.markdown(
+            f"""
+            <div class="thinking-wrapper">
+              <div class="thinking-dot"></div>
+              <span class="thinking-text">{tekst}</span>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     try:
         yield
     finally:

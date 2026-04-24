@@ -394,6 +394,38 @@ st.markdown(
         animation: thinking-text-fade 2.8s ease-in-out infinite;
     }
 
+    /* Stakket layout: primær tekst + rullende fase under */
+    .thinking-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        flex: 1;
+        min-width: 0;
+    }
+    .thinking-stack .thinking-text {
+        animation: none;
+        color: #111827;
+        font-weight: 600;
+        font-size: 0.98rem;
+    }
+    .thinking-fase {
+        color: rgba(71, 85, 105, 0.85);
+        font-size: 0.85rem;
+        font-weight: 400;
+        letter-spacing: 0.01em;
+        transition: opacity 0.35s ease;
+    }
+    .thinking-timer {
+        font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+        font-size: 0.82rem;
+        color: rgba(71, 85, 105, 0.7);
+        background: rgba(99, 102, 241, 0.08);
+        padding: 3px 9px;
+        border-radius: 999px;
+        flex-shrink: 0;
+        font-variant-numeric: tabular-nums;
+    }
+
     @media (prefers-color-scheme: dark) {
         .thinking-wrapper {
             background: rgba(99, 102, 241, 0.1);
@@ -401,6 +433,12 @@ st.markdown(
         }
         .thinking-text {
             color: rgba(203, 213, 225, 0.9);
+        }
+        .thinking-stack .thinking-text { color: #F1F5F9; }
+        .thinking-fase { color: rgba(203, 213, 225, 0.75); }
+        .thinking-timer {
+            color: rgba(203, 213, 225, 0.75);
+            background: rgba(99, 102, 241, 0.18);
         }
     }
 
@@ -861,8 +899,16 @@ if st.session_state.get("aktuel_sag"):
         and st.session_state.auto_vurdering_tekst is not None
     )
     if skal_auto_vurdere:
-        with st.spinner(
-            "juriitech PAX laver en første vurdering af sagen — tager 20-40 sekunder..."
+        with thinking(
+            "juriitech PAX laver en grundig første vurdering af sagen",
+            faser=[
+                "Læser sagsakterne og høringsbrevet...",
+                "Søger i vidensbanken efter tidligere afgørelser...",
+                "Sammenholder med pakkerejseloven og rejsevilkårene...",
+                "Identificerer de stærkeste forsvarsargumenter...",
+                "Vurderer sandsynligheder for de tre udfald...",
+                "Skriver konklusion og strategi...",
+            ],
         ):
             try:
                 auto_svar, rel_sager = spoerg_ai_med_sag(
@@ -1369,8 +1415,15 @@ if st.session_state.get("aktuel_sag"):
         ]
         antal = len(tekstfiler_der_skal_behandles)
 
-        with st.spinner(
-            f"juriitech PAX anonymiserer {antal} bilag — tager ca. {antal * 15} sekunder..."
+        with thinking(
+            f"juriitech PAX anonymiserer {antal} bilag",
+            faser=[
+                "Identificerer personnavne, CPR, adresser og kontaktdata...",
+                "Erstatter klagers navn konsekvent med K (evt. K1, K2)...",
+                "Maskerer booking-numre og bankoplysninger...",
+                "Bevarer hotelnavne, destinationer og rejsedatoer...",
+                "Tjekker hver fil igennem for missede oplysninger...",
+            ],
         ):
             resultater = anonymiser_sag(st.session_state.aktuel_sag)
             st.session_state.seneste_anonymisering = resultater
@@ -1442,7 +1495,16 @@ if st.session_state.get("aktuel_sag"):
     )
 
     if st.button("Generer tjekliste", type="secondary"):
-        with st.spinner("juriitech PAX læser høringsbrevet og gennemgår bilagene — 20-40 sekunder..."):
+        with thinking(
+            "juriitech PAX gennemgår sagen mod Nævnets høringsbrev",
+            faser=[
+                "Læser høringsbrevet fra Nævnet...",
+                "Identificerer alle ønskede oplysninger og dokumenter...",
+                "Gennemgår de uploadede bilag...",
+                "Markerer hvad der er dækket og hvad der mangler...",
+                "Skriver punktvis tjekliste...",
+            ],
+        ):
             tjekliste = generer_tjekliste(sag=st.session_state.aktuel_sag)
             st.session_state.seneste_tjekliste = {
                 "indhold": tjekliste,
@@ -1484,7 +1546,17 @@ if st.session_state.get("aktuel_sag"):
     )
 
     if st.button("Generer udkast til svarbrev", type="primary"):
-        with st.spinner("juriitech PAX udarbejder svarbrevet — tager 30-60 sekunder..."):
+        with thinking(
+            "juriitech PAX udarbejder svarbrevet til Nævnet",
+            faser=[
+                "Læser klagen, bilagene og sagsakterne...",
+                "Finder relevante rejsevilkår og lovparagraffer...",
+                "Bygger juridisk argumentation for forsvaret...",
+                "Skriver indledning, faktum og stillingtagen...",
+                "Formulerer konklusion og påstand...",
+                "Sikrer at klagerens navn er fuldt anonymiseret...",
+            ],
+        ):
             svarbrev = generer_svarbrev_til_sag(
                 sag=st.session_state.aktuel_sag,
                 sagsakter=st.session_state.get("sagsakter", ""),

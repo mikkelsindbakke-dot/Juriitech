@@ -292,6 +292,47 @@ def hent_alle_sager():
         return []
 
 
+def hent_sager_af_type(dokumenttype, limit=None):
+    """
+    Returnerer alle dokumenter af en given dokumenttype.
+
+    Bruges bl.a. til at hente ALLE anonymiseringsregler som fast kontekst
+    til anonymiseringsopgaver (i modsætning til RAG-baseret topp-k-søgning).
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        if limit is not None:
+            cur.execute(
+                "SELECT filnavn, indhold, kilde_url FROM mine_dokumenter "
+                "WHERE dokumenttype = %s "
+                "ORDER BY filnavn ASC LIMIT %s",
+                (dokumenttype, int(limit)),
+            )
+        else:
+            cur.execute(
+                "SELECT filnavn, indhold, kilde_url FROM mine_dokumenter "
+                "WHERE dokumenttype = %s "
+                "ORDER BY filnavn ASC",
+                (dokumenttype,),
+            )
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return [
+            {
+                "filnavn": r[0],
+                "indhold": r[1],
+                "kilde_url": r[2] if len(r) > 2 else None,
+            }
+            for r in raekker
+        ]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente sager af type {dokumenttype}: {e}")
+        return []
+
+
 # ---------- ARKIV-FUNKTIONER ----------
 
 def gem_i_arkiv(
