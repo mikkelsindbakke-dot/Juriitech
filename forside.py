@@ -135,7 +135,7 @@ st.markdown(
 
     /* ========== HVIDT RUM OG LAYOUT (Stripe-inspireret) ========== */
     .main .block-container {
-        padding-top: 3rem !important;
+        padding-top: 1.5rem !important;
         padding-bottom: 4rem !important;
         max-width: 1000px !important;
     }
@@ -641,73 +641,36 @@ with st.sidebar:
 _har_aktiv_sag = bool(st.session_state.get("aktuel_sag"))
 
 if not _har_aktiv_sag:
-    # Hero-sektion med Apple Health cream/peach-baggrund
+    # Komprimeret hero — så upload-zonen er synlig straks uden at scrolle
     st.markdown(
         """
         <div style="
             background: linear-gradient(135deg, #FDEFD7 0%, #FDF6E6 100%);
-            padding: 4rem 3rem;
-            border-radius: 28px;
-            margin-bottom: 2rem;
-        ">
-            <div style="max-width: 640px;">
-                <h1 style="
-                    font-family: 'Source Serif 4', Georgia, serif;
-                    font-size: 3.2rem;
-                    font-weight: 700;
-                    line-height: 1.05;
-                    letter-spacing: -0.03em;
-                    color: #1F2937;
-                    margin: 0 0 1.25rem 0;
-                ">
-                    Analysér en sag<br>
-                    fra <span style="color: #92400E;">Pakkerejse-Ankenævnet</span>
-                </h1>
-                <p style="
-                    font-family: 'Inter', sans-serif;
-                    font-size: 1.15rem;
-                    line-height: 1.55;
-                    color: #374151;
-                    margin: 0 0 2rem 0;
-                    font-weight: 400;
-                ">
-                    Kom i gang ved at uploade sagsfilerne nedenfor — høringsbrev,
-                    klageskema og eventuelle bilag.
-                    juriitech PAX læser materialet, finder
-                    relevante tidligere afgørelser, og giver dig en juridisk
-                    førstevurdering på sekunder.
-                </p>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    # Upload-widget placeres under hero'en med egen overskrift
-    st.markdown(
-        """
-        <div style="
-            background: #FFFFFF;
-            border: 2px dashed rgba(146, 64, 14, 0.25);
-            border-radius: 20px;
-            padding: 2rem 2.5rem 0.5rem 2.5rem;
+            padding: 2rem 2.5rem;
+            border-radius: 22px;
             margin-bottom: 1rem;
         ">
-            <h3 style="
+            <h1 style="
                 font-family: 'Source Serif 4', Georgia, serif;
-                font-size: 1.4rem;
-                margin: 0 0 0.5rem 0;
+                font-size: 2.4rem;
+                font-weight: 700;
+                line-height: 1.08;
+                letter-spacing: -0.025em;
                 color: #1F2937;
+                margin: 0 0 0.6rem 0;
             ">
-                Træk og slip sagens filer her
-            </h3>
+                Analysér en sag fra <span style="color: #92400E;">Pakkerejse-Ankenævnet</span>
+            </h1>
             <p style="
-                font-size: 0.95rem;
-                color: #6B7280;
-                margin: 0 0 1rem 0;
+                font-family: 'Inter', sans-serif;
+                font-size: 1rem;
+                line-height: 1.5;
+                color: #374151;
+                margin: 0;
+                font-weight: 400;
             ">
-                Understøtter ZIP, PDF og Word. Maks. 200 MB pr. fil.
-                Flere filer kan vælges samtidigt.
+                Kom i gang ved at uploade sagsfilerne nedenfor — høringsbrev,
+                klageskema og eventuelle bilag.
             </p>
         </div>
         """,
@@ -715,11 +678,10 @@ if not _har_aktiv_sag:
     )
 
 uploadede_sagsfiler = st.file_uploader(
-    "Upload sagen" if _har_aktiv_sag else " ",
+    "Upload sagen (ZIP, PDF eller Word — gerne flere filer)",
     type=["zip", "pdf", "docx"],
     accept_multiple_files=True,
     key="sag_uploader",
-    label_visibility="visible" if _har_aktiv_sag else "collapsed",
 )
 
 # Tjek om uploadet har ændret sig (enten ny fil eller andet antal filer)
