@@ -11,7 +11,10 @@ load_dotenv()
 client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
 MODEL = "claude-sonnet-4-6"
-MAX_TOKENS = 4000
+# Default loft for AI-svar. 8000 tokens = ca. 6000 ord — det dækker den
+# fulde strukturerede førstevurdering med alle afsnit uden at blive
+# klippet midt i en sætning. Specifikke kald kan overskrive dette.
+MAX_TOKENS = 8000
 
 # Antal AFGØRELSER vi henter pr. spørgsmål — 5 giver Claude nok juridisk
 # præcedens til at finde de 3-5 mest relevante referencer.
@@ -744,7 +747,7 @@ def generer_tjekliste(sag):
 
         response = client.messages.create(
             model=MODEL,
-            max_tokens=4000,
+            max_tokens=6000,
             temperature=0,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
