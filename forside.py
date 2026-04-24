@@ -685,34 +685,79 @@ opret_tabeller()
 
 # ---------- SCROLL-TIL-TOP EFTER GENÅBNING AF GEMT SAG ----------
 # Når brugeren åbner en gemt sag, sætter gemte_sager.py flaget
-# '_scroll_til_top'. Her tjekker vi for det og injicerer en lille
-# JS-snippet der scroller forsiden op øverst, så brugeren lander ved
-# første vurdering — ikke nede ved 'Gem sagen'-knappen.
+# '_scroll_til_top'. Her tjekker vi for det og injicerer JavaScript der
+# scroller til toppen. Streamlit tegner indholdet gradvist, så vi bruger
+# en MutationObserver der scroller hver gang der kommer ny content —
+# indtil siden har været stabil i 500ms, hvorefter observeren stopper.
 if st.session_state.pop("_scroll_til_top", False):
     from streamlit.components.v1 import html as _scroll_html
     _scroll_html(
         """
         <script>
           (function() {
-            // Kør flere gange så vi rammer efter Streamlit har tegnet
-            // alt indholdet færdigt.
-            function toTop() {
+            var doc;
+            try { doc = window.parent.document; }
+            catch (e) { doc = document; }
+
+            function findScrollContainer() {
+              // Prøv alle de containere Streamlit kan bruge som scroll-parent
+              return (
+                doc.querySelector('section.main') ||
+                doc.querySelector('[data-testid="stMainBlockContainer"]') ||
+                doc.querySelector('[data-testid="stAppViewContainer"]') ||
+                doc.querySelector('[data-testid="stMain"]') ||
+                doc.scrollingElement ||
+                doc.documentElement
+              );
+            }
+
+            function scrollToTopHard() {
               try {
-                var doc = window.parent.document;
-                var container =
-                  doc.querySelector('section.main') ||
-                  doc.querySelector('[data-testid="stAppViewContainer"]') ||
-                  doc.querySelector('[data-testid="stMain"]');
-                if (container) {
-                  container.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+                var c = findScrollContainer();
+                if (c) {
+                  c.scrollTop = 0;
+                  if (c.scrollTo) c.scrollTo(0, 0);
                 }
-                window.parent.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+                doc.body.scrollTop = 0;
+                doc.documentElement.scrollTop = 0;
+                if (doc.defaultView && doc.defaultView.scrollTo) {
+                  doc.defaultView.scrollTo(0, 0);
+                }
+                // Scroll også denne iframes window (fallback)
+                window.scrollTo(0, 0);
               } catch (e) { /* ignorer */ }
             }
-            toTop();
-            setTimeout(toTop, 120);
-            setTimeout(toTop, 400);
-            setTimeout(toTop, 900);
+
+            // Første kørsel
+            scrollToTopHard();
+
+            // MutationObserver: scroll hver gang Streamlit tegner nyt.
+            // Stop efter siden har været stille i 500ms, eller efter 5 sek.
+            var stopTimer = null;
+            var observer = null;
+            function resetStopTimer() {
+              if (stopTimer) clearTimeout(stopTimer);
+              stopTimer = setTimeout(function() {
+                if (observer) observer.disconnect();
+              }, 500);
+            }
+            try {
+              observer = new MutationObserver(function() {
+                scrollToTopHard();
+                resetStopTimer();
+              });
+              observer.observe(doc.body, { childList: true, subtree: true });
+              resetStopTimer();
+              // Absolut sikkerhedsgrænse
+              setTimeout(function() {
+                if (observer) observer.disconnect();
+              }, 5000);
+            } catch (e) { /* ignorer */ }
+
+            // Backup-kald efter faste tidsintervaller
+            [60, 200, 500, 1000, 2000, 3500].forEach(function(ms) {
+              setTimeout(scrollToTopHard, ms);
+            });
           })();
         </script>
         """,
