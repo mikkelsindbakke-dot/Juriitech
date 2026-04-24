@@ -21,6 +21,11 @@ TOP_K_AFGOERELSER = 5
 # dække de relevante kontraktuelle punkter uden at fylde prompten op.
 TOP_K_VILKAAR = 3
 
+# Antal PAKKEREJSELOV-paragraffer vi henter pr. spørgsmål. Loven har
+# forrang, så vi henter bredt for at sikre at alle relevante paragraffer
+# er med.
+TOP_K_LOVGIVNING = 4
+
 # Samlet øvre loft når vi falder tilbage til "hent alle" — forhindrer
 # at prompten eksploderer hvis RAG svigter.
 TOP_K_FALLBACK = 8
@@ -71,7 +76,7 @@ SYSTEM_PROMPT = (
     "du ikke kender sidetallet, skriv fx [Bilag 05, sidetal ikke angivet] — "
     "men opfind aldrig et sidetal.\n"
     "\n"
-    "VIDENSBANKEN indeholder tre typer dokumenter:\n"
+    "VIDENSBANKEN indeholder fire typer dokumenter:\n"
     "  - AFGØRELSE: en tidligere kendelse fra Pakkerejseankenævnet, hvor "
     "udfaldet (fuld medhold / delvist medhold / afvist) og beløb fremgår af teksten. "
     "Disse er din juridiske præcedens.\n"
@@ -81,7 +86,11 @@ SYSTEM_PROMPT = (
     "  - REJSESELSKABETS VILKÅR: rejsebetingelser, regler, retningslinjer og "
     "procedurer hentet direkte fra rejseselskabets egen hjemmeside. Dette er "
     "kontraktgrundlaget mellem rejseselskabet og kunden og skal bruges aktivt "
-    "i argumentationen — 'ifølge punkt X i rejsevilkårene ...'."
+    "i argumentationen — 'ifølge punkt X i rejsevilkårene ...'.\n"
+    "  - PAKKEREJSELOVEN: paragraffer fra den danske pakkerejselov (lov nr. 1666 "
+    "af 2017). Dette er det lovmæssige fundament for alle pakkerejsesager i "
+    "Danmark. Henvis konkret til paragraffer hvor relevant — fx '§ 19 om mangler' "
+    "eller '§ 22 om forholdsmæssigt afslag'. Loven har forrang over vilkår."
 )
 
 
@@ -122,6 +131,8 @@ def _byg_vidensbank_tekst(sager):
             label = "KLAGE (ikke afgjort endnu)"
         elif doktype == "vilkaar":
             label = "REJSESELSKABETS VILKÅR"
+        elif doktype == "lovgivning":
+            label = "PAKKEREJSELOVEN"
         else:
             label = "AFGØRELSE"
 
@@ -212,10 +223,11 @@ def _opgave_tekst():
 
 def _hent_relevante_eller_fald_tilbage(soge_tekst, udeluk_filnavn=None):
     """
-    Finder relevante sager via embedding-søgning og kombinerer tre typer:
+    Finder relevante sager via embedding-søgning og kombinerer fire typer:
       - De TOP_K_AFGOERELSER mest relevante AFGØRELSER (juridisk præcedens)
       - De TOP_K_VILKAAR mest relevante VILKÅR-passager (kontraktgrundlaget)
-      - Evt. KLAGER bliver ikke hentet separat (klager er kun kontekst)
+      - De TOP_K_LOVGIVNING mest relevante PAKKEREJSELOV-paragraffer
+      - KLAGER bliver ikke hentet separat (klager er kun kontekst)
 
     Returnerer en kombineret liste. Hvis Voyage er nede eller ingen
     embeddings findes, falder vi tilbage til at sende et begrænset udvalg
@@ -235,7 +247,13 @@ def _hent_relevante_eller_fald_tilbage(soge_tekst, udeluk_filnavn=None):
             udeluk_filnavn=udeluk_filnavn,
             dokumenttype="vilkaar",
         )
-        kombineret = afgoerelser + vilkaar
+        lovgivning = find_relevante_sager(
+            sporgsmaal_emb,
+            top_k=TOP_K_LOVGIVNING,
+            udeluk_filnavn=udeluk_filnavn,
+            dokumenttype="lovgivning",
+        )
+        kombineret = afgoerelser + vilkaar + lovgivning
         if kombineret:
             return kombineret, "rag"
 
@@ -549,7 +567,10 @@ SVARBREV_OPGAVE = """
 OPGAVE: Generer et KOMPLET UDKAST til svarbrev fra rejseselskabet til
 Pakkerejseankenævnet, struktureret som nedenfor. Skriv i et formelt,
 professionelt juridisk sprog — men ikke stivt. Brug præcise henvisninger
-til vidensbanken og rejsevilkårene.
+til rejsevilkårene, sagsakterne og pakkerejseloven.
+
+UNDLAD bevidst at citere tidligere afgørelser fra Nævnet — det forventes
+ikke i rejsearrangørens svar og gør brevet for detaljeret.
 
 STRUKTUR — følg nøjagtigt denne rækkefølge, med overskrifterne som vist:
 
@@ -570,10 +591,17 @@ anerkender kravet delvist]."
 **4. Juridisk argumentation**
 De stærkeste forsvarsargumenter baseret på:
   a) REJSEVILKÅRENE — citér konkret hvilke punkter der gælder
-  b) TIDLIGERE AFGØRELSER fra Nævnet — henvis med filnavn og år, fx
-     "I afgørelse 19-1467 (2019) fandt Nævnet, at ..."
-  c) SAGSAKTERNES faktuelle oplysninger — brug C4C, e-mails og booking-
+  b) SAGSAKTERNES faktuelle oplysninger — brug C4C, e-mails og booking-
      detaljer til at understøtte rejseselskabets version
+  c) PAKKEREJSELOVEN — henvis til konkrete paragraffer hvor det er
+     relevant (fx § 19 om mangler, § 22 om forholdsmæssigt afslag)
+
+VIGTIGT: Inkludér IKKE referencer til tidligere afgørelser fra Nævnet i
+svarbrevet. Tidligere afgørelser bruges til at VURDERE sandsynligheden
+for udfaldet (i analysen), men Nævnet forventer IKKE citater af deres
+egne afgørelser i rejsearrangørens svarbrev. Det gør brevet unødvendigt
+langt og detaljeret. Argumentér udelukkende ud fra sagens egne fakta,
+rejsevilkårene og pakkerejselovens paragraffer.
 
 **5. Konklusion og påstand**
 En klar afslutning hvor rejseselskabet anmoder Nævnet om at
@@ -964,9 +992,14 @@ def spoerg_ai_med_sag(
                 top_k=TOP_K_VILKAAR,
                 dokumenttype="vilkaar",
             )
+            lovgivning = find_relevante_sager(
+                sporgsmaal_emb,
+                top_k=TOP_K_LOVGIVNING,
+                dokumenttype="lovgivning",
+            )
             # Filtrér sagens egne filer ud
             relevante = [
-                r for r in (afgoerelser + vilkaar)
+                r for r in (afgoerelser + vilkaar + lovgivning)
                 if r.get("filnavn") not in udeluk_filnavne
             ]
 
@@ -1058,8 +1091,13 @@ def generer_svarbrev_til_sag(sag, sagsakter=None, ekstra_instrukser=None):
                 top_k=TOP_K_VILKAAR,
                 dokumenttype="vilkaar",
             )
+            lovgivning = find_relevante_sager(
+                sporgsmaal_emb,
+                top_k=TOP_K_LOVGIVNING,
+                dokumenttype="lovgivning",
+            )
             relevante = [
-                r for r in (afgoerelser + vilkaar)
+                r for r in (afgoerelser + vilkaar + lovgivning)
                 if r.get("filnavn") not in udeluk_filnavne
             ]
         vidensbank = _byg_vidensbank_tekst(relevante) if relevante else (
