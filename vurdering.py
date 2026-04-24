@@ -137,15 +137,32 @@ def _render_fallback_dashboard():
     )
 
 
-def vis_dashboard(svar_tekst):
+def vis_dashboard(svar_tekst, struktureret_data=None):
     """
     Viser et visuelt dashboard med de tre sandsynligheder.
-    Hvis parsing fejler, vises et fallback-dashboard så sektionen
-    ALDRIG er tom.
 
-    Returnerer True hvis fuldt dashboard blev vist, False ved fallback.
+    struktureret_data (valgfri): dict med nøglerne 'fuld_medhold',
+    'delvist_medhold', 'afvist'. Hvis angivet bruges disse i stedet for
+    at parse teksten — det betyder dashboardet altid kan vises selv hvis
+    regex-parsingen fejler.
+
+    Returnerer True ved fuldt dashboard, False ved fallback.
     """
-    s = parse_sandsynligheder(svar_tekst)
+    if (
+        struktureret_data
+        and all(
+            k in struktureret_data and struktureret_data[k] is not None
+            for k in ("fuld_medhold", "delvist_medhold", "afvist")
+        )
+    ):
+        s = {
+            "fuld_medhold": int(struktureret_data["fuld_medhold"]),
+            "delvist_medhold": int(struktureret_data["delvist_medhold"]),
+            "afvist": int(struktureret_data["afvist"]),
+            "fandt_alle_tre": True,
+        }
+    else:
+        s = parse_sandsynligheder(svar_tekst)
     if not s["fandt_alle_tre"]:
         # Fallback: altid vis noget i stedet for at skjule sektionen helt
         _render_fallback_dashboard()
@@ -157,73 +174,111 @@ def vis_dashboard(svar_tekst):
 
     mest_key, mest_pct, mest_label = _mest_sandsynlige(s)
 
-    # Farvekodning — set fra rejseselskabets perspektiv:
-    #   afvist (godt for TUI) = grøn
-    #   delvist medhold = gul
-    #   fuld medhold (dårligt for TUI) = rød
+    # Farvekodning — bruger samme pastel-palette som videnstank-sidebaren:
+    #   afvist (godt for TUI)      = mint/grøn  (#E7F5DD / #76D672)
+    #   delvist medhold            = peach/gul  (#FDEFD7 / #F59E0B)
+    #   fuld medhold (dårligt)     = rose/rød   (#FDE9EE / #EC4899)
+    FARVER = {
+        "fuld_medhold": {
+            "bg": "#FDE9EE",
+            "accent": "#EC4899",
+            "progress": "#EC4899",
+        },
+        "delvist_medhold": {
+            "bg": "#FDEFD7",
+            "accent": "#F59E0B",
+            "progress": "#F59E0B",
+        },
+        "afvist": {
+            "bg": "#E7F5DD",
+            "accent": "#76D672",
+            "progress": "#76D672",
+        },
+    }
+
     if mest_key == "afvist":
-        banner_farve = "#1E8449"   # grøn
-        banner_ikon = ""
         strategi = "Gode udsigter. Byg forsvaret stærkt — dokumentér at kravet ikke er berettiget."
     elif mest_key == "delvist_medhold":
-        banner_farve = "#CA8A04"   # gul/orange
-        banner_ikon = ""
         strategi = "Blandet billede. Overvej et forligstilbud der afspejler det forventede delvise udfald."
     else:
-        banner_farve = "#B91C1C"   # rød
-        banner_ikon = ""
         strategi = "Risiko for fuldt medhold. Overvej forligstilbud og stærkt fokus på formildende forhold."
 
-    # Øverste banner
+    banner_bg = FARVER[mest_key]["bg"]
+    banner_accent = FARVER[mest_key]["accent"]
+
+    # Øverste banner — lys pastel baggrund med accent-stribe, matcher
+    # resten af forsidens Apple Health-æstetik
     st.markdown(
         f"""
         <div style="
-            background-color: {banner_farve};
-            color: white;
-            padding: 16px 20px;
-            border-radius: 8px;
+            background-color: {banner_bg};
+            color: #111827;
+            padding: 18px 22px;
+            border-radius: 14px;
             margin-bottom: 16px;
+            border-left: 4px solid {banner_accent};
         ">
-            <div style="font-size: 0.85em; opacity: 0.9; letter-spacing: 0.08em;">
-                MEST SANDSYNLIGE UDFALD
+            <div style="font-size: 0.78rem; color: rgba(71, 85, 105, 0.8);
+                 letter-spacing: 0.12em; font-weight: 600;
+                 text-transform: uppercase;">
+                Mest sandsynlige udfald
             </div>
-            <div style="font-size: 1.6em; font-weight: bold; margin-top: 4px;">
+            <div style="font-size: 1.55rem; font-weight: 700; margin-top: 6px;
+                 letter-spacing: -0.015em; color: #0F172A;
+                 font-family: 'Source Serif 4', Georgia, serif;">
                 {mest_label} — {mest_pct} %
             </div>
-            <div style="font-size: 0.9em; opacity: 0.95; margin-top: 8px;">
-                Anbefalet strategi: {strategi}
+            <div style="font-size: 0.92rem; color: #334155; margin-top: 8px;">
+                <strong>Anbefalet strategi:</strong> {strategi}
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # Tre procent-metrics side om side
+    # Tre procent-kort side om side — hver med sin pastelfarve
+    def _render_udfalds_kort(titel, pct, key):
+        farver = FARVER[key]
+        progress_width = max(0, min(100, pct or 0))
+        st.markdown(
+            f"""
+            <div style="
+                background-color: {farver['bg']};
+                border-radius: 12px;
+                padding: 14px 16px;
+                border: 1px solid rgba(17, 24, 39, 0.04);
+                margin-bottom: 6px;
+            ">
+                <div style="font-size: 0.76rem; color: rgba(71, 85, 105, 0.85);
+                     font-weight: 600; letter-spacing: 0.04em;
+                     text-transform: uppercase;">
+                    {titel}
+                </div>
+                <div style="font-size: 1.8rem; font-weight: 800;
+                     color: {farver['accent']}; line-height: 1.1;
+                     letter-spacing: -0.02em; margin-top: 4px;
+                     font-variant-numeric: tabular-nums;">
+                    {pct} %
+                </div>
+                <div style="background: rgba(255, 255, 255, 0.6);
+                     border-radius: 100px; height: 6px; margin-top: 10px;
+                     overflow: hidden;">
+                    <div style="background: {farver['progress']};
+                         width: {progress_width}%; height: 100%;
+                         border-radius: 100px;"></div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
     k1, k2, k3 = st.columns(3)
-
     with k1:
-        st.metric(
-            "Fuld medhold til klager",
-            f"{fuld} %",
-            help="Sandsynlighed for at klageren får fuldt medhold og fuld kompensation",
-        )
-        st.progress(fuld / 100 if fuld else 0.0)
-
+        _render_udfalds_kort("Fuld medhold til klager", fuld, "fuld_medhold")
     with k2:
-        st.metric(
-            "Delvist medhold til klager",
-            f"{delvist} %",
-            help="Sandsynlighed for at nævnet tilkender delvis kompensation",
-        )
-        st.progress(delvist / 100 if delvist else 0.0)
-
+        _render_udfalds_kort("Delvist medhold til klager", delvist, "delvist_medhold")
     with k3:
-        st.metric(
-            "Afvisning af klagen",
-            f"{afvist} %",
-            help="Sandsynlighed for at nævnet afviser klagen — rejseselskabet får fuldt medhold",
-        )
-        st.progress(afvist / 100 if afvist else 0.0)
+        _render_udfalds_kort("Afvisning af klagen", afvist, "afvist")
 
     # Tjek at det summer til ~100 (tolerance for afrunding)
     sum_pct = fuld + delvist + afvist
