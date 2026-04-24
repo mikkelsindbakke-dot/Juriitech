@@ -641,48 +641,64 @@ with st.sidebar:
 _har_aktiv_sag = bool(st.session_state.get("aktuel_sag"))
 
 if not _har_aktiv_sag:
-    # Komprimeret hero — så upload-zonen er synlig straks uden at scrolle
-    st.markdown(
-        """
-        <div style="
-            background: linear-gradient(135deg, #FDEFD7 0%, #FDF6E6 100%);
-            padding: 2rem 2.5rem;
-            border-radius: 22px;
-            margin-bottom: 1rem;
-        ">
-            <h1 style="
-                font-family: 'Source Serif 4', Georgia, serif;
-                font-size: 2.4rem;
-                font-weight: 700;
-                line-height: 1.08;
-                letter-spacing: -0.025em;
-                color: #1F2937;
-                margin: 0 0 0.6rem 0;
-            ">
-                Analysér en sag fra <span style="color: #92400E;">Pakkerejse-Ankenævnet</span>
-            </h1>
-            <p style="
-                font-family: 'Inter', sans-serif;
-                font-size: 1rem;
-                line-height: 1.5;
-                color: #374151;
-                margin: 0;
-                font-weight: 400;
-            ">
-                Kom i gang ved at uploade sagsfilerne nedenfor — høringsbrev,
-                klageskema og eventuelle bilag.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Side-by-side: hero til venstre, upload-widget til højre.
+    # På smalle skærme stakkes de automatisk af Streamlit.
+    _kol_hero, _kol_upload = st.columns([1, 1], gap="medium")
 
-uploadede_sagsfiler = st.file_uploader(
-    "Upload sagen (ZIP, PDF eller Word — gerne flere filer)",
-    type=["zip", "pdf", "docx"],
-    accept_multiple_files=True,
-    key="sag_uploader",
-)
+    with _kol_hero:
+        st.markdown(
+            """
+            <div style="
+                background: linear-gradient(135deg, #FDEFD7 0%, #FDF6E6 100%);
+                padding: 1.75rem 1.75rem;
+                border-radius: 20px;
+                min-height: 220px;
+                display: flex;
+                flex-direction: column;
+                justify-content: center;
+            ">
+                <h1 style="
+                    font-family: 'Source Serif 4', Georgia, serif;
+                    font-size: 1.9rem;
+                    font-weight: 700;
+                    line-height: 1.08;
+                    letter-spacing: -0.025em;
+                    color: #1F2937;
+                    margin: 0 0 0.5rem 0;
+                ">
+                    Analysér en sag fra <span style="color: #92400E;">Pakkerejse-Ankenævnet</span>
+                </h1>
+                <p style="
+                    font-family: 'Inter', sans-serif;
+                    font-size: 0.95rem;
+                    line-height: 1.45;
+                    color: #374151;
+                    margin: 0;
+                    font-weight: 400;
+                ">
+                    Kom i gang ved at uploade sagsfilerne — høringsbrev,
+                    klageskema og eventuelle bilag.
+                </p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    with _kol_upload:
+        uploadede_sagsfiler = st.file_uploader(
+            "Upload sagsfilerne her",
+            type=["zip", "pdf", "docx"],
+            accept_multiple_files=True,
+            key="sag_uploader",
+            help="Understøtter ZIP, PDF og Word. Flere filer kan vælges samtidigt.",
+        )
+else:
+    uploadede_sagsfiler = st.file_uploader(
+        "Upload sagsfilerne",
+        type=["zip", "pdf", "docx"],
+        accept_multiple_files=True,
+        key="sag_uploader",
+    )
 
 # Tjek om uploadet har ændret sig (enten ny fil eller andet antal filer)
 _aktuel_sagsfiler_signatur = tuple(sorted(
