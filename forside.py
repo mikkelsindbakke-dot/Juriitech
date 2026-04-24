@@ -1549,14 +1549,23 @@ if st.session_state.get("aktuel_sag"):
 # ren og fokuseret på upload-flowet.
 spoergsmaal = ""
 if st.session_state.get("aktuel_sag"):
-    st.divider()
-    st.header("Stil spørgsmål til sagen")
-
     _sag_filer = st.session_state.aktuel_sag.get("filer") or []
-    st.caption(
-        f"Samtalen tager udgangspunkt i den uploadede sag "
-        f"({len(_sag_filer)} filer), tidligere afgørelser fra "
-        f"Pakkerejse-Ankenævnet og pakkerejseloven."
+
+    # Apple Health-inspireret sektionsintro: mint-pastel med grøn accent
+    st.markdown(
+        f"""
+        <div class="analyse-pillar"
+             style="--pillar-bg: #E7F5DD; --pillar-accent: #76D672;">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">Stil spørgsmål til sagen</h2>
+            <div class="analyse-pillar-body">
+                <p>Samtalen tager udgangspunkt i den uploadede sag
+                ({len(_sag_filer)} filer), tidligere afgørelser fra
+                Pakkerejse-Ankenævnet og pakkerejseloven.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     spoergsmaal = st.text_input(
@@ -1637,14 +1646,25 @@ if st.session_state.seneste_svar:
 
 # ---------- ANONYMISERINGSASSISTENT ----------
 if st.session_state.get("aktuel_sag"):
-    st.divider()
-    st.header("Anonymisér bilag til Nævnet")
-    st.caption(
-        "Vælg de bilag du ønsker at anonymisere — både sagsfiler og sagsakter "
-        "du selv har uploadet. juriitech PAX producerer anonymiserede "
-        "versioner efter Pakkerejse-Ankenævnets retningslinjer (Klager for "
-        "klager, medrejsende for bipersoner, CPR-numre fjernes osv.), og "
-        "nye sagsakter du uploader dukker automatisk op i listen herunder."
+    # Apple Health-inspireret sektionsintro: rose-pastel med pink accent
+    st.markdown(
+        """
+        <div class="analyse-pillar"
+             style="--pillar-bg: #FDE9EE; --pillar-accent: #EC4899;">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">Anonymisér bilag til Nævnet</h2>
+            <div class="analyse-pillar-body">
+                <p>Vælg de bilag du ønsker at anonymisere — både sagsfiler
+                og sagsakter du selv har uploadet. juriitech PAX producerer
+                anonymiserede versioner efter Pakkerejse-Ankenævnets
+                retningslinjer (Klager for klager, medrejsende for
+                bipersoner, CPR-numre fjernes osv.).</p>
+                <p>Nye sagsakter du uploader dukker automatisk op i listen
+                herunder.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     # ---------- BYG SAMLET LISTE AF KANDIDAT-FILER ----------
@@ -1878,12 +1898,23 @@ if st.session_state.get("aktuel_sag"):
 
 # ---------- AUTO-TJEKLISTE MOD HØRINGSBREV ----------
 if st.session_state.get("aktuel_sag"):
-    st.divider()
-    st.header("Tjekliste mod høringsbrev")
-    st.caption(
-        "Læser Ankenævnets høringsbrev og sammenholder med de uploadede bilag. "
-        "Viser hvilke af Nævnets ønskede punkter der er dækket, og hvad der mangler. "
-        "Kør den INDEN svarbrevet — så du ved hvad du skal hente fra TUI's systemer først."
+    # Apple Health-inspireret sektionsintro: lyseblå pastel med blå accent
+    st.markdown(
+        """
+        <div class="analyse-pillar"
+             style="--pillar-bg: #E5F0FD; --pillar-accent: #007AFF;">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">Tjekliste mod høringsbrev</h2>
+            <div class="analyse-pillar-body">
+                <p>Læser Ankenævnets høringsbrev og sammenholder med de
+                uploadede bilag. Viser hvilke af Nævnets ønskede punkter
+                der er dækket, og hvad der mangler.</p>
+                <p>Kør den <strong>inden</strong> svarbrevet — så du ved
+                hvad du skal hente fra TUI's systemer først.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     if st.button("Generer tjekliste", type="secondary"):
@@ -1923,13 +1954,24 @@ if st.session_state.get("aktuel_sag"):
 
 # ---------- SVARBREV-GENERATOR ----------
 if st.session_state.get("aktuel_sag"):
-    st.divider()
-    st.header("Generer svarbrev til Nævnet")
-    st.caption(
-        "Lav et komplet udkast til svarbrev fra rejseselskabet til Pakkerejseankenævnet. "
-        "Brevet struktureres automatisk (indledning, faktum, stillingtagen, juridisk "
-        "argumentation, konklusion, afslutning) med præcise henvisninger til "
-        "vidensbanken, TUI's vilkår og sagens bilag. Du kan redigere udkastet bagefter i Word."
+    # Apple Health-inspireret sektionsintro: peach-pastel med amber accent
+    st.markdown(
+        """
+        <div class="analyse-pillar"
+             style="--pillar-bg: #FDEFD7; --pillar-accent: #F59E0B;">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">Generer svarbrev til Nævnet</h2>
+            <div class="analyse-pillar-body">
+                <p>Lav et kompakt udkast til svarbrev fra TUI til
+                Pakkerejseankenævnet. Brevet holdes til max 1-2 A4-sider
+                og er struktureret som en kort indledning efterfulgt af
+                en samlet juridisk vurdering — med præcise henvisninger
+                til rejsevilkårene, pakkerejseloven og sagens bilag.</p>
+                <p>Du kan redigere udkastet bagefter i Word eller PDF.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     ekstra_instrukser = st.text_input(
