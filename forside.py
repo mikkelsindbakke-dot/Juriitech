@@ -365,6 +365,57 @@ st.markdown(
         border: 1px solid rgba(17, 24, 39, 0.06);
     }
 
+    /* ========== JURIITECH PAX-LOGO I SIDEBAREN ========== */
+    /* Lavendel 'j', sort 'uriitech', og en gul taleboble-pille med PAX
+       der har en lille "tail" nederst til højre — matcher det officielle
+       juriitech PAX-logo. */
+    .jp-logo {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-weight: 800;
+        font-size: 1.35rem;
+        letter-spacing: -0.035em;
+        line-height: 1;
+        margin: 0 0 0.35rem 0;
+        user-select: none;
+    }
+    .jp-j {
+        color: #A5B4FC;     /* lys lavendel */
+        font-weight: 800;
+    }
+    .jp-rest {
+        color: #0A0B0F;
+        font-weight: 800;
+        margin-right: 2px;
+    }
+    /* Den gule taleboble */
+    .jp-pax {
+        position: relative;
+        display: inline-block;
+        background: #F5B53B;   /* gul/amber matchende logoet */
+        color: #0A0B0F;
+        font-weight: 800;
+        font-size: 0.78em;
+        letter-spacing: 0;
+        padding: 3px 8px 3px 9px;
+        border-radius: 5px;
+        line-height: 1.1;
+        margin-left: 2px;
+    }
+    /* Den lille 'hale' under taleboblen — lidt til højre */
+    .jp-pax::after {
+        content: "";
+        position: absolute;
+        bottom: -5px;
+        right: 10px;
+        width: 8px;
+        height: 8px;
+        background: #F5B53B;
+        clip-path: polygon(0 0, 100% 0, 50% 100%);
+    }
+
     /* ========== PAX WORDMARK — juriitech-signatur øverst på siden ========== */
     /* Matcher landing-sidens wordmark (indigo 'j', sort resten) i kompakt format. */
     .pax-wordmark {
@@ -715,7 +766,15 @@ with st.sidebar:
             unsafe_allow_html=True,
         )
 
-    st.title("juriitech PAX")
+    # juriitech PAX-logo: lavendel 'j' + sort 'uriitech' + gul taleboble med PAX
+    st.markdown(
+        '<div class="jp-logo">'
+        '<span class="jp-j">j</span>'
+        '<span class="jp-rest">uriitech</span>'
+        '<span class="jp-pax">PAX</span>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
     st.caption("Juridisk AI til Pakkerejse-Ankenævnet")
 
     # ---------- VIDENSTANK — LYSE STABLEDE PASTELKORT ----------
