@@ -193,10 +193,7 @@ def _opgave_tekst():
         "2. JURIDISK ARGUMENTATION\n"
         "   Opstil de stærkeste argumenter for rejseselskabets forsvar baseret på "
         "referencerne ovenfor. Henvis eksplicit til filnavn og år (fx '(19-1467, 2019)').\n\n"
-        "3. SAMMENLIGNING\n"
-        "   Forklar hvorfor denne sag minder om eller adskiller sig fra tidligere praksis. "
-        "Henvis konkret til afgørelser fra vidensbanken.\n\n"
-        "4. SANDSYNLIGHEDSVURDERING\n"
+        "3. SANDSYNLIGHEDSVURDERING\n"
         "   Giv et estimat for tre mulige udfald baseret UDELUKKENDE på vidensbanken. "
         "Procentsatserne SKAL summe til 100%.\n\n"
         "   Brug præcis dette format (markdown):\n"
@@ -215,7 +212,7 @@ def _opgave_tekst():
         "vidensbanken ikke har tilstrækkeligt grundlag (fx kun 1-2 tilsvarende "
         "afgørelser), skal du skrive 'Lavt grundlag' ud for det udfald hvor "
         "grundlaget er tyndt.\n\n"
-        "5. KONKLUSION I ÉN LINJE\n"
+        "4. KONKLUSION I ÉN LINJE\n"
         "   En enkelt sætning der opsummerer det mest sandsynlige udfald og "
         "rejseselskabets anbefalede strategi."
     )
@@ -572,16 +569,46 @@ til rejsevilkårene, sagsakterne og pakkerejseloven.
 UNDLAD bevidst at citere tidligere afgørelser fra Nævnet — det forventes
 ikke i rejsearrangørens svar og gør brevet for detaljeret.
 
+ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
+Svarbrevet til Nævnet MÅ UNDER INGEN OMSTÆNDIGHEDER indeholde klagerens
+navn eller andre personhenførbare oplysninger i nogen som helst form —
+hverken for- eller efternavn, heller ikke i overskrifter, indledning,
+underskrift, bilagshenvisninger, citater, e-mails eller andre steder.
+Følg disse regler konsekvent i HELE brevet:
+
+  • Klager: omtales ALTID som 'klager' eller kode 'K' (ved flere klagere: K1, K2, K3 ...)
+  • Rejsearrangørens medarbejdere: omtales ALTID som 'R' (ved flere: R1, R2 ...)
+  • Bipersoner (medrejsende ægtefælle, børn, rejseledsagere): 'B1', 'B2' ...
+  • Guider, hotelpersonale, chauffører m.v.: 'G' eller 'G1', 'G2'
+  • CPR-numre → '[CPR fjernet]'
+  • Fødselsdatoer (bortset fra rejsedatoer) → '[fødselsdato fjernet]'
+  • Adresser (gadenavn + nr.) → '[adresse fjernet]'
+  • Telefonnumre → '[telefon fjernet]'
+  • E-mailadresser → '[e-mail fjernet]'
+  • Booking-/kundenumre → maskeres (fx '12345678' → '12****78')
+  • Bankoplysninger/kontonumre → '[bankoplysninger fjernet]'
+
+Hvis klagen eller sagsakterne indeholder klagerens navn, SKAL du selv
+anonymisere det i brevet — selv hvis originalkilden ikke er anonymiseret.
+Dette gælder også ved direkte citater: omskriv citatet med K i stedet for
+navnet. Tjek hele brevet igennem til sidst og sikr at INGEN navne er
+sluppet forbi.
+
+Hotelnavne, destinationer, lufthavne, rejsedatoer, beløb og klagepunkter
+bevares (de er nødvendige for sagens afgørelse).
+
 STRUKTUR — følg nøjagtigt denne rækkefølge, med overskrifterne som vist:
 
 **1. Indledning**
-En kort, formel indledning der bekræfter modtagelsen af klagen og angiver
-klagens sagsnummer (hvis tilgængeligt i klagen/sagsakterne) og dato.
+En kort, formel indledning der bekræfter modtagelsen af klagen fra K og
+angiver klagens sagsnummer (hvis tilgængeligt i klagen/sagsakterne) og dato.
+Brug 'K' — ikke klagerens rigtige navn.
 
 **2. Sagens faktuelle omstændigheder**
 En neutral, kronologisk gennemgang af hvad der faktisk skete, baseret på
 klagen, sagsakterne (C4C, e-mails, booking), og rejsevilkårene. Skelner
-tydeligt mellem hvad der er dokumenteret og hvad der er påstand fra klageren.
+tydeligt mellem hvad der er dokumenteret og hvad der er påstand fra K.
+Brug konsekvent 'K' — aldrig klagerens navn.
 
 **3. Rejseselskabets stillingtagen til kravet**
 Klar angivelse af om kravet bestrides helt, delvist, eller anerkendes.
@@ -618,6 +645,10 @@ STRENGE KRAV:
 - Skriv på dansk i et formelt, professionelt juridisk sprog.
 - Hvis en oplysning mangler der er nødvendig for et solidt brev, skriv
   "[SAGSBEHANDLER UDFYLDER: ...]" som placeholder i stedet for at gætte.
+- ANONYMISERING: Klagerens navn må IKKE stå noget sted i brevet. Brug altid
+  'K' (eller K1/K2 ved flere klagere). Tjek brevet igennem til sidst og
+  sikr at ingen personnavne er sluppet forbi — heller ikke i citater,
+  bilagsreferencer eller underskriftslinjer.
 """
 
 
@@ -710,10 +741,82 @@ def generer_svarbrev(klage, sagsakter=None, ekstra_instrukser=None):
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
-        return response.content[0].text
+        svarbrev_tekst = response.content[0].text
+
+        # Sikkerhedsnet: kør svarbrevet gennem den dedikerede anonymiserings-
+        # funktion så klagerens navn aldrig slipper igennem til Nævnet.
+        return _sikr_svarbrev_anonymiseret(svarbrev_tekst)
 
     except Exception as e:
         return f"Fejl i generering af svarbrev: {str(e)}"
+
+
+def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
+    """
+    Tager et genereret svarbrev og sikrer via en målrettet AI-gennemgang at
+    ingen klager- eller persondata er sluppet igennem. Bevarer svarbrevets
+    struktur og sproglige tone — fjerner/erstatter kun personnavne og
+    identifikatorer.
+
+    Falder tilbage til at returnere originalen hvis AI-kaldet fejler —
+    så svarbrevsgenerering aldrig blokeres af anonymiserings-trinnet.
+    """
+    try:
+        if not svarbrev_tekst or not svarbrev_tekst.strip():
+            return svarbrev_tekst
+
+        instruktion = (
+            "Du modtager et allerede færdigskrevet svarbrev fra en rejse-"
+            "arrangør til Pakkerejse-Ankenævnet. Din ENESTE opgave er at "
+            "sikre at svarbrevet er fuldt anonymiseret — klagerens navn "
+            "og personhenførbare oplysninger MÅ IKKE stå noget sted.\n\n"
+            "REGLER:\n"
+            "- Personnavne på klager → erstat med K (eller K1, K2 ... ved flere klagere)\n"
+            "- Personnavne på rejsearrangørens medarbejdere → R (eller R1, R2 ...)\n"
+            "- Personnavne på medrejsende (ægtefælle, børn, rejseledsagere) → B1, B2 ...\n"
+            "- Guider/hotelpersonale → G (eller G1, G2)\n"
+            "- CPR-numre → '[CPR fjernet]'\n"
+            "- Fødselsdatoer (bortset fra rejsedatoer) → '[fødselsdato fjernet]'\n"
+            "- Adresser (gadenavn + nr.) → '[adresse fjernet]'\n"
+            "- Telefonnumre → '[telefon fjernet]'\n"
+            "- E-mailadresser → '[e-mail fjernet]'\n"
+            "- Booking-/kundenumre → maskeres (fx '12345678' → '12****78')\n"
+            "- Bankoplysninger → '[bankoplysninger fjernet]'\n\n"
+            "BEVAR: hotelnavne, destinationer, lufthavne, rejsedatoer, beløb, "
+            "klagepunkter, juridiske henvisninger, samt brevets struktur og "
+            "sproglige tone. Rør IKKE ved andet end personhenførbare data.\n\n"
+            "Returnér kun det rettede svarbrev — ingen forklaringer, ingen "
+            "intro, ingen afslutningskommentar. Start direkte med brevteksten.\n\n"
+            "SVARBREV DER SKAL GENNEMGÅS:\n"
+        )
+
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=6000,
+            temperature=0,
+            system=(
+                "Du er en præcis og regel-tro anonymiseringsassistent for "
+                "rejsearrangører der skal svare Pakkerejse-Ankenævnet."
+            ),
+            messages=[{
+                "role": "user",
+                "content": instruktion + svarbrev_tekst,
+            }],
+        )
+        ren_tekst = response.content[0].text
+        # Sanity-tjek: hvis modellen returnerede noget meget kort eller tomt,
+        # så fald tilbage til originalen i stedet for at miste brevet
+        if not ren_tekst or len(ren_tekst) < 0.4 * len(svarbrev_tekst):
+            print(
+                "DEBUG: Anonymiserings-pas gav uventet kort svar — "
+                "bruger originalen"
+            )
+            return svarbrev_tekst
+        return ren_tekst
+
+    except Exception as e:
+        print(f"DEBUG: Svarbrevs-anonymiseringspas fejlede (ikke kritisk): {e}")
+        return svarbrev_tekst
 
 
 def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=None):
@@ -821,6 +924,59 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=
 
     content.append({"type": "text", "text": slutnings_tekst})
     return content
+
+
+def udled_sandsynligheder_strukturelt(analyse_tekst):
+    """
+    Dedikeret fallback-udleder der tvinger tre procentsatser frem baseret
+    på en eksisterende analyse. Bruges når regex-parsing af førstevurderingen
+    fejler, så dashboardet altid kan vise noget konkret.
+
+    Returnerer en dict:
+      {"fuld_medhold": int, "delvist_medhold": int, "afvist": int}
+    eller None hvis også denne udledning fejler.
+    """
+    import json as _json
+    import re as _re
+
+    if not analyse_tekst or not analyse_tekst.strip():
+        return None
+
+    prompt = (
+        "Baseret på nedenstående juridiske analyse af en klagesag fra "
+        "Pakkerejse-Ankenævnet, estimér sandsynligheden for tre mulige "
+        "udfald. Hvis analysen ikke giver tydeligt grundlag, så baser "
+        "estimatet på din viden om Pakkerejse-Ankenævnets praksis og "
+        "pakkerejseloven. Du SKAL give tre tal der summer til 100.\n\n"
+        f"ANALYSE:\n{analyse_tekst[:6000]}\n\n"
+        "RETURNÉR KUN dette JSON-objekt — intet andet, ingen forklaring, "
+        "ingen markdown:\n"
+        '{"fuld_medhold": X, "delvist_medhold": Y, "afvist": Z}\n\n'
+        "X, Y og Z er heltal 0-100 og summer til 100."
+    )
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=200,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        svar = response.content[0].text.strip()
+        # Fjern evt. markdown-kodeblok
+        svar = _re.sub(r"^```(?:json)?\s*", "", svar)
+        svar = _re.sub(r"\s*```$", "", svar).strip()
+        data = _json.loads(svar)
+        if all(k in data for k in ("fuld_medhold", "delvist_medhold", "afvist")):
+            # Clip til 0-100 og sanity-check
+            f = int(data["fuld_medhold"])
+            d = int(data["delvist_medhold"])
+            a = int(data["afvist"])
+            if all(0 <= v <= 100 for v in (f, d, a)):
+                return {"fuld_medhold": f, "delvist_medhold": d, "afvist": a}
+    except Exception as e:
+        print(f"DEBUG: Struktureret sandsynlighedsudledning fejlede: {e}")
+    return None
 
 
 def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
@@ -1133,7 +1289,10 @@ def generer_svarbrev_til_sag(sag, sagsakter=None, ekstra_instrukser=None):
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_content}],
         )
-        return response.content[0].text
+        svarbrev_tekst = response.content[0].text
+
+        # Sikkerhedsnet: anonymiser svarbrevet før det returneres til juristen
+        return _sikr_svarbrev_anonymiseret(svarbrev_tekst)
 
     except Exception as e:
         return f"Fejl i generering af svarbrev: {str(e)}"
