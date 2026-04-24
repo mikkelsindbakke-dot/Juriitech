@@ -364,78 +364,91 @@ st.markdown(
         border: 1px solid rgba(17, 24, 39, 0.06);
     }
 
-    /* ========== VIDENSTANK BENTO GRID — dark, bold, minimalistisk ========== */
-    .videnstank-bento {
-        background: linear-gradient(145deg, #0B1220 0%, #0F172A 60%, #111827 100%);
-        border-radius: 18px;
-        padding: 1.1rem 1rem 1.25rem 1rem;
-        margin: 1.25rem 0 1rem 0;
-        position: relative;
-        overflow: hidden;
-        box-shadow: 0 6px 24px -12px rgba(15, 23, 42, 0.4);
+    /* ========== PAX WORDMARK — juriitech-signatur øverst på siden ========== */
+    /* Matcher landing-sidens wordmark (indigo 'j', sort resten) i kompakt format. */
+    .pax-wordmark {
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-size: 1.45rem;
+        font-weight: 800;
+        letter-spacing: -0.035em;
+        line-height: 1;
+        margin: 0 0 0.75rem 0;
+        padding: 0;
+        display: inline-flex;
+        align-items: baseline;
+        user-select: none;
     }
-    /* Subtile lysstriber i baggrunden (ligner inspirations-mockupen) */
-    .videnstank-bento::before {
-        content: "";
-        position: absolute;
-        top: -20%;
-        right: -30%;
-        width: 200%;
-        height: 180%;
-        background:
-            radial-gradient(ellipse at top right,
-                rgba(64, 224, 208, 0.08) 0%,
-                transparent 45%),
-            radial-gradient(ellipse at bottom left,
-                rgba(99, 102, 241, 0.06) 0%,
-                transparent 50%);
-        pointer-events: none;
+    .pax-wordmark-j {
+        color: #6366F1;
+        font-weight: 800;
+    }
+    .pax-wordmark-rest {
+        color: #0A0B0F;
+        font-weight: 800;
+    }
+
+    /* ========== VIDENSTANK STABEL — lyse pastel-kort i vertikal stabel ========== */
+    .videnstank-stak {
+        margin: 1.25rem 0 1rem 0;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
     }
     .videnstank-titel {
-        position: relative;
-        color: rgba(203, 213, 225, 0.65);
+        color: rgba(71, 85, 105, 0.75);
         font-family: 'Inter', sans-serif;
         font-size: 0.68rem;
         font-weight: 600;
         letter-spacing: 0.18em;
         text-transform: uppercase;
-        margin-bottom: 0.9rem;
+        margin-bottom: 0.35rem;
         padding-left: 2px;
     }
-    .videnstank-grid {
-        position: relative;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 10px;
-    }
-    .videnstank-tile {
-        background: rgba(255, 255, 255, 0.03);
-        border: 1px solid rgba(255, 255, 255, 0.06);
-        border-radius: 12px;
-        padding: 0.9rem 0.85rem;
-        min-height: 86px;
+    .videnstank-kort {
         display: flex;
         align-items: center;
-        transition: border-color 0.2s ease, background 0.2s ease;
+        gap: 12px;
+        padding: 0.85rem 1rem;
+        border-radius: 12px;
+        border: 1px solid rgba(17, 24, 39, 0.04);
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
     }
-    .videnstank-tile:hover {
-        border-color: rgba(64, 224, 208, 0.25);
-        background: rgba(255, 255, 255, 0.05);
+    .videnstank-kort:hover {
+        transform: translateX(2px);
+        box-shadow: 0 2px 10px -4px rgba(17, 24, 39, 0.08);
     }
-    .videnstank-tekst {
+    .videnstank-navn {
         font-family: 'Inter', sans-serif;
-        font-size: 0.98rem;
-        font-weight: 700;
-        line-height: 1.18;
-        letter-spacing: -0.015em;
-        color: #FFFFFF;
-        hyphens: auto;
-        word-break: break-word;
+        font-size: 0.92rem;
+        font-weight: 600;
+        line-height: 1.3;
+        color: #111827;
+        letter-spacing: -0.005em;
     }
+    /* '+' foran antal — bruger kortets accent-farve for at fremhæve */
     .videnstank-plus {
-        color: #5EEAD4;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        font-family: 'Inter', sans-serif;
+        font-size: 1rem;
         font-weight: 800;
-        margin-right: 2px;
+        color: var(--accent);
+        flex-shrink: 0;
+    }
+    /* Lille prik som neutral markør på kort uden '+' */
+    .videnstank-dot {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: var(--accent);
+        margin-left: 7px;
+        margin-right: 7px;
+        flex-shrink: 0;
+        opacity: 0.85;
     }
 
     /* ========== RESUME AF SAGEN — lynoverblik efter førstevurdering ========== */
@@ -741,34 +754,45 @@ with st.sidebar:
     st.title("juriitech PAX")
     st.caption("Juridisk AI til Pakkerejse-Ankenævnet")
 
-    # ---------- VIDENSTANK — DARK BENTO GRID ----------
-    # 2x2 grid med én ren tekstlinje pr. tile. Mint accent på '+' for
-    # juriitech-signatur. Fed, minimalistisk typografi.
+    # ---------- VIDENSTANK — LYSE STABLEDE PASTELKORT ----------
+    # Vertikal stabel af fire små pillers, hver i sin egen Apple Health-
+    # pastel der matcher en sektion i hovedindholdet. Lys æstetik,
+    # minimalistisk typografi — flugter med resten af siden.
     st.markdown(
         """
-        <div class="videnstank-bento">
+        <div class="videnstank-stak">
             <div class="videnstank-titel">Videnstank</div>
-            <div class="videnstank-grid">
-                <div class="videnstank-tile">
-                    <div class="videnstank-tekst">
-                        <span class="videnstank-plus">+</span>500 afgørelser
-                    </div>
-                </div>
-                <div class="videnstank-tile">
-                    <div class="videnstank-tekst">
-                        Hele Pakke&shy;rejse&shy;loven
-                    </div>
-                </div>
-                <div class="videnstank-tile">
-                    <div class="videnstank-tekst">
-                        Anonymi&shy;serings&shy;regler
-                    </div>
-                </div>
-                <div class="videnstank-tile">
-                    <div class="videnstank-tekst">
-                        Dine uploadede sager
-                    </div>
-                </div>
+
+            <div class="videnstank-kort" style="
+                background: #E7F5DD;
+                --accent: #76D672;
+            ">
+                <span class="videnstank-plus">+</span>
+                <span class="videnstank-navn">500 afgørelser</span>
+            </div>
+
+            <div class="videnstank-kort" style="
+                background: #F0EEFD;
+                --accent: #6366F1;
+            ">
+                <span class="videnstank-dot"></span>
+                <span class="videnstank-navn">Hele Pakkerejseloven</span>
+            </div>
+
+            <div class="videnstank-kort" style="
+                background: #FDE9EE;
+                --accent: #EC4899;
+            ">
+                <span class="videnstank-dot"></span>
+                <span class="videnstank-navn">Anonymiseringsregler</span>
+            </div>
+
+            <div class="videnstank-kort" style="
+                background: #FDEFD7;
+                --accent: #F59E0B;
+            ">
+                <span class="videnstank-dot"></span>
+                <span class="videnstank-navn">Dine uploadede sager</span>
             </div>
         </div>
         """,
@@ -913,6 +937,18 @@ with st.sidebar:
 
 
 # ---------- HOVEDSKÆRM ----------
+
+# juriitech-wordmark øverst — samme stil som landing-siden (indigo 'j',
+# sort resten), men i mindre format så det er en diskret brand-signatur.
+st.markdown(
+    """
+    <div class="pax-wordmark">
+        <span class="pax-wordmark-j">j</span><span class="pax-wordmark-rest">uriitech</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
 # Empty state: stor hero-sektion med cream/peach-baggrund (Apple Health palette)
 _har_aktiv_sag = bool(st.session_state.get("aktuel_sag"))
 
