@@ -174,24 +174,29 @@ def vis_dashboard(svar_tekst, struktureret_data=None):
 
     mest_key, mest_pct, mest_label = _mest_sandsynlige(s)
 
-    # Farvekodning — bruger samme pastel-palette som videnstank-sidebaren:
-    #   afvist (godt for TUI)      = mint/grøn  (#E7F5DD / #76D672)
-    #   delvist medhold            = peach/gul  (#FDEFD7 / #F59E0B)
-    #   fuld medhold (dårligt)     = rose/rød   (#FDE9EE / #EC4899)
+    # Farvekodning — pastel-palette matchende videnstank-sidebaren,
+    # men med markant mørkere tekst-farve per kort så procenttallet
+    # og labels fremstår tydeligt på den lyse pastelbaggrund.
+    #   afvist (godt for TUI)      = mint/grøn   bg, mørk grøn tekst
+    #   delvist medhold            = peach/gul   bg, mørk amber tekst
+    #   fuld medhold (dårligt)     = rose/rød    bg, mørk rød tekst
     FARVER = {
         "fuld_medhold": {
             "bg": "#FDE9EE",
-            "accent": "#EC4899",
+            "accent": "#EC4899",   # lyserød — bruges til progress-bar
+            "tekst": "#9F1239",    # dybrød — bruges til procenttal/labels
             "progress": "#EC4899",
         },
         "delvist_medhold": {
             "bg": "#FDEFD7",
             "accent": "#F59E0B",
+            "tekst": "#92400E",    # mørk amber/brun
             "progress": "#F59E0B",
         },
         "afvist": {
             "bg": "#E7F5DD",
             "accent": "#76D672",
+            "tekst": "#166534",    # mørk skovgrøn
             "progress": "#76D672",
         },
     }
@@ -236,7 +241,9 @@ def vis_dashboard(svar_tekst, struktureret_data=None):
         unsafe_allow_html=True,
     )
 
-    # Tre procent-kort side om side — hver med sin pastelfarve
+    # Tre procent-kort side om side — hver med sin pastelfarve.
+    # Tekst er gjort mørkere og tungere så den er nem at læse på
+    # den lyse pastelbaggrund, samtidig med at den matcher temaet.
     def _render_udfalds_kort(titel, pct, key):
         farver = FARVER[key]
         progress_width = max(0, min(100, pct or 0))
@@ -249,14 +256,14 @@ def vis_dashboard(svar_tekst, struktureret_data=None):
                 border: 1px solid rgba(17, 24, 39, 0.04);
                 margin-bottom: 6px;
             ">
-                <div style="font-size: 0.76rem; color: rgba(71, 85, 105, 0.85);
-                     font-weight: 600; letter-spacing: 0.04em;
-                     text-transform: uppercase;">
+                <div style="font-size: 0.78rem; color: {farver['tekst']};
+                     font-weight: 700; letter-spacing: 0.04em;
+                     text-transform: uppercase; opacity: 0.9;">
                     {titel}
                 </div>
-                <div style="font-size: 1.8rem; font-weight: 800;
-                     color: {farver['accent']}; line-height: 1.1;
-                     letter-spacing: -0.02em; margin-top: 4px;
+                <div style="font-size: 1.9rem; font-weight: 900;
+                     color: {farver['tekst']}; line-height: 1.1;
+                     letter-spacing: -0.025em; margin-top: 4px;
                      font-variant-numeric: tabular-nums;">
                     {pct} %
                 </div>
