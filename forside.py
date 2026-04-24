@@ -372,7 +372,7 @@ st.markdown(
     .jp-logo {
         display: inline-flex;
         align-items: center;
-        gap: 9px;
+        gap: 5px;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
         font-weight: 800;
         font-size: 1.35rem;
@@ -388,7 +388,7 @@ st.markdown(
         align-items: baseline;
     }
     .jp-j {
-        color: #818CF8;     /* lidt mørkere indigo/lavendel — matcher logoet */
+        color: #6E74F0;     /* mørkere indigo/lavendel — matcher logoet tættere */
         font-weight: 800;
     }
     .jp-rest {
