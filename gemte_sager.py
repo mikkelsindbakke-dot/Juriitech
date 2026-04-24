@@ -136,8 +136,38 @@ def _gendan_state_fra_json(state):
                 del fil["bytes_b64"]
         st.session_state.sagsakter_filer = filer
 
-    # Nulstil signatur så vurderingen ikke genkøres ved re-open
-    st.session_state.auto_vurdering_for_signatur = "gendannet"
+    # ----- Beregn signaturer så førstevurderingen IKKE regenereres -----
+    # Forside.py bruger en tuple-baseret signatur til at afgøre om sagen
+    # er ændret siden sidst. Hvis 'auto_vurdering_for_signatur' matcher
+    # den aktuelle kombinerede signatur, springes regenereringen over.
+    sag = st.session_state.get("aktuel_sag") or {}
+    sag_filer = sag.get("filer") or []
+    sag_sig = tuple(sorted(
+        (
+            f.get("filnavn", ""),
+            len(f.get("bytes") or b"") or len(f.get("tekst") or ""),
+        )
+        for f in sag_filer
+    ))
+
+    sagsakter_tekst = st.session_state.get("sagsakter", "") or ""
+    sagsakter_filer = st.session_state.get("sagsakter_filer", []) or []
+    sagsakter_sig = tuple(
+        (
+            f.get("filnavn", ""),
+            len(f.get("bytes") or b""),
+            len(f.get("tekst") or ""),
+        )
+        for f in sagsakter_filer
+    )
+    kombineret_sig = (sag_sig, hash(sagsakter_tekst), sagsakter_sig)
+
+    # Sæt BEGGE signaturer til samme værdi — så når forsiden rendres,
+    # ser den at 'auto_vurdering_for_signatur == kombineret_sig' og
+    # springer auto-vurderingen over. Den gemte førstevurdering (der
+    # allerede ligger i auto_vurdering_tekst) vises som den er.
+    st.session_state.sidste_sagsfil_signatur = sag_sig
+    st.session_state.auto_vurdering_for_signatur = kombineret_sig
     st.session_state.sagsakter_opdaterede_vurdering = False
 
 
