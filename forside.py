@@ -938,6 +938,44 @@ with st.sidebar:
         st.divider()
         st.caption("🔧 **Administrative værktøjer** — kun synlige for dig som admin.")
 
+        # ---------- SENTRY TEST-FEJL ----------
+        # Lille knap der med vilje sender en test-event til Sentry så vi
+        # kan verificere at integrationen virker ende-til-ende. Bør fjernes
+        # eller skjules igen senere — lige nu er den nyttig.
+        st.subheader("Test Sentry-integration")
+        st.caption(
+            "Klik for at sende en bevidst test-fejl til Sentry. Tjek dit "
+            "Sentry-dashboard bagefter — fejlen burde dukke op indenfor "
+            "10-30 sekunder."
+        )
+        if st.button("Send testfejl til Sentry", key="sentry_test_btn"):
+            try:
+                import sentry_sdk
+                # Send et eksplicit message-event (mere kontrolleret end
+                # at smide en exception)
+                sentry_sdk.capture_message(
+                    "Test-event fra juriitech PAX (admin-trigger)",
+                    level="info",
+                )
+                # Forsøg også at trigge et exception-event så vi tester
+                # begge fangst-måder
+                try:
+                    raise RuntimeError(
+                        "Bevidst test-fejl fra Sentry-test-knappen"
+                    )
+                except RuntimeError as e:
+                    sentry_sdk.capture_exception(e)
+                st.success(
+                    "✅ Sendte 2 test-events til Sentry (et message + en exception). "
+                    "Tjek dit Sentry-dashboard nu — de burde dukke op "
+                    "indenfor ~30 sekunder."
+                )
+            except Exception as e:
+                st.error(
+                    f"Kunne ikke sende til Sentry: {e}. "
+                    "Tjek at SENTRY_DSN er sat korrekt i Streamlit secrets."
+                )
+
         # ---------- AUTOMATISK HENTNING FRA PAKKEREJSEANKENÆVNET ----------
         st.subheader("Hent direkte fra Ankenævnet")
         st.caption(
