@@ -318,7 +318,8 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
     emne = _html.escape(str(resume_dict.get("emne") or "").strip())
     krav = _html.escape(str(resume_dict.get("krav") or "").strip())
     tui = _html.escape(str(resume_dict.get("tui_handtering") or "").strip())
-    udfald = _html.escape(str(resume_dict.get("forventet_udfald") or "").strip())
+    udfald_raw = str(resume_dict.get("forventet_udfald") or "").strip()
+    udfald = _html.escape(udfald_raw)
     punkter = resume_dict.get("klagepunkter") or []
 
     punkter_html = ""
@@ -354,13 +355,18 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
                         <div class="sagsresume-celle-body"><p>{tui}</p></div>
                     </div>
                 </div>
-                <div class="sagsresume-udfald">
-                    <div class="sagsresume-udfald-label">Forventet udfald</div>
-                    <div class="sagsresume-udfald-tekst">{udfald}</div>
-                </div>
+                {udfald_html}
             </div>
         </div>
-        """,
+        """.replace("{udfald_html}", (
+            f'<div class="sagsresume-udfald">'
+            f'<div class="sagsresume-udfald-label">Forventet udfald</div>'
+            f'<div class="sagsresume-udfald-tekst">{udfald}</div>'
+            f'</div>'
+        ) if udfald_raw and udfald_raw.lower() not in (
+            "fremgår ikke", "fremgår ikke af grundlaget",
+            "vurderingen kunne ikke udledes af analysen",
+        ) else ''),
         unsafe_allow_html=True,
     )
 

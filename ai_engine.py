@@ -1390,15 +1390,55 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         if not emne:
             return None
 
+        # Hvis modellen droppede 'forventet_udfald'-feltet (hvilket sker
+        # nogle gange ved multi-felt JSON), så lav et separat fokuseret
+        # kald der KUN producerer den ene linje. Det er billigt og sikrer
+        # at boksen aldrig står tom.
+        if not udfald or len(udfald) < 5:
+            udfald = _udled_forventet_udfald_separat(analyse_tekst) or ""
+
         return {
             "emne": emne,
             "klagepunkter": klagepunkter,
             "krav": krav or "fremgår ikke",
             "tui_handtering": tui or "fremgår ikke af bilagene",
-            "forventet_udfald": udfald or "fremgår ikke af grundlaget",
+            "forventet_udfald": udfald or "Vurderingen kunne ikke udledes af analysen",
         }
     except Exception as e:
         print(f"DEBUG: Sagsresume-udledning fejlede: {e}")
+        return None
+
+
+def _udled_forventet_udfald_separat(analyse_tekst):
+    """
+    Hjælpefunktion: laver et fokuseret kald der KUN producerer den ene
+    linje med forventet udfald + beløb. Bruges som fallback hvis det
+    primære sagsresume-kald droppede feltet.
+    """
+    if not analyse_tekst or not analyse_tekst.strip():
+        return None
+    try:
+        prompt = (
+            "Læs nedenstående juridiske analyse af en pakkerejse-klagesag "
+            "og giv mig ÉN linje (max 15 ord) der opsummerer det mest "
+            "sandsynlige udfald + beløbsmæssigt estimat.\n\n"
+            "Eksempler på god outputformat:\n"
+            "  'Delvist medhold — formentlig 1.000-2.500 kr. i kompensation'\n"
+            "  'Afvisning af klagen — TUI får medhold'\n"
+            "  'Fuld medhold — kompensation på ca. 18.500 kr.'\n\n"
+            "Returnér KUN linjen — ingen forklaring, ingen anførselstegn, "
+            "ingen markdown.\n\n"
+            f"ANALYSE:\n{analyse_tekst[:5000]}"
+        )
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=80,
+            temperature=0,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return response.content[0].text.strip().strip('"').strip("'")
+    except Exception as e:
+        print(f"DEBUG: Separat forventet-udfald-udledning fejlede: {e}")
         return None
 
 
