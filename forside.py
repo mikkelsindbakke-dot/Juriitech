@@ -1208,6 +1208,11 @@ if st.session_state.get("aktuel_sag"):
             st.session_state.sagsresume = None
             st.session_state.chat_historik = []
             st.session_state.anon_resultater_per_fil = {}
+            # Ryd alle sag-specifikke svarbrev-instrukser fra session state
+            # så de ikke siver med til en ny sag.
+            for _key in list(st.session_state.keys()):
+                if _key.startswith("svarbrev_instrukser_"):
+                    del st.session_state[_key]
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -2106,9 +2111,24 @@ if st.session_state.get("aktuel_sag"):
         unsafe_allow_html=True,
     )
 
+    # Instruktions-feltet er bundet til den AKTUELLE sag via en case-id.
+    # Når brugeren skifter til en anden sag (eller rydder denne), får
+    # feltet en ny key og er dermed tomt. Instruktioner fra én sag kan
+    # altså aldrig sive over i en anden.
+    _aktiv_sag_id = st.session_state.get("aktiv_gemt_sag_id") or "ny_sag"
+    _sag_sig = st.session_state.get("sidste_sagsfil_signatur") or ()
+    _instruks_key = f"svarbrev_instrukser_{_aktiv_sag_id}_{hash(_sag_sig)}"
     ekstra_instrukser = st.text_input(
         "Særlige instrukser (valgfrit)",
-        placeholder="fx 'læg særlig vægt på force majeure-forbeholdet' eller 'anerkend 2.000 kr. men bestrid resten'",
+        placeholder=(
+            "fx 'læg særlig vægt på force majeure-forbeholdet' eller "
+            "'anerkend 2.000 kr. men bestrid resten'"
+        ),
+        key=_instruks_key,
+        help=(
+            "Disse instrukser bruges KUN til svarbrevet for denne sag. "
+            "Når du åbner en anden sag, starter feltet tomt igen."
+        ),
     )
 
     if st.button("Generer udkast til svarbrev", type="primary"):
