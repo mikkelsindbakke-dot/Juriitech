@@ -30,3 +30,6 @@ beautifulsoup4>=4.12.0
 
 # Authlib — OIDC/OAuth til login (Microsoft, Google)
 Authlib>=1.3.2
+
+# Sentry — fejl-monitoring og crash-rapportering
+sentry-sdk>=2.0.0

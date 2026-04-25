@@ -20,6 +20,49 @@ load_dotenv()
 _ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 
 
+# ---------- SENTRY ERROR-MONITORING ----------
+# Initialiseres FØR alt andet så crashes under app-opstart også fanges.
+# DSN læses fra Streamlit secrets eller environment variable. Hvis den
+# mangler (fx ved lokal udvikling uden konfiguration), springes
+# Sentry-initialiseringen over så appen stadig virker.
+def _init_sentry():
+    try:
+        # Forsøg først Streamlit secrets (production), falder tilbage til
+        # environment variable (lokal udvikling)
+        sentry_dsn = ""
+        try:
+            sentry_dsn = st.secrets.get("SENTRY_DSN", "") or ""
+        except Exception:
+            pass
+        if not sentry_dsn:
+            sentry_dsn = os.getenv("SENTRY_DSN", "")
+
+        if not sentry_dsn:
+            return False
+
+        import sentry_sdk
+        sentry_sdk.init(
+            dsn=sentry_dsn,
+            # Send PII (klage-tekst, brugerinfo) for rigere fejl-kontekst.
+            # Sentry's data-region er Frankfurt (.de.sentry.io) så data
+            # forlader aldrig EU.
+            send_default_pii=True,
+            # Saml 10% af requests til performance-monitoring
+            traces_sample_rate=0.1,
+            # Tag environment så vi kan skelne prod fra evt. staging
+            environment=os.getenv("SENTRY_ENV", "production"),
+            # Release-version så vi kan se hvilken kodeversion en bug kom fra
+            release=os.getenv("SENTRY_RELEASE", "juriitech-pax@dev"),
+        )
+        return True
+    except Exception as e:
+        print(f"DEBUG: Sentry init fejlede (ikke kritisk): {e}")
+        return False
+
+
+_SENTRY_AKTIV = _init_sentry()
+
+
 # ---------- AUTO-LOAD PAKKEREJSELOVEN ----------
 # Sikrer at lovens paragraffer er i vidensbanken. Kører kun én gang pr.
 # server-instans takket være @st.cache_resource — første gang appen
