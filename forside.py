@@ -1211,7 +1211,12 @@ if st.session_state.get("aktuel_sag"):
             # Ryd alle sag-specifikke svarbrev-instrukser fra session state
             # så de ikke siver med til en ny sag.
             for _key in list(st.session_state.keys()):
-                if _key.startswith("svarbrev_instrukser_"):
+                if (
+                    _key.startswith("svarbrev_instrukser_")
+                    or _key.startswith("ny_instruks_input_")
+                    or _key.startswith("tilfoej_btn_")
+                    or _key.startswith("fjern_instruks_")
+                ):
                     del st.session_state[_key]
             st.rerun()
 
@@ -2111,25 +2116,80 @@ if st.session_state.get("aktuel_sag"):
         unsafe_allow_html=True,
     )
 
-    # Instruktions-feltet er bundet til den AKTUELLE sag via en case-id.
-    # Når brugeren skifter til en anden sag (eller rydder denne), får
-    # feltet en ny key og er dermed tomt. Instruktioner fra én sag kan
-    # altså aldrig sive over i en anden.
+    # ---------- SÆRLIGE INSTRUKSER (multi-instruks med tilføj/fjern) ----------
+    # Listen er scopet til den AKTUELLE sag via en case-id, så instrukser
+    # fra én sag aldrig siver over i en anden.
     _aktiv_sag_id = st.session_state.get("aktiv_gemt_sag_id") or "ny_sag"
     _sag_sig = st.session_state.get("sidste_sagsfil_signatur") or ()
-    _instruks_key = f"svarbrev_instrukser_{_aktiv_sag_id}_{hash(_sag_sig)}"
-    ekstra_instrukser = st.text_input(
-        "Særlige instrukser (valgfrit)",
-        placeholder=(
-            "fx 'læg særlig vægt på force majeure-forbeholdet' eller "
-            "'anerkend 2.000 kr. men bestrid resten'"
-        ),
-        key=_instruks_key,
-        help=(
-            "Disse instrukser bruges KUN til svarbrevet for denne sag. "
-            "Når du åbner en anden sag, starter feltet tomt igen."
-        ),
+    _instrukser_key = f"svarbrev_instrukser_liste_{_aktiv_sag_id}_{hash(_sag_sig)}"
+
+    if _instrukser_key not in st.session_state:
+        st.session_state[_instrukser_key] = []
+
+    st.markdown("**Særlige instrukser** (valgfrit)")
+    st.caption(
+        "Tilføj én eller flere instrukser der skal påvirke svarbrevet. "
+        "Instrukserne bruges KUN til denne sag — de nulstilles når du "
+        "åbner en anden sag."
     )
+
+    _ny_instruks_key = f"ny_instruks_input_{_aktiv_sag_id}_{hash(_sag_sig)}"
+
+    def _tilfoej_instruks():
+        ny = (st.session_state.get(_ny_instruks_key) or "").strip()
+        if ny:
+            st.session_state[_instrukser_key].append(ny)
+            # Ryd input-feltet — Streamlit kræver at vi sætter til ""
+            st.session_state[_ny_instruks_key] = ""
+
+    kol_input, kol_btn = st.columns([4, 1])
+    with kol_input:
+        st.text_input(
+            "Skriv en instruks",
+            placeholder=(
+                "fx 'læg særlig vægt på force majeure-forbeholdet' eller "
+                "'anerkend 2.000 kr. men bestrid resten'"
+            ),
+            key=_ny_instruks_key,
+            label_visibility="collapsed",
+            on_change=_tilfoej_instruks,
+        )
+    with kol_btn:
+        st.button(
+            "Tilføj instruks",
+            on_click=_tilfoej_instruks,
+            use_container_width=True,
+            key=f"tilfoej_btn_{_aktiv_sag_id}_{hash(_sag_sig)}",
+        )
+
+    # Vis tilføjede instrukser som små pille-kort med fjern-knap
+    _instrukser_liste = st.session_state.get(_instrukser_key, [])
+    if _instrukser_liste:
+        for _idx, _instr in enumerate(_instrukser_liste):
+            kol_tekst, kol_fjern = st.columns([10, 1])
+            with kol_tekst:
+                st.markdown(
+                    f"<div style='background:#F0EEFD; border-left: 3px solid "
+                    f"#6366F1; padding: 8px 12px; border-radius: 8px; "
+                    f"margin: 4px 0; font-size: 0.92rem; color: #1F2937;'>"
+                    f"<strong>{_idx + 1}.</strong> {_instr}</div>",
+                    unsafe_allow_html=True,
+                )
+            with kol_fjern:
+                if st.button(
+                    "✕",
+                    key=f"fjern_instruks_{_aktiv_sag_id}_{hash(_sag_sig)}_{_idx}",
+                    help="Fjern denne instruks",
+                ):
+                    st.session_state[_instrukser_key].pop(_idx)
+                    st.rerun()
+
+    # Saml alle instrukser til én streng der sendes til AI'en
+    ekstra_instrukser = ""
+    if _instrukser_liste:
+        ekstra_instrukser = "\n".join(
+            f"- {instr}" for instr in _instrukser_liste
+        )
 
     if st.button("Generer udkast til svarbrev", type="primary"):
         with thinking(
