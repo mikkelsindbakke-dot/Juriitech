@@ -354,34 +354,34 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
             '</div>'
         )
 
-    st.markdown(
-        f"""
-        <div class="analyse-pillar"
-             style="--pillar-bg: {bg}; --pillar-accent: {accent};">
-            <div class="analyse-pillar-accent-dot"></div>
-            <h2 class="analyse-pillar-title">Resume af sagen</h2>
-            <div class="analyse-pillar-body">
-                <p class="sagsresume-emne-in-pillar">{emne}</p>
-                <div class="sagsresume-grid">
-                    <div class="sagsresume-celle">
-                        <div class="sagsresume-celle-titel">Klagepunkter</div>
-                        <div class="sagsresume-celle-body">{punkter_html}</div>
-                    </div>
-                    <div class="sagsresume-celle">
-                        <div class="sagsresume-celle-titel">Klagers krav</div>
-                        <div class="sagsresume-celle-body"><p>{krav}</p></div>
-                    </div>
-                    <div class="sagsresume-celle sagsresume-celle-bred">
-                        <div class="sagsresume-celle-titel">TUI's håndtering indtil nu</div>
-                        <div class="sagsresume-celle-body"><p>{tui}</p></div>
-                    </div>
-                </div>
-                {udfald_html}
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+    # VIGTIGT: HTML må ikke indrykkes med 4+ mellemrum, ellers opfatter
+    # Streamlits markdown-parser linjerne som kodeblokke og renderer
+    # </div>-tags som rå tekst.
+    html = (
+        f'<div class="analyse-pillar" style="--pillar-bg: {bg}; --pillar-accent: {accent};">'
+        '<div class="analyse-pillar-accent-dot"></div>'
+        '<h2 class="analyse-pillar-title">Resume af sagen</h2>'
+        '<div class="analyse-pillar-body">'
+        f'<p class="sagsresume-emne-in-pillar">{emne}</p>'
+        '<div class="sagsresume-grid">'
+        '<div class="sagsresume-celle">'
+        '<div class="sagsresume-celle-titel">Klagepunkter</div>'
+        f'<div class="sagsresume-celle-body">{punkter_html}</div>'
+        '</div>'
+        '<div class="sagsresume-celle">'
+        '<div class="sagsresume-celle-titel">Klagers krav</div>'
+        f'<div class="sagsresume-celle-body"><p>{krav}</p></div>'
+        '</div>'
+        '<div class="sagsresume-celle sagsresume-celle-bred">'
+        '<div class="sagsresume-celle-titel">TUI\'s håndtering indtil nu</div>'
+        f'<div class="sagsresume-celle-body"><p>{tui}</p></div>'
+        '</div>'
+        '</div>'
+        f'{udfald_html}'
+        '</div>'
+        '</div>'
     )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def render_analyse_som_pillars(
