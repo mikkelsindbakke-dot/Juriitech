@@ -333,6 +333,27 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
             "<p class='sagsresume-tom'>Ingen konkrete punkter udledt.</p>"
         )
 
+    # Byg 'Forventet udfald'-blokken som en separat HTML-streng FØR vi
+    # bruger den i f-strengen — så Python ikke prøver at evaluere en
+    # ikke-eksisterende variabel inde i selve template'n.
+    _skjul_udfald = (
+        not udfald_raw
+        or udfald_raw.lower() in (
+            "fremgår ikke",
+            "fremgår ikke af grundlaget",
+            "vurderingen kunne ikke udledes af analysen",
+        )
+    )
+    if _skjul_udfald:
+        udfald_html = ""
+    else:
+        udfald_html = (
+            '<div class="sagsresume-udfald">'
+            '<div class="sagsresume-udfald-label">Forventet udfald</div>'
+            f'<div class="sagsresume-udfald-tekst">{udfald}</div>'
+            '</div>'
+        )
+
     st.markdown(
         f"""
         <div class="analyse-pillar"
@@ -358,15 +379,7 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
                 {udfald_html}
             </div>
         </div>
-        """.replace("{udfald_html}", (
-            f'<div class="sagsresume-udfald">'
-            f'<div class="sagsresume-udfald-label">Forventet udfald</div>'
-            f'<div class="sagsresume-udfald-tekst">{udfald}</div>'
-            f'</div>'
-        ) if udfald_raw and udfald_raw.lower() not in (
-            "fremgår ikke", "fremgår ikke af grundlaget",
-            "vurderingen kunne ikke udledes af analysen",
-        ) else ''),
+        """,
         unsafe_allow_html=True,
     )
 
