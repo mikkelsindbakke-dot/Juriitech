@@ -5,12 +5,79 @@ Indeholder:
   - thinking(): Claude-inspireret pulsende gradient-prik som spinner
   - render_analyse_som_pillars(): Apple-Health-inspireret pillar-layout
     for den juridiske førstevurdering
+  - vis_brugerfejl(): venlig fejlboks der vises når noget går galt,
+    sender automatisk fejlen til Sentry
 """
 
 import re
 from contextlib import contextmanager
 
 import streamlit as st
+
+
+def vis_brugerfejl(handling, exception=None, kort_ekstra=None):
+    """
+    Viser en venlig fejlboks til brugeren og sender automatisk fejlen
+    til Sentry så administratoren får besked.
+
+    handling:    kort beskrivelse af hvad brugeren prøvede at gøre
+                 (fx 'generere svarbrev', 'anonymisere bilag').
+                 Bruges både i UI'et og som tag i Sentry.
+    exception:   den faktiske exception der opstod (sendes til Sentry).
+    kort_ekstra: valgfri kort tekst der vises under hovedmeddelelsen
+                 (fx 'Prøv igen om et øjeblik' eller info om hvad der
+                 skete).
+    """
+    # Send først til Sentry hvis muligt
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("brugerhandling", handling)
+            if exception is not None:
+                sentry_sdk.capture_exception(exception)
+            else:
+                sentry_sdk.capture_message(
+                    f"Fejl ved: {handling}", level="error"
+                )
+    except Exception:
+        # Hvis Sentry selv fejler, fortsætter vi alligevel — vi vil ikke
+        # at fejl-håndteringen i sig selv crasher appen.
+        pass
+
+    import html as _html
+    ekstra_html = ""
+    if kort_ekstra:
+        ekstra_html = (
+            f'<div class="brugerfejl-ekstra">{_html.escape(str(kort_ekstra))}</div>'
+        )
+
+    handling_safe = _html.escape(str(handling))
+
+    st.markdown(
+        '<div class="brugerfejl-boks">'
+        '<div class="brugerfejl-ikon">⚠️</div>'
+        '<div class="brugerfejl-indhold">'
+        '<div class="brugerfejl-titel">'
+        'Ups — her gik der noget galt'
+        '</div>'
+        '<div class="brugerfejl-tekst">'
+        f'Vi kunne ikke fuldføre <strong>{handling_safe}</strong>. '
+        'Administratoren har automatisk fået besked, og vi løser det '
+        'så hurtigt som muligt.'
+        '</div>'
+        f'{ekstra_html}'
+        '<div class="brugerfejl-tips">'
+        'Du kan i mellemtiden prøve at:'
+        '<ul>'
+        '<li>Genindlæse siden (Cmd+R eller Ctrl+R)</li>'
+        '<li>Prøve handlingen igen om et øjeblik</li>'
+        '<li>Lukke og genåbne sagen</li>'
+        '</ul>'
+        '</div>'
+        '</div>'
+        '</div>',
+        unsafe_allow_html=True,
+    )
 
 
 @contextmanager

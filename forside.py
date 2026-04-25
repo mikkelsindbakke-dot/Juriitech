@@ -30,7 +30,12 @@ from ai_engine import (
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
 from vurdering import vis_dashboard as vis_udfalds_dashboard
-from ui import thinking, render_analyse_som_pillars, render_sagsresume
+from ui import (
+    thinking,
+    render_analyse_som_pillars,
+    render_sagsresume,
+    vis_brugerfejl,
+)
 
 
 # ---------- OPSÆTNING ----------
@@ -442,6 +447,68 @@ st.markdown(
     .pax-wordmark-rest {
         color: #0A0B0F;
         font-weight: 800;
+    }
+
+    /* ========== BRUGERFEJL-BOKS — venlig fejl-UI med Sentry-info ========== */
+    /* Vises når noget går galt under fx svarbrev-generering eller
+       anonymisering. Bruger en blød rosa pastel matchende vores andre
+       advarsels-bokse, plus et venligt ikon og humor i tonen. */
+    .brugerfejl-boks {
+        display: flex;
+        align-items: flex-start;
+        gap: 16px;
+        background: linear-gradient(135deg, #FDE9EE 0%, #FEF3F5 100%);
+        border-left: 4px solid #EC4899;
+        padding: 18px 22px;
+        border-radius: 14px;
+        margin: 16px 0;
+        box-shadow: 0 1px 3px rgba(236, 72, 153, 0.08);
+    }
+    .brugerfejl-ikon {
+        font-size: 1.6rem;
+        line-height: 1;
+        flex-shrink: 0;
+        padding-top: 2px;
+    }
+    .brugerfejl-indhold {
+        flex: 1;
+        min-width: 0;
+    }
+    .brugerfejl-titel {
+        font-family: 'Source Serif 4', Georgia, serif;
+        font-size: 1.15rem;
+        font-weight: 700;
+        color: #9F1239;
+        margin-bottom: 6px;
+        letter-spacing: -0.01em;
+    }
+    .brugerfejl-tekst {
+        color: #1F2937;
+        font-size: 0.95rem;
+        line-height: 1.55;
+        margin-bottom: 8px;
+    }
+    .brugerfejl-tekst strong {
+        color: #9F1239;
+    }
+    .brugerfejl-ekstra {
+        color: #4B5563;
+        font-size: 0.88rem;
+        font-style: italic;
+        margin-bottom: 8px;
+    }
+    .brugerfejl-tips {
+        color: #4B5563;
+        font-size: 0.88rem;
+        line-height: 1.5;
+        margin-top: 6px;
+    }
+    .brugerfejl-tips ul {
+        margin: 4px 0 0 0;
+        padding-left: 22px;
+    }
+    .brugerfejl-tips li {
+        margin-bottom: 2px;
     }
 
     /* ========== VIDENSTANK STABEL — lyse pastel-kort i vertikal stabel ========== */
@@ -1367,7 +1434,15 @@ if st.session_state.get("aktuel_sag"):
                     spoergsmaal="Automatisk førstevurdering ved upload",
                 )
             except Exception as e:
-                st.warning(f"Kunne ikke lave automatisk førstevurdering: {e}")
+                vis_brugerfejl(
+                    "den automatiske førstevurdering",
+                    exception=e,
+                    kort_ekstra=(
+                        "Sagen er stadig uploadet — du kan trykke 'Ryd sag' "
+                        "og prøve at uploade igen, eller vente et øjeblik "
+                        "og refreshe siden."
+                    ),
+                )
 
     # Vis dashboard + selve teksten hvis vi har en førstevurdering
     if st.session_state.auto_vurdering_tekst:
@@ -1946,14 +2021,26 @@ if st.session_state.get("aktuel_sag"):
                         "Tjekker hver fil igennem for missede oplysninger...",
                     ],
                 ):
-                    nye_resultater = anonymiser_valgte_filer(valgte_filer)
+                    try:
+                        nye_resultater = anonymiser_valgte_filer(valgte_filer)
+                    except Exception as e:
+                        vis_brugerfejl(
+                            "anonymisering af bilag",
+                            exception=e,
+                            kort_ekstra=(
+                                "De valgte bilag er stadig markeret — du "
+                                "kan trygt prøve igen."
+                            ),
+                        )
+                        nye_resultater = []
 
                 # Flet ind i den persistente map, så tidligere resultater
                 # bevares hvis de ikke er blevet genkørt nu
                 for r in nye_resultater:
                     st.session_state.anon_resultater_per_fil[r["filnavn"]] = r
 
-                st.rerun()
+                if nye_resultater:
+                    st.rerun()
 
         # ---------- RESULTAT-BOKSE ----------
         resultater_map = st.session_state.anon_resultater_per_fil
@@ -2070,7 +2157,16 @@ if st.session_state.get("aktuel_sag"):
                 "Skriver punktvis tjekliste...",
             ],
         ):
-            tjekliste = generer_tjekliste(sag=st.session_state.aktuel_sag)
+            try:
+                tjekliste = generer_tjekliste(sag=st.session_state.aktuel_sag)
+            except Exception as e:
+                vis_brugerfejl(
+                    "tjeklisten mod høringsbrevet",
+                    exception=e,
+                    kort_ekstra="Prøv igen — sagens filer er stadig indlæst.",
+                )
+                tjekliste = None
+        if tjekliste:
             st.session_state.seneste_tjekliste = {
                 "indhold": tjekliste,
                 "filer_antal": len(st.session_state.aktuel_sag.get("filer") or []),
@@ -2203,11 +2299,24 @@ if st.session_state.get("aktuel_sag"):
                 "Sikrer at klagerens navn er fuldt anonymiseret...",
             ],
         ):
-            svarbrev = generer_svarbrev_til_sag(
-                sag=st.session_state.aktuel_sag,
-                sagsakter=st.session_state.get("sagsakter", ""),
-                ekstra_instrukser=ekstra_instrukser,
-            )
+            try:
+                svarbrev = generer_svarbrev_til_sag(
+                    sag=st.session_state.aktuel_sag,
+                    sagsakter=st.session_state.get("sagsakter", ""),
+                    ekstra_instrukser=ekstra_instrukser,
+                )
+            except Exception as e:
+                vis_brugerfejl(
+                    "udkast til svarbrev",
+                    exception=e,
+                    kort_ekstra=(
+                        "Dine instrukser er gemt — du kan trykke knappen "
+                        "igen om et øjeblik."
+                    ),
+                )
+                svarbrev = None
+
+        if svarbrev:
             # Titel: find klageskema eller første fil
             sag_filer = st.session_state.aktuel_sag.get("filer") or []
             klage_fn = None
