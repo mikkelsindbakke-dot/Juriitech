@@ -152,6 +152,12 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
     padding: 3px 10px; border-radius: 999px;
     flex-shrink: 0; font-variant-numeric: tabular-nums;
   }}
+  .kvalitet-note {{
+    margin-top: 10px; padding: 0 4px;
+    color: rgba(71, 85, 105, 0.78);
+    font-size: 0.82rem; font-style: italic;
+    line-height: 1.5; letter-spacing: 0.01em;
+  }}
 </style>
 </head>
 <body>
@@ -162,6 +168,10 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
       <span class="fase" id="fase">{faser[0]}</span>
     </div>
     <span class="timer" id="timer">0:00</span>
+  </div>
+  <div class="kvalitet-note">
+    Det kan tage et par minutter, da vi serverer det hele samlet.
+    Kvalitet tager tid, og vi arbejder ikke med halve svar.
   </div>
   <script>
     (function() {{
@@ -187,7 +197,7 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
 </html>
 """
         with placeholder:
-            _components_html(widget_html, height=84)
+            _components_html(widget_html, height=140)
     else:
         placeholder.markdown(
             f"""
