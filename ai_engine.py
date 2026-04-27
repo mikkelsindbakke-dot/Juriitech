@@ -508,24 +508,27 @@ REGLER DU SKAL FØLGE:
      • "Hr. Schmidt fra TUI" → "TUI"
      • "Vores After Travel-medarbejder" → "TUI"
 
-3. HOTELLET OG TUIs SAMARBEJDSPARTNERE — ANSATTE FÅR "FORNAVN, TUI":
+3. HOTELLET OG TUIs EKSTERNE SAMARBEJDSPARTNERE — TITEL + FORNAVN:
    - Hotelnavn, hotelkæde, hotelmærke → BEVARES
    - Hotellets logo, adresse, beliggenhed, faciliteter → BEVARES
    - Hotellets type, klasse, beskrivelser → BEVARES
-   - MEN navngivne ansatte hos hotellet/partneren → "Fornavn, TUI"
-     (efternavn + titel/rolle fjernes — samme behandling som
-     TUI-medarbejdere ovenfor)
-     • "Hotelmanager Carlos Rodriguez" → "Carlos, TUI"
-     • "Receptionist Maria Garcia" → "Maria, TUI"
-     • "Direktør John Smith" → "John, TUI"
-     • "Concierge Pierre Dubois" → "Pierre, TUI"
-   - Hvis kun efternavn eller titel uden fornavn → erstat med "TUI"
-     • "Hr. Schmidt" → "TUI"
-     • "Hotellets manager" → "TUI"
+   - MEN navngivne ansatte hos hotellet/eksterne partnere →
+     "Titel + Fornavn" (efternavn fjernes, INGEN TUI tilføjes —
+     fordi de IKKE er TUI-ansatte)
+     • "Hotelmanager Carlos Rodriguez" → "Hotelmanager Carlos"
+     • "Receptionist Maria Garcia" → "Receptionist Maria"
+     • "Direktør John Smith" → "Direktør John"
+     • "Concierge Pierre Dubois" → "Concierge Pierre"
+   - Hvis personen kun har efternavn eller titel uden fornavn →
+     bevar titlen alene (eller "[ekstern partner]" hvis ingen titel)
+     • "Hr. Schmidt fra hotellet" → "[ekstern partner]"
+     • "Hotellets manager" → "Hotellets manager"
 
-   VIGTIGT: Forskellen mellem TUI-medarbejdere og partner-ansatte
-   er VISKET UD i bilag — alle bliver "Fornavn, TUI" eller "TUI".
-   Kun hotelnavnet/destinationen afslører hvor personen arbejder.
+   VIGTIGT: Forskellen mellem TUI-medarbejdere og eksterne
+   samarbejdspartnere SKAL bevares:
+   - TUI-medarbejdere/guider → "Fornavn, TUI" (signalerer TUI-tilknytning)
+   - Eksterne ansatte → "Titel + Fornavn" (INGEN TUI — de er ikke
+     ansat af TUI, kun samarbejdspartnere)
 
 4. BIPERSONER (medrejsende der ikke selv er klager — ægtefælle,
    børn, venner, rejseledsagere):
@@ -594,12 +597,13 @@ def anonymiser_tekst(tekst, filnavn=None):
             "Pakkerejse-Ankenævnet. Følg de TUI-specifikke regler i "
             "brugerprompten PRÆCIST — disse regler overstyrer eventuelle "
             "andre anonymiseringsregler du måtte være trænet i. "
-            "Specifikt: klagers navn og kontaktoplysninger MÅ fremgå i "
-            "bilag (i modsætning til svarbrevet); ALLE professionelle "
-            "kontakter (TUI-medarbejdere, TUI-guider, hotelpersonale, "
-            "samarbejdspartnere) erstattes med 'Fornavn, TUI' (fx "
-            "'Maria, TUI' eller 'Carlos, TUI') — efternavn og "
-            "titel/rolle fjernes."
+            "Hovedreglerne: (1) klagers navn og kontaktoplysninger MÅ "
+            "fremgå i bilag (i modsætning til svarbrevet). (2) "
+            "TUI-medarbejdere og TUI-guider erstattes med 'Fornavn, TUI' "
+            "(fx 'Maria, TUI'). (3) Eksterne samarbejdspartnere som "
+            "hotelpersonale erstattes med 'Titel + Fornavn' UDEN TUI "
+            "(fx 'Hotelmanager Carlos', 'Receptionist Maria') — fordi de "
+            "ikke er TUI-ansatte."
         )
         if regler:
             system_prompt += (
