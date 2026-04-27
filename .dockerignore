@@ -1,0 +1,51 @@
+# Hold containeren slank — disse filer skal IKKE med i image'et
+
+# Python cache & compiled files
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache
+.mypy_cache
+.ruff_cache
+
+# Virtual environments
+venv
+.venv
+env
+.env
+
+# Hemmelige filer (læses fra Fly.io secrets i stedet)
+.env
+.env.*
+!.env.example
+
+# Git og editor-filer
+.git
+.gitignore
+.github
+.vscode
+.idea
+*.swp
+*.swo
+.DS_Store
+
+# Udviklings- og test-artefakter
+*.log
+*.bak
+test_*
+*_test.py
+tests/
+
+# Dokumentation (ikke nødvendig i prod)
+README.md
+*.md
+
+# Fly.io selv (vi bygger fra context, men ikke konfig-filer)
+fly.toml
+.fly
+
+# Streamlit-cache (oprettes ved runtime)
+.streamlit/cache
