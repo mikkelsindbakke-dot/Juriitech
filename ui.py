@@ -278,15 +278,36 @@ def _split_analyse_i_sektioner(tekst):
         s = re.sub(r"\s*—\s+.*$", "", s)
         return s.strip()
 
+    # KRITISK: en nummereret linje (fx "1. **Titel**") tæller KUN som
+    # top-level sektion-start hvis den enten er først i dokumentet ELLER
+    # har en blank linje umiddelbart før. Det forhindrer at nummererede
+    # UNDER-punkter (fx "1. Korrekt værelsestype leveret" inde i
+    # "Rejseselskabets stillingtagen"-sektionen) bliver fejltolket som
+    # nye top-level sektioner — og dermed forskyder hele pillar-strukturen.
+    prev_was_blank = True  # behandl start af dokument som "efter blank linje"
     for line in lines:
-        if is_section_start.match(line):
+        line_is_blank = not line.strip()
+
+        if line_is_blank:
+            current_body.append(line)
+            prev_was_blank = True
+            continue
+
+        ser_ud_som_sektion = bool(is_section_start.match(line))
+        er_top_level = ser_ud_som_sektion and prev_was_blank
+
+        if er_top_level:
             # Afslut forrige sektion
             if current_title is not None:
-                sections.append((current_title, "\n".join(current_body).strip()))
+                sections.append(
+                    (current_title, "\n".join(current_body).strip())
+                )
             current_title = _parse_titel(line)
             current_body = []
         else:
             current_body.append(line)
+
+        prev_was_blank = False
 
     # Gem sidste sektion
     if current_title is not None:

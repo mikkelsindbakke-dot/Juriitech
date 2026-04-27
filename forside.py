@@ -1202,45 +1202,75 @@ else:
         key="sag_uploader",
     )
 
-# Tjek om uploadet har ændret sig (enten ny fil eller andet antal filer)
+# Beregn upload-signatur for at detektere om der er nye/ændrede filer.
+# Brugeren skal AKTIVT trykke "Scan filer" / "Opdatér filer" for at
+# trigge læsning + analyse — så undgår vi, at appen begynder at loade
+# midt i et upload-flow, hvor brugeren stadig er ved at finde flere
+# dokumenter. Det er en BEVIDST UX-beslutning fra Mikkel.
 _aktuel_sagsfiler_signatur = tuple(sorted(
     (f.name, f.size) for f in uploadede_sagsfiler or []
 ))
-if uploadede_sagsfiler and _aktuel_sagsfiler_signatur != st.session_state.get(
-    "sidste_sagsfil_signatur"
-):
-    with st.spinner(f"Læser {len(uploadede_sagsfiler)} filer..."):
-        sag_data = laes_sag_fra_filer(uploadede_sagsfiler)
-        st.session_state.aktuel_sag = sag_data
-        st.session_state.sidste_sagsfil_signatur = _aktuel_sagsfiler_signatur
-        st.session_state.sidste_klage_filnavn = None  # reset legacy state
+_sidste_scannet_signatur = st.session_state.get("sidste_sagsfil_signatur")
+_har_uskannede_aendringer = (
+    bool(uploadede_sagsfiler)
+    and _aktuel_sagsfiler_signatur != _sidste_scannet_signatur
+)
+_har_scannet_filer_foer = _sidste_scannet_signatur is not None
 
-        # Auto-gem hver fil i databasen (dokumenttype='klage')
-        gemt_nu = []
-        sprunget_over = []
-        for fil in sag_data.get("filer", []):
-            if sag_findes(fil["filnavn"]):
-                sprunget_over.append(fil["filnavn"])
-                continue
-            if fil["type"] == "tekst" and fil.get("tekst", "").strip():
-                emb = embed_dokument(fil["tekst"])
-                gem_sag_i_db(
-                    fil["filnavn"], fil["tekst"],
-                    dokumenttype="klage", embedding=emb,
-                )
-            else:
-                # Scannet PDF — gem placeholder
-                gem_sag_i_db(
-                    fil["filnavn"],
-                    f"[Scannet sagsbilag — analyseres via vision. Filnavn: {fil['filnavn']}]",
-                    dokumenttype="klage",
-                )
-            gemt_nu.append(fil["filnavn"])
+# Vis "Scan filer"/"Opdatér filer"-knap KUN når der er noget nyt at
+# scanne. Knappens tekst skifter alt efter, om det er første scan eller
+# en opdatering af en eksisterende sag.
+if _har_uskannede_aendringer:
+    _knap_tekst = (
+        "Opdatér filer" if _har_scannet_filer_foer else "Scan filer"
+    )
+    _knap_klik = st.button(
+        _knap_tekst,
+        type="primary",
+        use_container_width=True,
+        key="scan_filer_btn",
+        help=(
+            "Klik når du er klar — først da læses filerne og "
+            "analysen starter. Du kan uploade flere filer først."
+        ),
+    )
+    if _knap_klik:
+        with st.spinner(f"Læser {len(uploadede_sagsfiler)} filer..."):
+            sag_data = laes_sag_fra_filer(uploadede_sagsfiler)
+            st.session_state.aktuel_sag = sag_data
+            st.session_state.sidste_sagsfil_signatur = (
+                _aktuel_sagsfiler_signatur
+            )
+            st.session_state.sidste_klage_filnavn = None  # reset legacy
 
-        if gemt_nu:
-            st.toast(f"{len(gemt_nu)} filer gemt i vidensbanken.")
-        if sprunget_over:
-            st.toast(f"{len(sprunget_over)} filer var allerede i databasen.")
+            # Auto-gem hver fil i databasen (dokumenttype='klage')
+            gemt_nu = []
+            sprunget_over = []
+            for fil in sag_data.get("filer", []):
+                if sag_findes(fil["filnavn"]):
+                    sprunget_over.append(fil["filnavn"])
+                    continue
+                if fil["type"] == "tekst" and fil.get("tekst", "").strip():
+                    emb = embed_dokument(fil["tekst"])
+                    gem_sag_i_db(
+                        fil["filnavn"], fil["tekst"],
+                        dokumenttype="klage", embedding=emb,
+                    )
+                else:
+                    # Scannet PDF — gem placeholder
+                    gem_sag_i_db(
+                        fil["filnavn"],
+                        f"[Scannet sagsbilag — analyseres via vision. Filnavn: {fil['filnavn']}]",
+                        dokumenttype="klage",
+                    )
+                gemt_nu.append(fil["filnavn"])
+
+            if gemt_nu:
+                st.toast(f"{len(gemt_nu)} filer gemt i vidensbanken.")
+            if sprunget_over:
+                st.toast(
+                    f"{len(sprunget_over)} filer var allerede i databasen."
+                )
 
 # Knap til at rydde sagen
 if st.session_state.get("aktuel_sag"):
