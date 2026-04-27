@@ -17,10 +17,6 @@ load_dotenv()
 # Voyage-klienten læser VOYAGE_API_KEY fra miljøet automatisk,
 # men vi initialiserer eksplicit for tydelighed og bedre fejlmeddelelser.
 _API_KEY = os.getenv("VOYAGE_API_KEY")
-if not _API_KEY:
-    print("DEBUG: VOYAGE_API_KEY mangler i .env — embeddings vil fejle.")
-
-_client = voyageai.Client(api_key=_API_KEY)
 
 MODEL = "voyage-multilingual-2"
 DIMENSIONS = 1024
@@ -29,6 +25,47 @@ DIMENSIONS = 1024
 # afgørelser fylder under dette, men vi trunkerer defensivt for at undgå
 # fejl på ekstremt lange dokumenter.
 MAX_CHARS_PER_DOC = 120_000  # ~30.000 tokens for dansk tekst
+
+
+# ---------- LAZY KLIENT-INITIALISERING ----------
+# KRITISK: Vi initialiserer IKKE Voyage-klienten ved modul-import.
+# Hvis vi gjorde det, ville en ugyldig/manglende API-nøgle crashe hele
+# appen ved opstart — ingen ville kunne bruge nogen del af PAX. I stedet
+# opretter vi klienten første gang den faktisk skal bruges. Hvis den
+# fejler, returnerer embed_*-funktionerne pænt None, og resten af appen
+# (analyse, dashboard, anonymisering osv.) virker stadig — kun
+# arkivsøgning degraderes midlertidigt.
+_client = None
+_client_init_fejlet = False
+
+
+def _get_client():
+    """Returnér Voyage-klienten. Initialiserer den lazily på første kald.
+    Returnerer None hvis API-nøglen mangler eller klient-init fejler —
+    kalderen skal håndtere None som 'embedding ikke tilgængelig'."""
+    global _client, _client_init_fejlet
+    if _client is not None:
+        return _client
+    if _client_init_fejlet:
+        return None
+    if not _API_KEY:
+        print(
+            "DEBUG: VOYAGE_API_KEY mangler — embeddings deaktiveret. "
+            "Tilføj nøglen i Streamlit secrets for at genaktivere "
+            "arkivsøgning."
+        )
+        _client_init_fejlet = True
+        return None
+    try:
+        _client = voyageai.Client(api_key=_API_KEY)
+        return _client
+    except Exception as e:
+        print(
+            f"DEBUG: Voyage-klient kunne ikke initialiseres: {e}. "
+            "Embeddings deaktiveret indtil næste app-restart."
+        )
+        _client_init_fejlet = True
+        return None
 
 
 def _truncate(text: str) -> str:
@@ -49,8 +86,11 @@ def embed_dokument(tekst: str):
     """
     if not tekst or not tekst.strip():
         return None
+    client = _get_client()
+    if client is None:
+        return None
     try:
-        result = _client.embed(
+        result = client.embed(
             [_truncate(tekst)],
             model=MODEL,
             input_type="document",
@@ -71,8 +111,11 @@ def embed_sporgsmaal(tekst: str):
     """
     if not tekst or not tekst.strip():
         return None
+    client = _get_client()
+    if client is None:
+        return None
     try:
-        result = _client.embed(
+        result = client.embed(
             [tekst],
             model=MODEL,
             input_type="query",
@@ -90,8 +133,11 @@ def embed_batch(tekster: list):
     """
     if not tekster:
         return []
+    client = _get_client()
+    if client is None:
+        return [None] * len(tekster)
     try:
-        result = _client.embed(
+        result = client.embed(
             [_truncate(t or "") for t in tekster],
             model=MODEL,
             input_type="document",

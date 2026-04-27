@@ -8,7 +8,28 @@ from database import find_relevante_sager, hent_alle_sager, hent_sager_af_type
 
 # Læs API-nøgle fra .env (ikke hardcoded i koden)
 load_dotenv()
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+# KRITISK: Anthropic-klienten initialiseres defensivt så modul-import
+# aldrig kan crashe hele appen ved manglende eller ugyldig nøgle. Hvis
+# klienten ikke kan oprettes, sættes den til None — og hver
+# client.messages.create()-kald vil rejse en pæn AttributeError som
+# bliver fanget af vores vis_brugerfejl()-håndtering i UI-laget.
+try:
+    _ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
+    if not _ANTHROPIC_KEY:
+        print(
+            "DEBUG: ANTHROPIC_API_KEY mangler — AI-funktioner deaktiveret. "
+            "Tilføj nøglen i Streamlit secrets for at genaktivere analyse."
+        )
+        client = None
+    else:
+        client = anthropic.Anthropic(api_key=_ANTHROPIC_KEY)
+except Exception as _e:
+    print(
+        f"DEBUG: Anthropic-klient kunne ikke initialiseres: {_e}. "
+        "AI-funktioner deaktiveret indtil næste app-restart."
+    )
+    client = None
 
 MODEL = "claude-sonnet-4-6"
 # Default loft for AI-svar. 16000 tokens = ca. 12000 ord — rigeligt til

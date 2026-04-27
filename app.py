@@ -147,4 +147,50 @@ _pages = [
     ),
 ]
 _pg = st.navigation(_pages)
-_pg.run()
+
+# ---------- TOP-LEVEL SAFETY NET ----------
+# Wrap _pg.run() i en try/except så ALLE crashes — også uforudsete
+# import-fejl eller database-fejl — vises som en venlig fejlboks i
+# stedet for Streamlits rå røde traceback. Brugeren får besked om at
+# prøve igen, og fejlen sendes automatisk til Sentry så vi ser den.
+try:
+    _pg.run()
+except Exception as _kritisk_fejl:
+    # Send til Sentry hvis muligt (ikke-blokkerende)
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as _scope:
+            _scope.set_tag("brugerhandling", "side-opstart")
+            _scope.set_level("fatal")
+            sentry_sdk.capture_exception(_kritisk_fejl)
+    except Exception:
+        pass
+
+    # Vis venlig fejlboks — undgår at brugeren ser en rå Python-traceback
+    st.markdown(
+        """
+        <div style="
+            margin: 40px auto; max-width: 640px;
+            padding: 32px; border-radius: 16px;
+            background: #FEF2F2; border: 1px solid #FCA5A5;
+            font-family: 'Inter', -apple-system, sans-serif;
+        ">
+          <div style="font-size: 1.4rem; font-weight: 700;
+            color: #991B1B; margin-bottom: 8px;">
+            Hov — noget gik galt under opstart
+          </div>
+          <div style="color: #7F1D1D; font-size: 1rem; line-height: 1.55;">
+            juriitech PAX kunne ikke starte korrekt lige nu. Vores system
+            er allerede blevet underrettet, og fejlen bliver udbedret.
+            <br><br>
+            <b>Prøv venligst at:</b>
+            <ul style="margin: 8px 0 0 0; padding-left: 22px;">
+              <li>Genindlæse siden (Cmd+R eller Ctrl+R) om et øjeblik</li>
+              <li>Skrive til support@juriitech.com hvis problemet
+                  fortsætter</li>
+            </ul>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
