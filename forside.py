@@ -1220,20 +1220,26 @@ _har_scannet_filer_foer = _sidste_scannet_signatur is not None
 # Vis "Scan filer"/"Opdatér filer"-knap KUN når der er noget nyt at
 # scanne. Knappens tekst skifter alt efter, om det er første scan eller
 # en opdatering af en eksisterende sag.
+#
+# Knappen placeres i en smal venstre-kolonne (ca. 1/4 bredde), så den
+# står som en kompakt action-knap lige under upload-feltet — i stedet
+# for at strække sig på tværs af hele siden som en bjælke.
 if _har_uskannede_aendringer:
     _knap_tekst = (
         "Opdatér filer" if _har_scannet_filer_foer else "Scan filer"
     )
-    _knap_klik = st.button(
-        _knap_tekst,
-        type="primary",
-        use_container_width=True,
-        key="scan_filer_btn",
-        help=(
-            "Klik når du er klar — først da læses filerne og "
-            "analysen starter. Du kan uploade flere filer først."
-        ),
-    )
+    _btn_kol, _spacer_kol = st.columns([1, 3])
+    with _btn_kol:
+        _knap_klik = st.button(
+            _knap_tekst,
+            type="primary",
+            use_container_width=True,
+            key="scan_filer_btn",
+            help=(
+                "Klik når du er klar — først da læses filerne og "
+                "analysen starter. Du kan uploade flere filer først."
+            ),
+        )
     if _knap_klik:
         with st.spinner(f"Læser {len(uploadede_sagsfiler)} filer..."):
             sag_data = laes_sag_fra_filer(uploadede_sagsfiler)
