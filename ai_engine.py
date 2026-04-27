@@ -471,56 +471,93 @@ def _hent_anonymiseringsregler_tekst(max_tegn=MAX_CHARS_ANONYMISERINGSREGLER):
 
 
 ANONYMISERING_PROMPT = """
-Du er en anonymiseringsassistent der arbejder efter Pakkerejse-Ankenævnets
-officielle retningslinjer (Retningslinjer for anonymisering 2023 + Vejledning
-til rejsearrangøren om besvarelse af klagesager og anonymisering 2022), samt
-de autoritative anonymiseringsregler der er indlæst i systemets vidensbank
-fra Datatilsynet, Jurabibliotek og EU Article 29 Working Party.
+Du forbereder dokumenter (bilag) som TUI sender til
+Pakkerejse-Ankenævnet sammen med svarbrevet. Disse bilag bruges som
+dokumentation, og reglerne for hvad der må fremgå er ANDERLEDES end
+for selve svarbrevet.
+
+VIGTIGT: Dette er IKKE den samme anonymisering som svarbrevet. Følg
+PRÆCIS de regler der står her — de overstyrer eventuelle generelle
+anonymiseringsregler du måtte have lært andetsteds. Specifikt:
+klagers grundlæggende kontaktoplysninger MÅ fremgå i bilag.
 
 REGLER DU SKAL FØLGE:
 
-1. GENERISKE BETEGNELSER — brug disse konsekvent i hele teksten:
-   - Klager / klagers: **K**  (hvis flere klagere: K1, K2, K3 ...)
-   - Rejsearrangør/TUI-medarbejder: **R**
-   - Bipersoner (medrejsende ægtefælle, børn, rejseledsagere der ikke er part): **B1**, **B2** ...
-   - Guider eller hotelpersonale der er relevante: **G** eller **G1**, **G2**
+1. KLAGER (kunden der har klaget) — INFORMATION BEVARES:
+   - Klagers navn må gerne fremgå (skriv det som det står)
+   - Klagers e-mailadresse må gerne fremgå
+   - Klagers telefonnummer må gerne fremgå
+   - Klagers postadresse må gerne fremgå
+   - Klagers booking-/kundenummer må gerne fremgå
+   - MEN følgende fjernes ALTID for klager:
+     • CPR-numre → "[CPR fjernet]"
+     • Bankoplysninger / kontonumre → "[bankoplysninger fjernet]"
+     • Følsomme helbreds-, religiøse eller etniske oplysninger der
+       IKKE er nødvendige for sagen → fjernes
 
-2. OPLYSNINGER DER SKAL FJERNES ELLER ERSTATTES:
-   - Personnavne → erstatter med K, K1, R, B1 osv.
-   - Adresser (gadenavn + nr.) → "[adresse fjernet]"
-   - CPR-numre → "[CPR fjernet]" (ALTID — også for klager, også for bipersoner)
-   - Fødselsdatoer (ud over rejsedatoer) → "[fødselsdato fjernet]"
-   - Telefonnumre → "[telefon fjernet]"
-   - E-mailadresser → "[e-mail fjernet]"
-   - Booking-/kundenumre → maskeres delvist (fx '12345678' → '12****78')
-   - Bankoplysninger, kontonumre → "[bankoplysninger fjernet]"
-   - Oplysninger om strafbare forhold og følsomme oplysninger (helbred,
-     religion, etnicitet) om BIPERSONER → fjernes helt
-   - Følsomme oplysninger om klager der IKKE er nødvendige for sagen → fjernes
+2. TUI-MEDARBEJDERE (After Travel team, kundeservice, salg) OG
+   TUI-GUIDER (på destinationen):
+   - Erstattes konsekvent med "Fornavn, TUI" — efternavn + titel/rolle
+     fjernes
+   - "Maria Hansen, After Travel" → "Maria, TUI"
+   - "Vores guide Søren tog imod os" → "Søren, TUI tog imod os"
+   - "Pernille fra TUI svarede" → "Pernille, TUI svarede"
+   - "Customer service-medarbejder Lars Olsen" → "Lars, TUI"
+   - Hvis personen KUN har efternavn eller titel (intet fornavn) →
+     erstat hele referencen med "TUI"
+     • "Hr. Schmidt fra TUI" → "TUI"
+     • "Vores After Travel-medarbejder" → "TUI"
 
-3. OPLYSNINGER DER SKAL BEVARES (de er relevante for sagens afgørelse):
+3. HOTELLET OG TUIs SAMARBEJDSPARTNERE — ANSATTE FÅR "FORNAVN, TUI":
+   - Hotelnavn, hotelkæde, hotelmærke → BEVARES
+   - Hotellets logo, adresse, beliggenhed, faciliteter → BEVARES
+   - Hotellets type, klasse, beskrivelser → BEVARES
+   - MEN navngivne ansatte hos hotellet/partneren → "Fornavn, TUI"
+     (efternavn + titel/rolle fjernes — samme behandling som
+     TUI-medarbejdere ovenfor)
+     • "Hotelmanager Carlos Rodriguez" → "Carlos, TUI"
+     • "Receptionist Maria Garcia" → "Maria, TUI"
+     • "Direktør John Smith" → "John, TUI"
+     • "Concierge Pierre Dubois" → "Pierre, TUI"
+   - Hvis kun efternavn eller titel uden fornavn → erstat med "TUI"
+     • "Hr. Schmidt" → "TUI"
+     • "Hotellets manager" → "TUI"
+
+   VIGTIGT: Forskellen mellem TUI-medarbejdere og partner-ansatte
+   er VISKET UD i bilag — alle bliver "Fornavn, TUI" eller "TUI".
+   Kun hotelnavnet/destinationen afslører hvor personen arbejder.
+
+4. BIPERSONER (medrejsende der ikke selv er klager — ægtefælle,
+   børn, venner, rejseledsagere):
+   - Navne → "B1", "B2", "B3" osv. (samme person → samme kode)
+   - CPR/personlige numre → fjernes
+   - Følsomme oplysninger (helbred, religion, etc.) → fjernes helt
+     med mindre de er centrale for sagen
+
+5. OPLYSNINGER DER ALTID BEVARES (relevante for sagens afgørelse):
    - Hotelnavne, feriedestinationer, byer, lande, lufthavne
-   - Rejsedatoer, rejseperiode, ophold
-   - Priser og beløb
+   - Rejsedatoer, rejseperiode, opholdets længde
+   - Priser, beløb, valuta
    - Klagepunkterne i substans
-   - Selve korrespondance og dialog (bare med anonymiserede navne)
-   - Dokumentationskilder og henvisninger (bilagsnumre, sagsnumre)
+   - Korrespondancens indhold og tone (med ovennævnte regler anvendt)
+   - Bilagsnumre, sagsnumre, dokumentationskilder
 
-4. FORMATERING:
-   - Bevar teksten i samme struktur som originalen (afsnit, overskrifter, lister)
-   - Anonymisering skal være ENSARTET — samme person altid samme kode
-   - Hvis noget er gennemstreget eller fremhævet i originalen, marker det på lignende vis
-   - Hvis du er i tvivl om en oplysning skal fjernes: fjern den hellere end at lade den stå
+6. FORMATERING:
+   - Bevar tekstens struktur præcist (afsnit, overskrifter, lister)
+   - Anvendelse af reglerne skal være ENSARTET gennem hele dokumentet
+     (samme person → samme erstatning, hver gang)
+   - Hvis noget er gennemstreget eller fremhævet i originalen, bevar
+     markeringen på lignende vis
 
 OUTPUT:
-Returnér alene den anonymiserede tekst — ingen forklaringer, ingen intro,
-ingen afslutningskommentarer. Start direkte med teksten.
+Returnér alene den bearbejdede tekst — ingen forklaringer, ingen
+intro, ingen afslutningskommentarer. Start direkte med teksten.
 
-Hvis teksten er meget kort eller ikke indeholder personoplysninger, returnér
-den oprindelige tekst uændret.
+Hvis teksten er meget kort eller ikke indeholder noget der skal
+ændres, returnér den oprindelige tekst uændret.
 
 ---
-TEKST DER SKAL ANONYMISERES:
+TEKST DER SKAL BEARBEJDES:
 """
 
 
@@ -544,15 +581,31 @@ def anonymiser_tekst(tekst, filnavn=None):
 
         # System-prompten får reglerne som fast baggrund — så modellen
         # altid har dem i "hjernen" uanset inputtets længde.
+        #
+        # KRITISK: Denne anonymisering er til BILAG, ikke til svarbrev.
+        # TUI har sine egne specifikke regler (klagers info bevares, TUI
+        # bruges som generisk navn for medarbejdere/guider, partner-
+        # ansatte får fornavn + TUI). Disse TUI-regler OVERSTYRER de
+        # generelle Ankenævn-/Datatilsyn-regler. Vi gør dette eksplicit
+        # i system-prompten, så modellen ikke fejlagtigt anonymiserer
+        # klagers navn fordi den autoritative kilde tilsiger det.
         system_prompt = (
-            "Du er en præcis og regel-tro anonymiseringsassistent for "
-            "rejsearrangører der skal svare Pakkerejse-Ankenævnet. Du "
-            "følger Ankenævnets officielle retningslinjer nøje, samt de "
-            "autoritative anonymiseringsregler du er trænet i (Datatilsynet, "
-            "Jurabibliotek, EU Article 29 WP216)."
+            "Du forbereder dokumenter til TUI's brug i klagesager hos "
+            "Pakkerejse-Ankenævnet. Følg de TUI-specifikke regler i "
+            "brugerprompten PRÆCIST — disse regler overstyrer eventuelle "
+            "andre anonymiseringsregler du måtte være trænet i. "
+            "Specifikt: klagers navn og kontaktoplysninger MÅ fremgå i "
+            "bilag (i modsætning til svarbrevet); ALLE professionelle "
+            "kontakter (TUI-medarbejdere, TUI-guider, hotelpersonale, "
+            "samarbejdspartnere) erstattes med 'Fornavn, TUI' (fx "
+            "'Maria, TUI' eller 'Carlos, TUI') — efternavn og "
+            "titel/rolle fjernes."
         )
         if regler:
-            system_prompt += "\n\n" + regler
+            system_prompt += (
+                "\n\n# BAGGRUNDSREGLER (kun til reference — TUI-reglerne "
+                "i brugerprompten har FORRANG ved konflikt):\n\n" + regler
+            )
 
         response = client.messages.create(
             model=MODEL,
