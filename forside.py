@@ -2428,6 +2428,24 @@ if st.session_state.get("aktuel_sag"):
             f"- {instr}" for instr in _instrukser_liste
         )
 
+    # Toggle: skal svarbrevet inkludere kildehenvisninger?
+    # Default: NEJ (slået fra) — brevet bliver kortere og mere flydende.
+    # Hvis brugeren slår det til, inkluderer brevet "[Bilag XX, s. Y]",
+    # paragraf-referencer og vilkårshenvisninger.
+    _inkluder_kildehenvisninger = st.toggle(
+        "Vil du tilføje kildehenvisninger til dit svarbrev?",
+        value=False,
+        key=f"toggle_kildehenvisninger_{_aktiv_sag_id}_{hash(_sag_sig)}",
+        help=(
+            "Når slået TIL: Svarbrevet indeholder eksplicitte "
+            "henvisninger til bilag (fx '[Bilag 04, s. 1]'), "
+            "rejsevilkår (fx 'jf. vilkårenes pkt. 5.1') og lovparagraffer "
+            "(fx 'jf. § 22'). Når slået FRA (standard): Brevet skrives "
+            "uden kildehenvisninger og bliver mere flydende og "
+            "naturligt at læse."
+        ),
+    )
+
     if st.button("Generer udkast til svarbrev", type="primary"):
         with thinking(
             "juriitech PAX udarbejder svarbrevet til Nævnet",
@@ -2445,6 +2463,7 @@ if st.session_state.get("aktuel_sag"):
                     sag=st.session_state.aktuel_sag,
                     sagsakter=st.session_state.get("sagsakter", ""),
                     ekstra_instrukser=ekstra_instrukser,
+                    inkluder_kildehenvisninger=_inkluder_kildehenvisninger,
                 )
             except Exception as e:
                 vis_brugerfejl(

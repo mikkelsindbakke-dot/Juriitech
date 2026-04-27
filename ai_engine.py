@@ -65,7 +65,7 @@ MAX_CHARS_PR_SAG = 15_000
 # til brugerens organisations-profil (så TUI-brugere får 'TUI' og
 # 'After Travel team', Apollo-brugere får deres egne termer, osv.).
 REJSESELSKAB_NAVN = "TUI"
-REJSESELSKAB_SAGSBEHANDLER = "TUIs After Travel team"
+REJSESELSKAB_SAGSBEHANDLER = "TUI"
 
 # Øvre grænse på samlet anonymiseringsreglerblok vi injicerer i prompten.
 # ~18000 tegn ≈ 4500 tokens — rummeligt nok til at dække Datatilsynets
@@ -911,17 +911,66 @@ def generer_tjekliste(sag):
         return f"Fejl i generering af tjekliste: {str(e)}"
 
 
-SVARBREV_OPGAVE = f"""
+def byg_svarbrev_opgave(inkluder_kildehenvisninger: bool = False) -> str:
+    """Bygger svarbrev-prompten dynamisk.
+
+    inkluder_kildehenvisninger:
+        - False (default): Brevet skal IKKE indeholde "[Bilag XX, s. Y]",
+          paragraf-referencer eller andre kildehenvisninger. Brevet bliver
+          kortere og mere flydende — i overensstemmelse med kollegaens
+          ønske om et rent, ikke-akademisk svarbrev.
+        - True: Brevet inkluderer præcise kildehenvisninger til bilag,
+          rejsevilkår og pakkerejseloven (fx "[Bilag 04, s. 1]" og
+          "jf. § 22"). Bruges når juristen specifikt har brug for at
+          dokumentere argumentationens grundlag.
+    """
+    # Sektion om kildehenvisninger — varierer efter flag
+    if inkluder_kildehenvisninger:
+        kildehenvisninger_regel = (
+            "KILDEHENVISNINGER:\n"
+            "Brug præcise henvisninger til bilag, rejsevilkår og lov:\n"
+            "  - Bilagshenvisninger: '[Bilag 04, s. 1]', "
+            "'[Bilag 21, sidetal ikke angivet]'\n"
+            "  - Rejsevilkår: 'jf. vilkårenes pkt. 5.1'\n"
+            "  - Pakkerejselov: 'jf. pakkerejselovens § 22'\n"
+        )
+    else:
+        kildehenvisninger_regel = (
+            "KILDEHENVISNINGER:\n"
+            "Brevet skal IKKE indeholde kildehenvisninger. Specifikt:\n"
+            "  - INGEN '[Bilag XX, s. Y]' eller bilagshenvisninger\n"
+            "  - INGEN 'jf. vilkårenes pkt. X.Y' eller vilkårshenvisninger\n"
+            "  - INGEN 'jf. § XX' eller paragraf-referencer\n"
+            "  - INGEN '[sidetal ikke angivet]'\n"
+            "Argumentationen står på egne ben — fakta og logik gør "
+            "brevet stærkt, ikke konstant kildehenvisning. Brevet bliver "
+            "et flydende, naturligt svar — ikke en akademisk afhandling.\n"
+        )
+
+    return f"""
 OPGAVE: Generer et KOMPLET UDKAST til svarbrev fra {REJSESELSKAB_NAVN} til
 Pakkerejseankenævnet. Skriv i et formelt, professionelt juridisk sprog —
-men ikke stivt. Brug præcise henvisninger til rejsevilkårene, sagsakterne
-og pakkerejseloven.
+men ikke stivt. Brevet skal være kort, direkte og fokuseret.
 
 LÆNGDE — ABSOLUT KRAV:
 Brevet skal være KORT. Maksimalt 1-2 A4-sider (omtrent 500-900 ord samlet).
 Pakkerejse-Ankenævnet ønsker ikke lange retsskrivelser — hold dig kort,
 præcist og juridisk skarpt. Undlad fyld, gentagelser og retoriske
-formuleringer. Den bedste svarbrev er det korte, klare og velfunderede.
+formuleringer. Det bedste svarbrev er det korte, klare og velfunderede.
+
+INDLEDNINGEN:
+Brevet starter med PRÆCIS denne ene sætning:
+  "{REJSESELSKAB_NAVN} vil hermed komme med sine bemærkninger samt bilag til sagen."
+Ingen "Til: Pakkerejse-Ankenævnet"-header, ingen "Vedr."-linje, ingen
+sagsnummer-linje, ingen lange standard-introer som "har modtaget
+Ankenævnets høring af [dato] vedrørende ovennævnte klage". Den ene
+sætning ovenfor er HELE indledningen. Derefter direkte ind i
+argumentationen.
+
+INKLUDÉR IKKE en standard-opsummering af klagers krav i kroner og ører
+(fx "Det opdaterede krav udgør herefter X DKK, subsidiært Y DKK..."). Hvis
+specifikke beløb er relevante for argumentationen, kan de indgå
+løbende i teksten — men ikke som en samlet krav-sammenfatning.
 
 UNDLAD bevidst at citere tidligere afgørelser fra Nævnet — det forventes
 ikke i rejsearrangørens svar og gør brevet for detaljeret.
@@ -934,8 +983,7 @@ UNDLAD også alt der lyder for 'domstolsagtigt':
 
 TERMINOLOGI — brug disse konsekvent:
   • Rejseselskabet omtales ALTID som "{REJSESELSKAB_NAVN}" — aldrig "rejseselskabet", "vi", "rejsearrangøren" eller lignende.
-  • Klageren omtales ALTID som "Klager" (ikke "K", ikke klagerens rigtige navn, ikke fornavn).
-  • Ved flere klagere: "Klager 1", "Klager 2", osv.
+  • Klageren omtales ALTID som "Klager" — uanset om der er én, to eller flere klagere. ALDRIG "Klager 1", "Klager 2" — kun "Klager".
   • Underskriftslinje/afsender skal altid være "{REJSESELSKAB_SAGSBEHANDLER}" — aldrig "[Navn på sagsbehandler]" eller personnavne.
 
 ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
@@ -945,7 +993,7 @@ efternavn, heller ikke i overskrifter, indledning, underskrift,
 bilagshenvisninger, citater, e-mails eller andre steder. Følg disse
 regler konsekvent i HELE brevet:
 
-  • Klager: ALTID "Klager" (eller "Klager 1", "Klager 2" ved flere)
+  • Klager: ALTID "Klager" (uanset hvor mange klagere — aldrig "Klager 1" eller "Klager 2")
   • {REJSESELSKAB_NAVN}s medarbejdere: omtales ikke ved navn — skriv i stedet "{REJSESELSKAB_SAGSBEHANDLER}" eller "{REJSESELSKAB_NAVN}"
   • Bipersoner (medrejsende ægtefælle, børn, rejseledsagere): "medrejsende" eller "Biperson 1", "Biperson 2"
   • Guider, hotelpersonale: "guiden", "hotelpersonalet" — ingen navne
@@ -963,50 +1011,52 @@ anonymisere det — omskriv citater så navnet er erstattet med "Klager".
 Hotelnavne, destinationer, lufthavne, rejsedatoer, beløb og klagepunkter
 bevares (de er nødvendige for sagens afgørelse).
 
-STRUKTUR — følg præcist denne todelte struktur:
+STRUKTUR:
+Brevet består af to dele — UDEN nummererede sektion-overskrifter:
 
-**1. Indledning**
-Kort, formel indledning (2-3 linjer). Bekræft modtagelsen af klagen fra
-Klager og angiv klagens sagsnummer (hvis det fremgår) og dato.
+DEL 1 — INDLEDNING (én sætning):
+  "{REJSESELSKAB_NAVN} vil hermed komme med sine bemærkninger samt bilag til sagen."
 
-**2. Juridisk vurdering**
-Dette er brevets hoveddel og det eneste reelle argumenterende afsnit.
-Kombinér her det nødvendige faktum-grundlag og den juridiske argumentation
-— vægten skal klart ligge på argumentationen. Struktur:
+DEL 2 — JURIDISK VURDERING (brevets hoveddel):
+Det eneste reelle argumenterende afsnit. Brug emne-overskrifter til
+at strukturere de enkelte klagepunkter (fx "Afstandsoplysninger og
+markedsføring", "Transfer ved ankomst", "Poolens tilstand", "Udflugterne")
+— men IKKE generiske rammeoverskrifter som "1. Indledning" eller
+"2. Juridisk vurdering".
 
-  - Indled med 2-4 sætninger der opsummerer det relevante faktum
-    (kort, neutralt, kun det der understøtter argumentationen).
-  - Gennemgå derefter de stærkeste forsvarsargumenter baseret på:
-      a) REJSEVILKÅRENE — henvis konkret til punkter (fx "jf. vilkårenes
-         pkt. 5.1")
-      b) PAKKEREJSELOVEN — henvis til konkrete paragraffer når relevant
-         (fx "§ 19 om mangler", "§ 22 om forholdsmæssigt afslag")
-      c) SAGSAKTERNES faktuelle oplysninger — brug C4C, e-mails og
-         bookingdetaljer til at understøtte {REJSESELSKAB_NAVN}s version
-  - Afslut afsnittet med en kort afslutningsformulering. Én til to linjer
-    der sammenfatter {REJSESELSKAB_NAVN}s stilling (fx "Det er på den
-    baggrund {REJSESELSKAB_NAVN}s vurdering, at kravet bør afvises"),
-    efterfulgt af "Med venlig hilsen" og "{REJSESELSKAB_SAGSBEHANDLER}".
+For hver emne-overskrift:
+  - Indled med kort faktum-grundlag (1-3 sætninger).
+  - Argumentér ud fra rejsevilkår, pakkerejselov og sagens fakta.
+  - Afslut med {REJSESELSKAB_NAVN}s stilling til klagepunktet.
 
-INGEN AFSNIT 3, 4, 5 ELLER 6. Brevet består KUN af afsnit 1 og 2.
+Afslut hele brevet med "Med venlig hilsen" og
+"{REJSESELSKAB_SAGSBEHANDLER}". Ingen titler, ingen e-mailadresser, ingen
+[Navn på sagsbehandler]-placeholder.
 
-VIGTIGT: Inkludér IKKE referencer til tidligere afgørelser fra Nævnet.
-Nævnet forventer IKKE citater af deres egne afgørelser i
-rejsearrangørens svarbrev. Argumentér udelukkende ud fra sagens egne
-fakta, rejsevilkårene og pakkerejselovens paragraffer.
+{kildehenvisninger_regel}
 
 STRENGE KRAV:
 - Max 1-2 A4-sider samlet. Hvis du er i tvivl, skriv kortere.
 - Opfind ALDRIG fakta der ikke står i klagen, sagsakterne eller vidensbanken.
 - Skriv på dansk i et formelt, professionelt juridisk sprog.
 - Hvis en oplysning mangler der er nødvendig, skriv "[SAGSBEHANDLER UDFYLDER: ...]" som placeholder.
-- Brug "{REJSESELSKAB_NAVN}" og "Klager" konsekvent. Aldrig "rejseselskabet" eller "K".
+- Brug "{REJSESELSKAB_NAVN}" og "Klager" konsekvent. Aldrig "rejseselskabet", "K", "Klager 1" eller "Klager 2".
 - Underskriftslinjen skal altid være "{REJSESELSKAB_SAGSBEHANDLER}".
-- Tjek brevet igennem til sidst: ingen personnavne, ingen afsnit 3/4/5/6, ingen "domstols"-formuleringer.
+- Tjek brevet igennem til sidst: ingen personnavne, ingen sektion-numre, ingen "domstols"-formuleringer, ingen "Til:"-headers.
 """
 
 
-def generer_svarbrev(klage, sagsakter=None, ekstra_instrukser=None):
+# Backward compatibility — bevares så ældre kald fortsat virker (default
+# uden kildehenvisninger, jf. kollegaens feedback).
+SVARBREV_OPGAVE = byg_svarbrev_opgave(inkluder_kildehenvisninger=False)
+
+
+def generer_svarbrev(
+    klage,
+    sagsakter=None,
+    ekstra_instrukser=None,
+    inkluder_kildehenvisninger=False,
+):
     """
     Genererer et komplet udkast til svarbrev fra rejseselskabet til Nævnet.
 
@@ -1014,10 +1064,19 @@ def generer_svarbrev(klage, sagsakter=None, ekstra_instrukser=None):
     sagsakter: valgfri streng med C4C-notater, e-mails, bookingdetaljer
     ekstra_instrukser: valgfri streng hvis brugeren vil styre tonen eller
                        fokusere på bestemte argumenter
+    inkluder_kildehenvisninger: bool. Hvis True inkluderer brevet
+                       eksplicitte bilag-/lov-/vilkårs-referencer (fx
+                       "[Bilag 04, s. 1]", "jf. § 22"). Default False —
+                       brevet skrives uden kildehenvisninger, hvilket
+                       giver et mere flydende, naturligt svar.
 
     Returnerer svarbrevets tekst som markdown, eller en fejlbesked.
     """
     try:
+        # Byg den korrekte svarbrev-prompt baseret på flaget
+        svarbrev_opgave = byg_svarbrev_opgave(
+            inkluder_kildehenvisninger=inkluder_kildehenvisninger
+        )
         import base64
         klage_filnavn = klage.get("filnavn", "ukendt_klage")
         sagsakter_tekst = (sagsakter or "").strip()
@@ -1061,7 +1120,7 @@ def generer_svarbrev(klage, sagsakter=None, ekstra_instrukser=None):
                 f"{ekstra_instrukser.strip()}\n"
             )
 
-        prompt_tekst = kontekst + sagsakter_blok + ekstra + SVARBREV_OPGAVE
+        prompt_tekst = kontekst + sagsakter_blok + ekstra + svarbrev_opgave
 
         if klage["type"] == "pdf_bytes":
             pdf_b64 = base64.standard_b64encode(klage["bytes"]).decode("utf-8")
@@ -1075,7 +1134,7 @@ def generer_svarbrev(klage, sagsakter=None, ekstra_instrukser=None):
                         "data": pdf_b64,
                     },
                 },
-                {"type": "text", "text": sagsakter_blok + ekstra + SVARBREV_OPGAVE},
+                {"type": "text", "text": sagsakter_blok + ekstra + svarbrev_opgave},
             ]
         else:
             user_content = (
@@ -1085,7 +1144,7 @@ def generer_svarbrev(klage, sagsakter=None, ekstra_instrukser=None):
                 + "\n"
                 + sagsakter_blok
                 + ekstra
-                + SVARBREV_OPGAVE
+                + svarbrev_opgave
             )
 
         response = client.messages.create(
@@ -1126,8 +1185,9 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
             "klagerens navn og personhenførbare oplysninger MÅ IKKE stå "
             "noget sted.\n\n"
             "REGLER:\n"
-            "- Personnavne på klager → erstat med 'Klager' (eller 'Klager 1', "
-            "'Klager 2' ved flere klagere)\n"
+            "- Personnavne på klager → erstat med 'Klager' (uanset om der "
+            "er én, to eller flere klagere — brug ALTID kun 'Klager', "
+            "ALDRIG 'Klager 1' eller 'Klager 2')\n"
             f"- Personnavne på {REJSESELSKAB_NAVN}s medarbejdere → omtales "
             f"ikke ved navn. Skriv i stedet '{REJSESELSKAB_SAGSBEHANDLER}' "
             f"eller '{REJSESELSKAB_NAVN}'\n"
@@ -1875,12 +1935,24 @@ def spoerg_ai_med_sag(
         return fejl
 
 
-def generer_svarbrev_til_sag(sag, sagsakter=None, ekstra_instrukser=None):
+def generer_svarbrev_til_sag(
+    sag,
+    sagsakter=None,
+    ekstra_instrukser=None,
+    inkluder_kildehenvisninger=False,
+):
     """
     Genererer et komplet udkast til svarbrev baseret på HELE sagspakken
     (høring + klageskema + alle bilag), ikke kun én klage-fil.
+
+    inkluder_kildehenvisninger: bool. Hvis True inkluderer brevet
+        eksplicitte bilag-/lov-/vilkårs-referencer. Default False.
     """
     try:
+        # Byg den korrekte svarbrev-prompt baseret på flaget
+        svarbrev_opgave = byg_svarbrev_opgave(
+            inkluder_kildehenvisninger=inkluder_kildehenvisninger
+        )
         sagsakter_tekst = (sagsakter or "").strip()
         filer = sag.get("filer") or []
 
@@ -1938,7 +2010,7 @@ def generer_svarbrev_til_sag(sag, sagsakter=None, ekstra_instrukser=None):
                 f"{ekstra_instrukser.strip()}\n"
             )
 
-        slutning = sagsakter_blok + ekstra + SVARBREV_OPGAVE
+        slutning = sagsakter_blok + ekstra + svarbrev_opgave
 
         user_content = _byg_sag_content(sag, indled, slutning)
 
