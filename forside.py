@@ -1177,8 +1177,13 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
                 f"{len(sprunget_over)} filer var allerede i databasen."
             )
 
+    # Force rerun straks efter scan så hero-sektionen forsvinder og UI'et
+    # skifter rent over i active state — uden den "transitions-flicker"
+    # hvor hero + grøn bar + loading vises samtidigt.
+    st.rerun()
 
-# Empty state: stor hero-sektion med cream/peach-baggrund (Apple Health palette)
+
+# Empty state: stor hero-sektion med Apple Health-lavendel-baggrund
 _har_aktiv_sag = bool(st.session_state.get("aktuel_sag"))
 
 if not _har_aktiv_sag:
@@ -1190,7 +1195,7 @@ if not _har_aktiv_sag:
         st.markdown(
             """
             <div style="
-                background: linear-gradient(135deg, #FDEFD7 0%, #FDF6E6 100%);
+                background: linear-gradient(135deg, #EEEAFF 0%, #F4F1FF 100%);
                 padding: 1.75rem 1.75rem;
                 border-radius: 20px;
                 min-height: 220px;
@@ -1207,13 +1212,13 @@ if not _har_aktiv_sag:
                     color: #1F2937;
                     margin: 0 0 0.5rem 0;
                 ">
-                    Analysér en sag fra <span style="color: #92400E;">Pakkerejse-Ankenævnet</span>
+                    Analysér en sag fra <span style="color: #4F46E5;">Pakkerejse-Ankenævnet</span>
                 </h1>
                 <p style="
                     font-family: 'Inter', sans-serif;
                     font-size: 0.95rem;
                     line-height: 1.45;
-                    color: #374151;
+                    color: #4B5563;
                     margin: 0;
                     font-weight: 400;
                 ">
@@ -1323,6 +1328,11 @@ if st.session_state.get("aktuel_sag"):
     filer = sag.get("filer") or []
     antal_tekst = sum(1 for f in filer if f["type"] == "tekst")
     antal_scannet = sum(1 for f in filer if f["type"] == "pdf_bytes")
+
+    # Lille mellemrum så success-baren aldrig klistrer op mod hero-sektion
+    # eller upload-feltet ovenfor — også hvis Streamlit ikke når at rerunne
+    # før success-baren rendres.
+    st.markdown("<div style='height: 12px'></div>", unsafe_allow_html=True)
 
     kol1, kol2 = st.columns([4, 1])
     with kol1:
