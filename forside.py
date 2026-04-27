@@ -2022,73 +2022,97 @@ if st.session_state.get("aktuel_sag"):
         if "anon_resultater_per_fil" not in st.session_state:
             st.session_state.anon_resultater_per_fil = {}
 
-        # ---------- CHECKBOX-LISTE ----------
-        st.markdown("**Vælg de bilag du ønsker at anonymisere:**")
+        # ---------- CHECKBOX-LISTE (i form, så siden ikke scroller) ----------
+        # KRITISK: vi wrapper checkboxes + submit-knap i en st.form.
+        # Uden form'en re-runner Streamlit hele siden hver gang
+        # brugeren klikker en checkbox — og siden scroller dermed tilbage
+        # til toppen. Brugere oplever det som om "alt forsvinder", fordi
+        # anonymiserings-sektionen ligger langt nede på en lang side.
+        # Med form'en batch'es alle checkbox-klik, og siden re-runs kun
+        # når "Anonymisér valgte" trykkes.
+        with st.form("anonymisering_valg_form"):
+            st.markdown("**Vælg de bilag du ønsker at anonymisere:**")
 
-        _valgte_filnavne = []
-        for i, fil in enumerate(_anon_kandidater):
-            filnavn = fil.get("filnavn", f"fil{i}")
-            kilde_label = "Sagsakt" if fil.get("_kilde") == "sagsakt" else "Sag"
-            rolle_label = (fil.get("rolle") or "").replace("_", " ")
+            _valgte_filnavne_inputs = {}  # filnavn → checkbox-key
+            for i, fil in enumerate(_anon_kandidater):
+                filnavn = fil.get("filnavn", f"fil{i}")
+                kilde_label = (
+                    "Sagsakt" if fil.get("_kilde") == "sagsakt" else "Sag"
+                )
+                rolle_label = (fil.get("rolle") or "").replace("_", " ")
 
-            kol_cb, kol_meta, kol_status = st.columns([5, 2, 3])
+                kol_cb, kol_meta, kol_status = st.columns([5, 2, 3])
 
-            with kol_cb:
-                if _kan_anonymiseres(fil):
-                    checked = st.checkbox(
-                        filnavn,
-                        key=f"anon_valg_{i}_{filnavn}",
-                    )
-                    if checked:
-                        _valgte_filnavne.append(filnavn)
-                else:
+                with kol_cb:
+                    if _kan_anonymiseres(fil):
+                        cb_key = f"anon_valg_{i}_{filnavn}"
+                        st.checkbox(filnavn, key=cb_key)
+                        _valgte_filnavne_inputs[filnavn] = cb_key
+                    else:
+                        st.markdown(
+                            f"<span style='color:rgba(100,116,139,0.75);"
+                            f"font-size:0.92rem;'>☐ {filnavn}</span>",
+                            unsafe_allow_html=True,
+                        )
+
+                with kol_meta:
                     st.markdown(
-                        f"<span style='color:rgba(100,116,139,0.75);"
-                        f"font-size:0.92rem;'>☐ {filnavn}</span>",
+                        f"<span style='color:rgba(100,116,139,0.8);"
+                        f"font-size:0.8rem;'>{kilde_label}"
+                        + (
+                            f" · {rolle_label}"
+                            if rolle_label and rolle_label != "ukendt"
+                            else ""
+                        )
+                        + "</span>",
                         unsafe_allow_html=True,
                     )
 
-            with kol_meta:
-                st.markdown(
-                    f"<span style='color:rgba(100,116,139,0.8);"
-                    f"font-size:0.8rem;'>{kilde_label}"
-                    + (f" · {rolle_label}" if rolle_label and rolle_label != "ukendt" else "")
-                    + "</span>",
-                    unsafe_allow_html=True,
+                with kol_status:
+                    if filnavn in st.session_state.anon_resultater_per_fil:
+                        res = st.session_state.anon_resultater_per_fil[filnavn]
+                        if res.get("status") == "ok":
+                            st.markdown(
+                                "<span style='color:#15803D;font-size:0.82rem;"
+                                "font-weight:500;'>✓ Anonymiseret</span>",
+                                unsafe_allow_html=True,
+                            )
+                        elif res.get("status") == "fejl":
+                            st.markdown(
+                                "<span style='color:#B91C1C;"
+                                "font-size:0.82rem;'>Fejl</span>",
+                                unsafe_allow_html=True,
+                            )
+                    elif not _kan_anonymiseres(fil):
+                        st.markdown(
+                            f"<span style='color:rgba(100,116,139,0.7);"
+                            f"font-size:0.78rem;font-style:italic;'>"
+                            f"{_hvorfor_ikke(fil)}</span>",
+                            unsafe_allow_html=True,
+                        )
+
+            # Submit-knap inde i form'en — udløser anonymisering
+            kol_btn1, _kol_btn2 = st.columns([2, 5])
+            with kol_btn1:
+                _anon_submitted = st.form_submit_button(
+                    "Anonymisér valgte",
+                    type="primary",
                 )
 
-            with kol_status:
-                if filnavn in st.session_state.anon_resultater_per_fil:
-                    res = st.session_state.anon_resultater_per_fil[filnavn]
-                    if res.get("status") == "ok":
-                        st.markdown(
-                            "<span style='color:#15803D;font-size:0.82rem;"
-                            "font-weight:500;'>✓ Anonymiseret</span>",
-                            unsafe_allow_html=True,
-                        )
-                    elif res.get("status") == "fejl":
-                        st.markdown(
-                            "<span style='color:#B91C1C;font-size:0.82rem;'>Fejl</span>",
-                            unsafe_allow_html=True,
-                        )
-                elif not _kan_anonymiseres(fil):
-                    st.markdown(
-                        f"<span style='color:rgba(100,116,139,0.7);"
-                        f"font-size:0.78rem;font-style:italic;'>"
-                        f"{_hvorfor_ikke(fil)}</span>",
-                        unsafe_allow_html=True,
-                    )
+        # Saml valgte filnavne baseret på session_state (sat når form
+        # submittes — på det tidspunkt har Streamlit opdateret state)
+        _valgte_filnavne = [
+            fn for fn, key in _valgte_filnavne_inputs.items()
+            if st.session_state.get(key)
+        ]
 
-        # ---------- KNAP: ANONYMISÉR VALGTE ----------
-        kol_btn1, kol_btn2 = st.columns([2, 5])
-        with kol_btn1:
-            anon_disabled = len(_valgte_filnavne) == 0
-            if st.button(
-                f"Anonymisér {len(_valgte_filnavne)} valgte" if not anon_disabled else "Anonymisér valgte",
-                type="primary",
-                disabled=anon_disabled,
-                key="anon_start_knap",
-            ):
+        if _anon_submitted:
+            if not _valgte_filnavne:
+                st.warning(
+                    "Vælg mindst én fil at anonymisere — sæt et flueben "
+                    "før du klikker."
+                )
+            else:
                 # Byg liste af fil-dicts der matcher filnavnene
                 valgte_filer = [
                     fil for fil in _anon_kandidater
@@ -2120,12 +2144,22 @@ if st.session_state.get("aktuel_sag"):
                         nye_resultater = []
 
                 # Flet ind i den persistente map, så tidligere resultater
-                # bevares hvis de ikke er blevet genkørt nu
+                # bevares hvis de ikke er blevet genkørt nu. Vi husker
+                # også HVILKE filer der lige nu blev anonymiseret, så vi
+                # kan vise dem åbne (expanded=True) i resultat-sektionen
+                # nedenunder — i stedet for at scrolle siden til toppen
+                # via st.rerun() (som tidligere fik brugere til at tro,
+                # at alt var forsvundet).
+                netop_anonymiserede_filnavne = []
                 for r in nye_resultater:
                     st.session_state.anon_resultater_per_fil[r["filnavn"]] = r
+                    netop_anonymiserede_filnavne.append(r["filnavn"])
 
-                if nye_resultater:
-                    st.rerun()
+                # Gem flag i session state så vi i resultat-loopet kan
+                # se hvilke filer der skal vises åbne
+                st.session_state["_netop_anonymiserede"] = (
+                    netop_anonymiserede_filnavne
+                )
 
         # ---------- RESULTAT-BOKSE ----------
         resultater_map = st.session_state.anon_resultater_per_fil
@@ -2133,6 +2167,20 @@ if st.session_state.get("aktuel_sag"):
 
         if færdige:
             st.markdown("---")
+
+            # Hvis brugeren lige har anonymiseret, vis prominent
+            # success-besked — i stedet for at lade dem gætte, at det
+            # virkede.
+            netop_anonymiserede = st.session_state.get(
+                "_netop_anonymiserede", []
+            )
+            if netop_anonymiserede:
+                st.success(
+                    f"✓ {len(netop_anonymiserede)} bilag er anonymiseret. "
+                    "Gennemgå indholdet nedenunder og download som Word "
+                    "eller PDF når du er tilfreds."
+                )
+
             st.markdown("**Anonymiserede bilag — klar til download:**")
             st.caption(
                 "Tjek resultatet manuelt før du sender til Nævnet. "
@@ -2141,8 +2189,16 @@ if st.session_state.get("aktuel_sag"):
 
             for r in færdige:
                 fn_base = r["filnavn"].rsplit(".", 1)[0]
+                # Åbn expanderen hvis denne fil lige blev anonymiseret —
+                # så brugeren straks kan se og downloade resultatet.
+                _er_netop_anonymiseret = (
+                    r["filnavn"] in netop_anonymiserede
+                )
 
-                with st.expander(f"✓ {r['filnavn']}  —  {r['bemaerkning']}", expanded=False):
+                with st.expander(
+                    f"✓ {r['filnavn']}  —  {r['bemaerkning']}",
+                    expanded=_er_netop_anonymiseret,
+                ):
                     st.text_area(
                         "Anonymiseret indhold",
                         value=r["anonymiseret_tekst"],
