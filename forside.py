@@ -1134,6 +1134,50 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ---------- HJÆLPER: Scan og gem filer ----------
+# Defineres her så både empty-state-knappen (inde i _kol_upload) og
+# active-state-knappen (efter columns) kan kalde samme logik uden
+# kode-duplikation.
+def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
+    """Læs uploadede filer, gem i database, opdatér session state.
+    Kaldes når brugeren trykker Scan filer / Opdatér filer."""
+    with st.spinner(f"Læser {len(uploadede_filer)} filer..."):
+        sag_data = laes_sag_fra_filer(uploadede_filer)
+        st.session_state.aktuel_sag = sag_data
+        st.session_state.sidste_sagsfil_signatur = ny_signatur
+        st.session_state.sidste_klage_filnavn = None  # reset legacy
+
+        # Auto-gem hver fil i databasen (dokumenttype='klage')
+        gemt_nu = []
+        sprunget_over = []
+        for fil in sag_data.get("filer", []):
+            if sag_findes(fil["filnavn"]):
+                sprunget_over.append(fil["filnavn"])
+                continue
+            if fil["type"] == "tekst" and fil.get("tekst", "").strip():
+                emb = embed_dokument(fil["tekst"])
+                gem_sag_i_db(
+                    fil["filnavn"], fil["tekst"],
+                    dokumenttype="klage", embedding=emb,
+                )
+            else:
+                # Scannet PDF — gem placeholder
+                gem_sag_i_db(
+                    fil["filnavn"],
+                    f"[Scannet sagsbilag — analyseres via vision. "
+                    f"Filnavn: {fil['filnavn']}]",
+                    dokumenttype="klage",
+                )
+            gemt_nu.append(fil["filnavn"])
+
+        if gemt_nu:
+            st.toast(f"{len(gemt_nu)} filer gemt i vidensbanken.")
+        if sprunget_over:
+            st.toast(
+                f"{len(sprunget_over)} filer var allerede i databasen."
+            )
+
+
 # Empty state: stor hero-sektion med cream/peach-baggrund (Apple Health palette)
 _har_aktiv_sag = bool(st.session_state.get("aktuel_sag"))
 
@@ -1194,6 +1238,38 @@ if not _har_aktiv_sag:
                 "vælges samtidigt."
             ),
         )
+
+        # Scan-knappen placeres direkte i upload-kolonnen så den sidder
+        # umiddelbart under upload-feltet — flugtende med hero-boksen
+        # til venstre. Knappen vises kun når der er nye/ændrede filer.
+        _aktuel_sig_inline = tuple(sorted(
+            (f.name, f.size) for f in uploadede_sagsfiler or []
+        ))
+        _sidste_sig_inline = st.session_state.get(
+            "sidste_sagsfil_signatur"
+        )
+        if (
+            uploadede_sagsfiler
+            and _aktuel_sig_inline != _sidste_sig_inline
+        ):
+            _knap_tekst_inline = (
+                "Opdatér filer"
+                if _sidste_sig_inline is not None
+                else "Scan filer"
+            )
+            if st.button(
+                _knap_tekst_inline,
+                type="primary",
+                use_container_width=True,
+                key="scan_filer_btn_inline",
+                help=(
+                    "Klik når du er klar — først da læses filerne og "
+                    "analysen starter. Du kan uploade flere filer først."
+                ),
+            ):
+                _udfor_scan_filer_og_gem(
+                    uploadede_sagsfiler, _aktuel_sig_inline
+                )
 else:
     uploadede_sagsfiler = st.file_uploader(
         "Upload sagsfilerne",
@@ -1217,14 +1293,10 @@ _har_uskannede_aendringer = (
 )
 _har_scannet_filer_foer = _sidste_scannet_signatur is not None
 
-# Vis "Scan filer"/"Opdatér filer"-knap KUN når der er noget nyt at
-# scanne. Knappens tekst skifter alt efter, om det er første scan eller
-# en opdatering af en eksisterende sag.
-#
-# Knappen placeres i en smal venstre-kolonne (ca. 1/4 bredde), så den
-# står som en kompakt action-knap lige under upload-feltet — i stedet
-# for at strække sig på tværs af hele siden som en bjælke.
-if _har_uskannede_aendringer:
+# I aktiv-state (efter første scan, hvor brugeren tilføjer flere
+# filer) vises knappen som en kompakt knap i en smal kolonne. Det er
+# IKKE i empty-state — der vises knappen inde i _kol_upload ovenfor.
+if _har_uskannede_aendringer and _har_aktiv_sag:
     _knap_tekst = (
         "Opdatér filer" if _har_scannet_filer_foer else "Scan filer"
     )
@@ -1241,42 +1313,9 @@ if _har_uskannede_aendringer:
             ),
         )
     if _knap_klik:
-        with st.spinner(f"Læser {len(uploadede_sagsfiler)} filer..."):
-            sag_data = laes_sag_fra_filer(uploadede_sagsfiler)
-            st.session_state.aktuel_sag = sag_data
-            st.session_state.sidste_sagsfil_signatur = (
-                _aktuel_sagsfiler_signatur
-            )
-            st.session_state.sidste_klage_filnavn = None  # reset legacy
-
-            # Auto-gem hver fil i databasen (dokumenttype='klage')
-            gemt_nu = []
-            sprunget_over = []
-            for fil in sag_data.get("filer", []):
-                if sag_findes(fil["filnavn"]):
-                    sprunget_over.append(fil["filnavn"])
-                    continue
-                if fil["type"] == "tekst" and fil.get("tekst", "").strip():
-                    emb = embed_dokument(fil["tekst"])
-                    gem_sag_i_db(
-                        fil["filnavn"], fil["tekst"],
-                        dokumenttype="klage", embedding=emb,
-                    )
-                else:
-                    # Scannet PDF — gem placeholder
-                    gem_sag_i_db(
-                        fil["filnavn"],
-                        f"[Scannet sagsbilag — analyseres via vision. Filnavn: {fil['filnavn']}]",
-                        dokumenttype="klage",
-                    )
-                gemt_nu.append(fil["filnavn"])
-
-            if gemt_nu:
-                st.toast(f"{len(gemt_nu)} filer gemt i vidensbanken.")
-            if sprunget_over:
-                st.toast(
-                    f"{len(sprunget_over)} filer var allerede i databasen."
-                )
+        _udfor_scan_filer_og_gem(
+            uploadede_sagsfiler, _aktuel_sagsfiler_signatur
+        )
 
 # Knap til at rydde sagen
 if st.session_state.get("aktuel_sag"):
