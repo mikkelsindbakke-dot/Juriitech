@@ -532,10 +532,16 @@ REGLER DU SKAL FØLGE:
 
 4. BIPERSONER (medrejsende der ikke selv er klager — ægtefælle,
    børn, venner, rejseledsagere):
-   - Navne → "B1", "B2", "B3" osv. (samme person → samme kode)
-   - CPR/personlige numre → fjernes
-   - Følsomme oplysninger (helbred, religion, etc.) → fjernes helt
-     med mindre de er centrale for sagen
+   - Navne BEVARES (samme behandling som klager — bipersoner
+     anonymiseres IKKE i bilag, kun i svarbrevet)
+   - "Min kone Anne" → "Min kone Anne" (uændret)
+   - "Mine børn Jonas og Sofie var med" → uændret
+   - "Min ven Peter Hansen" → uændret
+   - MEN følgende fjernes ALTID — også for bipersoner:
+     • CPR-numre → "[CPR fjernet]"
+     • Bankoplysninger / kontonumre → "[bankoplysninger fjernet]"
+     • Følsomme helbreds-/religiøse/etniske oplysninger der IKKE
+       er nødvendige for sagen → fjernes helt
 
 5. OPLYSNINGER DER ALTID BEVARES (relevante for sagens afgørelse):
    - Hotelnavne, feriedestinationer, byer, lande, lufthavne
