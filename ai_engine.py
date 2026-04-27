@@ -964,13 +964,29 @@ Brevet starter med PRÆCIS denne ene sætning:
 Ingen "Til: Pakkerejse-Ankenævnet"-header, ingen "Vedr."-linje, ingen
 sagsnummer-linje, ingen lange standard-introer som "har modtaget
 Ankenævnets høring af [dato] vedrørende ovennævnte klage". Den ene
-sætning ovenfor er HELE indledningen. Derefter direkte ind i
-argumentationen.
+sætning ovenfor er HELE indledningen.
 
-INKLUDÉR IKKE en standard-opsummering af klagers krav i kroner og ører
-(fx "Det opdaterede krav udgør herefter X DKK, subsidiært Y DKK..."). Hvis
-specifikke beløb er relevante for argumentationen, kan de indgå
-løbende i teksten — men ikke som en samlet krav-sammenfatning.
+OBLIGATORISK FAKTUM-AFSNIT (kommer LIGE EFTER indledningen):
+Direkte efter indledningen skal brevet have et kort, faktuelt
+oversigts-afsnit (3-6 sætninger) der præsenterer sagens basale rammer
+— uden argumentation. Dette afsnit MÅ IKKE udelades. Inkludér:
+  • Klagers booking/rejse: hotel-navn og destination (by, land)
+  • Udrejse- og hjemrejse-dato (eller rejseperiode)
+  • Antal rejsende
+  • Rejsens samlede pris
+  • Eventuel allerede udbetalt kompensation (med beløb)
+Eksempel-formulering:
+  "Klager rejste den X. juni 2025 til [Hotel-navn], [Destination, Land],
+  med hjemrejse den Y. juni 2025. Rejsen omfattede [N] rejsende og havde
+  en samlet pris på [beløb] kr. {REJSESELSKAB_NAVN} har forud for
+  nævnsbehandlingen udbetalt [beløb] kr. i kompensation."
+Dette afsnit giver Nævnet en hurtig grundforståelse af sagen, før
+argumentationen starter. UDEN det er brevet sværere at læse.
+
+INKLUDÉR IKKE en standard-opsummering af klagers samlede krav i kroner
+og ører (fx "Det opdaterede krav udgør herefter X DKK, subsidiært
+Y DKK..."). Hvis specifikke beløb er relevante for argumentationen, kan
+de indgå løbende i teksten — men ikke som en samlet krav-sammenfatning.
 
 UNDLAD bevidst at citere tidligere afgørelser fra Nævnet — det forventes
 ikke i rejsearrangørens svar og gør brevet for detaljeret.
@@ -983,8 +999,18 @@ UNDLAD også alt der lyder for 'domstolsagtigt':
 
 TERMINOLOGI — brug disse konsekvent:
   • Rejseselskabet omtales ALTID som "{REJSESELSKAB_NAVN}" — aldrig "rejseselskabet", "vi", "rejsearrangøren" eller lignende.
-  • Klageren omtales ALTID som "Klager" — uanset om der er én, to eller flere klagere. ALDRIG "Klager 1", "Klager 2" — kun "Klager".
+  • Klageren omtales ALTID som "klager" med LILLE k — det er en titel/funktion, ikke et navn. Brug stort K KUN i begyndelsen af en sætning. Aldrig "Klager 1", "Klager 2" — kun "klager", uanset hvor mange der er.
   • Underskriftslinje/afsender skal altid være "{REJSESELSKAB_SAGSBEHANDLER}" — aldrig "[Navn på sagsbehandler]" eller personnavne.
+
+KRITISK — ALLE KLAGEPUNKTER SKAL ADRESSERES:
+Du SKAL identificere og adressere HVERT ENESTE klagepunkt klager rejser
+mod {REJSESELSKAB_NAVN} — uden undtagelse. Læs klagen og bilagene TO
+GANGE og kryds hvert klagepunkt af, før du skriver. Hvis klager nævner
+8 forskellige problemer, skal alle 8 adresseres i brevet — ikke kun
+de 4 'vigtigste'. At udelade et klagepunkt giver Nævnet indtryk af at
+{REJSESELSKAB_NAVN} ignorerer klager. Adressér også de 'små' punkter
+(fx kommunikation, ventetider, tone) — de kan kort behandles, men de
+SKAL behandles.
 
 ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
 Svarbrevet til Nævnet MÅ UNDER INGEN OMSTÆNDIGHEDER indeholde klagerens
@@ -993,7 +1019,7 @@ efternavn, heller ikke i overskrifter, indledning, underskrift,
 bilagshenvisninger, citater, e-mails eller andre steder. Følg disse
 regler konsekvent i HELE brevet:
 
-  • Klager: ALTID "Klager" (uanset hvor mange klagere — aldrig "Klager 1" eller "Klager 2")
+  • klager: ALTID "klager" med lille k (uanset hvor mange klagere — aldrig "Klager 1" eller "Klager 2"). Stort K kun ved sætningsstart.
   • {REJSESELSKAB_NAVN}s medarbejdere: omtales ikke ved navn — skriv i stedet "{REJSESELSKAB_SAGSBEHANDLER}" eller "{REJSESELSKAB_NAVN}"
   • Bipersoner (medrejsende ægtefælle, børn, rejseledsagere): "medrejsende" eller "Biperson 1", "Biperson 2"
   • Guider, hotelpersonale: "guiden", "hotelpersonalet" — ingen navne
@@ -1006,23 +1032,31 @@ regler konsekvent i HELE brevet:
   • Bankoplysninger/kontonumre → '[bankoplysninger fjernet]'
 
 Hvis klagen eller sagsakterne indeholder klagerens navn, SKAL du selv
-anonymisere det — omskriv citater så navnet er erstattet med "Klager".
+anonymisere det — omskriv citater så navnet er erstattet med "klager".
 
 Hotelnavne, destinationer, lufthavne, rejsedatoer, beløb og klagepunkter
 bevares (de er nødvendige for sagens afgørelse).
 
 STRUKTUR:
-Brevet består af to dele — UDEN nummererede sektion-overskrifter:
+Brevet består af tre dele — UDEN nummererede sektion-overskrifter:
 
 DEL 1 — INDLEDNING (én sætning):
   "{REJSESELSKAB_NAVN} vil hermed komme med sine bemærkninger samt bilag til sagen."
 
-DEL 2 — JURIDISK VURDERING (brevets hoveddel):
-Det eneste reelle argumenterende afsnit. Brug emne-overskrifter til
-at strukturere de enkelte klagepunkter (fx "Afstandsoplysninger og
-markedsføring", "Transfer ved ankomst", "Poolens tilstand", "Udflugterne")
-— men IKKE generiske rammeoverskrifter som "1. Indledning" eller
-"2. Juridisk vurdering".
+DEL 2 — FAKTUM-OVERSIGT (3-6 sætninger):
+Kort, neutralt afsnit med rejse-grundoplysninger som beskrevet ovenfor
+(hotel, destination, datoer, antal, pris, evt. allerede udbetalt
+kompensation).
+
+DEL 3 — JURIDISK VURDERING (brevets hoveddel):
+Det eneste argumenterende afsnit. Brug emne-overskrifter til at
+strukturere de enkelte klagepunkter (fx "Afstandsoplysninger og
+markedsføring", "Transfer ved ankomst", "Poolens tilstand",
+"Udflugterne") — men IKKE generiske rammeoverskrifter som
+"1. Indledning" eller "2. Juridisk vurdering".
+
+ÉN emne-overskrift PER klagepunkt — adressér ALLE klagers
+klagepunkter, ingen undtagelser.
 
 For hver emne-overskrift:
   - Indled med kort faktum-grundlag (1-3 sætninger).
@@ -1037,12 +1071,15 @@ Afslut hele brevet med "Med venlig hilsen" og
 
 STRENGE KRAV:
 - Max 1-2 A4-sider samlet. Hvis du er i tvivl, skriv kortere.
+- ALLE klagepunkter skal adresseres — tæl dem i klagen og sørg for at
+  hvert ét har sin egen behandling i brevet.
+- Faktum-oversigten må IKKE udelades.
 - Opfind ALDRIG fakta der ikke står i klagen, sagsakterne eller vidensbanken.
 - Skriv på dansk i et formelt, professionelt juridisk sprog.
 - Hvis en oplysning mangler der er nødvendig, skriv "[SAGSBEHANDLER UDFYLDER: ...]" som placeholder.
-- Brug "{REJSESELSKAB_NAVN}" og "Klager" konsekvent. Aldrig "rejseselskabet", "K", "Klager 1" eller "Klager 2".
+- Brug "{REJSESELSKAB_NAVN}" og "klager" (lille k) konsekvent. Aldrig "rejseselskabet", "K", "Klager 1" eller "Klager 2".
 - Underskriftslinjen skal altid være "{REJSESELSKAB_SAGSBEHANDLER}".
-- Tjek brevet igennem til sidst: ingen personnavne, ingen sektion-numre, ingen "domstols"-formuleringer, ingen "Til:"-headers.
+- Tjek brevet igennem til sidst: ingen personnavne, ingen sektion-numre, ingen "domstols"-formuleringer, ingen "Til:"-headers, faktum-oversigt med, alle klagepunkter adresseret.
 """
 
 
@@ -1185,9 +1222,10 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
             "klagerens navn og personhenførbare oplysninger MÅ IKKE stå "
             "noget sted.\n\n"
             "REGLER:\n"
-            "- Personnavne på klager → erstat med 'Klager' (uanset om der "
-            "er én, to eller flere klagere — brug ALTID kun 'Klager', "
-            "ALDRIG 'Klager 1' eller 'Klager 2')\n"
+            "- Personnavne på klager → erstat med 'klager' med LILLE k "
+            "(uanset om der er én, to eller flere klagere — brug ALTID "
+            "kun 'klager', ALDRIG 'Klager 1' eller 'Klager 2'). Stort K "
+            "kun ved sætningsstart.\n"
             f"- Personnavne på {REJSESELSKAB_NAVN}s medarbejdere → omtales "
             f"ikke ved navn. Skriv i stedet '{REJSESELSKAB_SAGSBEHANDLER}' "
             f"eller '{REJSESELSKAB_NAVN}'\n"
@@ -1497,7 +1535,11 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         "}\n\n"
         "KRAV:\n"
         "- emne: 1-2 sætninger på dansk. Konkret, ikke generisk.\n"
-        "- klagepunkter: 3-6 bullet points, max ~15 ord hver.\n"
+        "- klagepunkter: KRITISK — du SKAL inkludere ALLE klagepunkter "
+        "  klager rejser mod TUI, uanset hvor mange der er. Det er IKKE "
+        "  nok at finde 3-6 'vigtigste'. Hvis klager nævner 8 forskellige "
+        "  problemer, skal alle 8 stå på listen. Tag IKKE genvej. Hvert "
+        "  punkt: max ~15 ord.\n"
         "- krav: skal indeholde beløb når de fremgår (fx '18.500 kr. i kompensation').\n"
         "- tui_handtering: ærlig og kort. Hvis det ikke fremgår skriv 'fremgår ikke af bilagene'.\n"
         "- forventet_udfald: ULTRAKORT — max 15 ord. Formater som én linje med det sandsynlige udfald og beløb.\n"
