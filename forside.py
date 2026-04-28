@@ -58,6 +58,16 @@ if not ER_ADMIN:
         /* Skjul Streamlits default hamburger-menu, del-/rapportér-ikoner */
         #MainMenu {visibility: hidden !important;}
         [data-testid="stToolbar"] {visibility: hidden !important;}
+        /* MEN: behold sidebar-collapse/expand-knappen synlig saa
+           brugeren kan aabne menuen igen efter at have lukket den */
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapsedControl"],
+        button[kind="headerNoPadding"] {
+            visibility: visible !important;
+            display: flex !important;
+            opacity: 1 !important;
+        }
         [data-testid="stDeployButton"] {display: none !important;}
         /* Skjul "Made with Streamlit"-footer */
         footer {visibility: hidden !important;}

@@ -34,6 +34,16 @@ if not ER_ADMIN:
         <style>
         #MainMenu {visibility: hidden !important;}
         [data-testid="stToolbar"] {visibility: hidden !important;}
+        /* MEN: behold sidebar-collapse/expand-knappen synlig saa
+           brugeren kan aabne menuen igen efter at have lukket den */
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapsedControl"],
+        button[kind="headerNoPadding"] {
+            visibility: visible !important;
+            display: flex !important;
+            opacity: 1 !important;
+        }
         [data-testid="stDeployButton"] {display: none !important;}
         footer {visibility: hidden !important;}
         .viewerBadge_container__1QSob { display: none !important; }
@@ -355,6 +365,7 @@ with kol_udfald:
             "Afvist (TUI vinder)",
         ],
         default=[],
+        placeholder="Vælg udfald...",
         help=(
             "Filter på Nævnets udfald (kun for afgørelser). "
             "Tomt = vis alle udfald."

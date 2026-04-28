@@ -20,6 +20,14 @@ if not ER_ADMIN:
         <style>
         #MainMenu {visibility: hidden !important;}
         [data-testid="stToolbar"] {visibility: hidden !important;}
+        [data-testid="collapsedControl"],
+        [data-testid="stSidebarCollapseButton"],
+        [data-testid="stSidebarCollapsedControl"],
+        button[kind="headerNoPadding"] {
+            visibility: visible !important;
+            display: flex !important;
+            opacity: 1 !important;
+        }
         [data-testid="stDeployButton"] {display: none !important;}
         footer {visibility: hidden !important;}
         .viewerBadge_container__1QSob { display: none !important; }
