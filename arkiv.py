@@ -1,13 +1,27 @@
 """
-Arkiv-side: stikordssøgning gennem alle tidligere klager, afgørelser og vilkår
-der ligger i vidensbanken. Med badges, filter og vector-similarity-boost.
+Arkiv-side: avanceret søgning gennem alle tidligere afgørelser, klager
+og vilkår i vidensbanken.
+
+Funktioner:
+  - Hybrid søgning (kombinerer stikord + semantik for bedst muligt resultat)
+  - Filter på dokumenttype, udfald og dato
+  - Resultatkort med prominent visning af udfald, dato og match-%
+  - "Find lignende"-knap der bruger en sag som søgegrundlag
 """
+
+import re
+from datetime import datetime, timedelta
 
 import streamlit as st
 
 from database import soeg_i_arkiv, find_relevante_sager
 from embeddings import embed_sporgsmaal
-from badges import badge, doktype_badge, udfalds_badge_fra_tekst, udled_afgoerelsesdato
+from badges import (
+    badge,
+    doktype_badge,
+    udfalds_badge_fra_tekst,
+    udled_afgoerelsesdato,
+)
 
 
 # Admin-flag sat af app.py
@@ -89,7 +103,7 @@ st.markdown(
     }
     .main .block-container {
         padding-top: 3rem !important;
-        max-width: 1000px !important;
+        max-width: 1100px !important;
     }
     [data-testid="stVerticalBlockBorderWrapper"] {
         border-radius: 10px !important;
@@ -114,50 +128,263 @@ st.markdown(
     .badge-blue   { background: rgba(59, 130, 246, 0.26) !important; color: #172554 !important; }
     .badge-gray   { background: rgba(100, 116, 139, 0.22) !important; color: #1E293B !important; }
     .badge-purple { background: rgba(139, 92, 246, 0.26) !important; color: #3B0764 !important; }
-    /* Dark-mode badge-override fjernet: Streamlit er låst til light-theme,
-       så dark-mode tekstfarverne endte som lys tekst på lys baggrund. */
+    /* Resultat-kort uddrag — let bagrund så det adskiller sig fra meta */
+    .arkiv-uddrag {
+        background: rgba(99, 102, 241, 0.04);
+        border-left: 3px solid rgba(99, 102, 241, 0.3);
+        padding: 10px 14px;
+        margin-top: 10px;
+        border-radius: 6px;
+        font-size: 0.92rem;
+        color: #374151;
+        line-height: 1.55;
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
+# ---------- HJÆLPEFUNKTIONER ----------
+
+def parse_dato(dato_str):
+    """Parser en dato-streng som 'd. 12. juni 2024' eller '12-06-2024' til
+    datetime-objekt. Returnerer None hvis det fejler."""
+    if not dato_str:
+        return None
+    danske_maaneder = {
+        "januar": 1, "februar": 2, "marts": 3, "april": 4,
+        "maj": 5, "juni": 6, "juli": 7, "august": 8,
+        "september": 9, "oktober": 10, "november": 11, "december": 12,
+    }
+    s = dato_str.lower().strip()
+
+    # Format "12. juni 2024" eller "12 juni 2024"
+    m = re.search(
+        r"(\d{1,2})\.?\s*("
+        + "|".join(danske_maaneder.keys())
+        + r")\s+(\d{4})",
+        s,
+    )
+    if m:
+        dag, maaned_navn, aar = m.groups()
+        try:
+            return datetime(
+                int(aar), danske_maaneder[maaned_navn], int(dag)
+            )
+        except (ValueError, KeyError):
+            pass
+
+    # Format "12-06-2024" eller "12/06/2024"
+    m = re.search(r"(\d{1,2})[-/](\d{1,2})[-/](\d{4})", s)
+    if m:
+        dag, maaned, aar = m.groups()
+        try:
+            return datetime(int(aar), int(maaned), int(dag))
+        except ValueError:
+            pass
+
+    return None
+
+
+def overholder_dato_filter(indhold, filnavn, dato_filter):
+    """Tjek om afgørelsen falder inden for det valgte dato-interval."""
+    if dato_filter == "Alle":
+        return True
+
+    dato_str = udled_afgoerelsesdato(indhold, filnavn=filnavn)
+    if not dato_str:
+        # Hvis vi ikke kan udlede dato, vis sagen (bedre at have for meget end for lidt)
+        return True
+
+    dato = parse_dato(dato_str)
+    if not dato:
+        return True
+
+    nu = datetime.now()
+    if dato_filter == "Sidste 6 måneder":
+        return dato >= nu - timedelta(days=180)
+    if dato_filter == "Sidste år":
+        return dato >= nu - timedelta(days=365)
+    if dato_filter == "Sidste 2 år":
+        return dato >= nu - timedelta(days=730)
+    if dato_filter == "Sidste 5 år":
+        return dato >= nu - timedelta(days=1825)
+    return True
+
+
+def overholder_udfald_filter(indhold, dokumenttype, udfald_valgt):
+    """Tjek om afgørelsen passer på de valgte udfald. Hvis intet er valgt,
+    vises alle. Filteret er kun relevant for afgørelser."""
+    if not udfald_valgt:
+        return True
+    # Filteret gælder kun for afgørelser
+    if dokumenttype != "afgoerelse":
+        return True
+    ub = udfalds_badge_fra_tekst(indhold or "")
+    if not ub:
+        # Kunne ikke udlede — udelad fra resultater når filter er aktivt
+        return False
+    udfald_navn = ub[0]
+    # Map til de menneskelige labels
+    if "Fuld medhold" in udfald_navn:
+        return "Fuld medhold til klager" in udfald_valgt
+    if "Delvist" in udfald_navn:
+        return "Delvist medhold" in udfald_valgt
+    if "Afvist" in udfald_navn:
+        return "Afvist (TUI vinder)" in udfald_valgt
+    return False
+
+
+def hybrid_soeg(stikord, doktype, top_k=40):
+    """Kør både stikord-søgning og semantisk søgning, og kombinér
+    resultaterne. Sager der findes af BEGGE metoder rangeres højest.
+
+    Returnerer en liste med de samlede resultater, sorteret efter
+    kombineret score. Hver sag har et 'kombineret_score'-felt der bruges
+    til ranking.
+    """
+    # 1. Stikord-søgning (præcision)
+    stikord_resultater = soeg_i_arkiv(
+        stikord=stikord,
+        dokumenttype=doktype,
+        begraens=top_k,
+    )
+    # 2. Semantisk søgning (recall — finder synonymer/koncepter)
+    semantisk_resultater = []
+    emb = embed_sporgsmaal(stikord)
+    if emb is not None:
+        semantisk_resultater = find_relevante_sager(
+            sporgsmaal_embedding=emb,
+            top_k=top_k,
+            dokumenttype=doktype,
+        )
+
+    # Saml i én dict per filnavn med kombineret score
+    samlet = {}
+    for i, r in enumerate(stikord_resultater):
+        fn = r.get("filnavn", f"_{i}")
+        # Stikord-score: 0.5 til 1.0 baseret på rang (først = højst)
+        stikord_score = 1.0 - (i / max(len(stikord_resultater), 1)) * 0.5
+        samlet[fn] = {
+            **r,
+            "stikord_score": stikord_score,
+            "semantisk_score": 0.0,
+        }
+
+    for r in semantisk_resultater:
+        fn = r.get("filnavn", "")
+        sim = r.get("similarity") or 0.0
+        if fn in samlet:
+            # Sag findes i begge → kombiner
+            samlet[fn]["semantisk_score"] = sim
+        else:
+            # Kun semantisk match
+            samlet[fn] = {
+                **r,
+                "stikord_score": 0.0,
+                "semantisk_score": sim,
+            }
+
+    # Beregn kombineret score: vægter både stikord (præcision) og
+    # semantik (recall). Sager der er stærke på begge får boost.
+    for fn, r in samlet.items():
+        s = r["stikord_score"]
+        sem = r["semantisk_score"]
+        # Hvis begge findes → boost ekstra
+        boost = 0.15 if (s > 0 and sem > 0) else 0.0
+        r["kombineret_score"] = (s * 0.45) + (sem * 0.55) + boost
+
+    # Sortér efter kombineret score
+    return sorted(
+        samlet.values(),
+        key=lambda x: x["kombineret_score"],
+        reverse=True,
+    )
+
+
 # ---------- HOVEDINDHOLD ----------
 st.title("Søg i arkivet")
 st.caption(
-    "Søg gennem alle tidligere afgørelser fra Pakkerejse-Ankenævnet, uploadede "
-    "klager, og TUI's rejsevilkår. Brug søgning med stikord for en præcis "
-    "tekstsøgning, eller skift til semantisk søgning for at finde sager der "
-    "handler om det samme tema, selv hvis ordvalget er anderledes."
+    "Find tidligere afgørelser, klager og vilkår der ligner din nuværende sag. "
+    "Hybrid søgning kombinerer ord-præcision med semantisk relevans, så du finder "
+    "både eksakte ord-matches OG sager der handler om det samme — også med "
+    "anderledes ordvalg."
 )
 
 
-# ---------- SØGE-INPUT ----------
-kol_soeg, kol_filter, kol_mode = st.columns([3, 1.2, 1.2])
+# ---------- HÅNDTÉR "FIND LIGNENDE"-KLIK FRA TIDLIGERE SØGNING ----------
+# Hvis brugeren klikker "Find lignende" på et resultatkort, sætter vi
+# sagens indhold som søgning og kører semantisk for at finde lignende.
+if "_find_lignende_query" in st.session_state:
+    _query_default = st.session_state.pop("_find_lignende_query")
+    _mode_default = "Semantisk"
+else:
+    _query_default = ""
+    _mode_default = "Hybrid (anbefalet)"
 
-with kol_soeg:
-    stikord = st.text_input(
-        "Stikord",
-        placeholder="fx 'forsinket fly' eller 'rengøring hotel'",
-        label_visibility="collapsed",
-    )
 
-with kol_filter:
+# ---------- SØGE-INPUT (række 1) ----------
+stikord = st.text_input(
+    "Søg",
+    value=_query_default,
+    placeholder=(
+        "fx 'pool ikke ren', 'illusorisk opgradering', "
+        "'guide afviste reklamation'"
+    ),
+    label_visibility="collapsed",
+    key="arkiv_soegefelt",
+)
+
+# ---------- FILTRE (række 2 — fire kolonner) ----------
+kol_type, kol_udfald, kol_dato, kol_mode = st.columns([1.2, 1.6, 1.2, 1.2])
+
+with kol_type:
     filter_type = st.selectbox(
         "Dokumenttype",
         options=["Alle", "Afgørelser", "Klager", "Vilkår"],
-        label_visibility="collapsed",
+        help="Begræns søgning til en bestemt type dokument.",
+    )
+
+with kol_udfald:
+    udfald_valgt = st.multiselect(
+        "Udfald",
+        options=[
+            "Fuld medhold til klager",
+            "Delvist medhold",
+            "Afvist (TUI vinder)",
+        ],
+        default=[],
+        help=(
+            "Filter på Nævnets udfald (kun for afgørelser). "
+            "Tomt = vis alle udfald."
+        ),
+    )
+
+with kol_dato:
+    dato_filter = st.selectbox(
+        "Periode",
+        options=[
+            "Alle",
+            "Sidste 6 måneder",
+            "Sidste år",
+            "Sidste 2 år",
+            "Sidste 5 år",
+        ],
+        help="Begræns til afgørelser inden for tidsrum.",
     )
 
 with kol_mode:
     soege_mode = st.selectbox(
         "Søgemetode",
-        options=["Stikord", "Semantisk"],
-        label_visibility="collapsed",
+        options=["Hybrid (anbefalet)", "Stikord", "Semantisk"],
+        index=["Hybrid (anbefalet)", "Stikord", "Semantisk"].index(
+            _mode_default
+        ),
         help=(
-            "Stikord = klassisk tekstsøgning. "
-            "Semantisk = find sager der handler om det samme, også hvis "
-            "ordvalget er anderledes."
+            "Hybrid: kombinerer ord-præcision og semantisk relevans (bedst). "
+            "Stikord: klassisk eksakt tekst-match. "
+            "Semantisk: finder sager om samme tema, også med andre ord."
         ),
     )
 
@@ -173,79 +400,149 @@ doktype = dokumenttype_map.get(filter_type)
 
 # ---------- UDFØR SØGNING ----------
 if stikord and stikord.strip():
-    if soege_mode == "Semantisk":
-        with st.spinner("Søger semantisk i arkivet..."):
+    if soege_mode == "Hybrid (anbefalet)":
+        with st.spinner("Søger hybrid (stikord + semantik)..."):
+            resultater = hybrid_soeg(stikord, doktype, top_k=40)
+    elif soege_mode == "Semantisk":
+        with st.spinner("Søger semantisk..."):
             emb = embed_sporgsmaal(stikord)
             if emb is None:
-                st.error("Kunne ikke generere embedding — prøv igen eller brug stikord-søgning.")
+                st.error(
+                    "Kunne ikke generere embedding — prøv hybrid eller stikord-søgning."
+                )
                 resultater = []
             else:
                 resultater = find_relevante_sager(
                     sporgsmaal_embedding=emb,
-                    top_k=30,
+                    top_k=40,
                     dokumenttype=doktype,
                 )
-    else:
-        with st.spinner("Søger i arkivet..."):
+    else:  # Stikord
+        with st.spinner("Søger med stikord..."):
             resultater = soeg_i_arkiv(
                 stikord=stikord,
                 dokumenttype=doktype,
                 begraens=50,
             )
 else:
-    # Ingen søgning — vis alle seneste
+    # Ingen søgeord — vis seneste
     resultater = soeg_i_arkiv(dokumenttype=doktype, begraens=25)
 
 
+# ---------- POST-SØGE-FILTRE: udfald + dato ----------
+filtreret = []
+for r in resultater:
+    indhold = r.get("indhold") or ""
+    if not overholder_udfald_filter(
+        indhold, r.get("dokumenttype"), udfald_valgt
+    ):
+        continue
+    if not overholder_dato_filter(
+        indhold, r.get("filnavn"), dato_filter
+    ):
+        continue
+    filtreret.append(r)
+
+resultater = filtreret
+
+
 # ---------- RESULTATVISNING ----------
-st.markdown(f"**{len(resultater)} resultater**")
+antal = len(resultater)
+filter_summary = []
+if udfald_valgt:
+    filter_summary.append(f"udfald: {', '.join(udfald_valgt).lower()}")
+if dato_filter != "Alle":
+    filter_summary.append(dato_filter.lower())
+if doktype:
+    filter_summary.append(filter_type.lower())
+
+st.markdown(f"**{antal} resultater**")
+if filter_summary:
+    st.caption("Filtre: " + " · ".join(filter_summary))
 st.divider()
 
 if not resultater:
-    st.info("Ingen resultater. Prøv et andet stikord eller skift søgemetode.")
+    st.info(
+        "Ingen resultater. Prøv et bredere søgeord, fjern et filter, "
+        "eller skift søgemetode."
+    )
 else:
-    for r in resultater:
+    for idx, r in enumerate(resultater):
         with st.container(border=True):
-            # Øverste række: badges og filnavn
+            indhold = r.get("indhold") or ""
+            filnavn = r.get("filnavn", "ukendt")
+            dokumenttype = r.get("dokumenttype") or "afgoerelse"
+
+            # --- Øverste række: badges (doktype + udfald + dato + match) ---
             badges_html = []
-            badges_html.append(doktype_badge(r.get("dokumenttype") or "afgoerelse"))
+            badges_html.append(doktype_badge(dokumenttype))
 
             # Udfaldsbadge (kun for afgørelser)
-            if r.get("dokumenttype") == "afgoerelse":
-                ub = udfalds_badge_fra_tekst(r.get("indhold") or "")
+            if dokumenttype == "afgoerelse":
+                ub = udfalds_badge_fra_tekst(indhold)
                 if ub:
                     badges_html.append(badge(ub[0], ub[1]))
 
-            # Similarity-badge (kun hvis semantisk søgning)
-            if r.get("similarity") is not None:
-                pct = int(r["similarity"] * 100)
-                if pct >= 70:
-                    badges_html.append(badge(f"{pct}% match", "green"))
-                elif pct >= 55:
-                    badges_html.append(badge(f"{pct}% match", "yellow"))
+            # Dato-badge
+            afgoerelses_dato = udled_afgoerelsesdato(
+                indhold, filnavn=filnavn
+            )
+            if afgoerelses_dato:
+                badges_html.append(badge(afgoerelses_dato, "blue"))
+
+            # Match-badge — vis enten kombineret score eller semantisk
+            match_pct = None
+            if r.get("kombineret_score") is not None:
+                match_pct = int(r["kombineret_score"] * 100)
+            elif r.get("similarity") is not None:
+                match_pct = int(r["similarity"] * 100)
+
+            if match_pct is not None:
+                if match_pct >= 70:
+                    badges_html.append(badge(f"{match_pct}% match", "green"))
+                elif match_pct >= 50:
+                    badges_html.append(badge(f"{match_pct}% match", "yellow"))
                 else:
-                    badges_html.append(badge(f"{pct}% match", "gray"))
+                    badges_html.append(badge(f"{match_pct}% match", "gray"))
 
             st.markdown(" ".join(badges_html), unsafe_allow_html=True)
-            st.markdown(f"**{r.get('filnavn', 'ukendt')}**")
 
-            # Afgørelsesdato (udledt fra dokumentets indhold)
-            afgoerelses_dato = udled_afgoerelsesdato(
-                r.get("indhold"),
-                filnavn=r.get("filnavn"),
-            )
-            dato_str = afgoerelses_dato or "dato ikke angivet"
-            meta_linje = f"Afgjort {dato_str}"
+            # --- Filnavn / titel ---
+            st.markdown(f"**{filnavn}**")
+
+            # --- Meta-linje: kilde-link ---
+            meta_dele = []
             if r.get("kilde_url"):
-                meta_linje += f"  ·  [Åbn original]({r['kilde_url']})"
-            st.caption(meta_linje)
+                meta_dele.append(f"[Åbn original]({r['kilde_url']})")
+            if meta_dele:
+                st.caption(" · ".join(meta_dele))
 
-            # Uddrag af indholdet
-            indhold = r.get("indhold") or ""
-            uddrag = indhold[:400] + ("..." if len(indhold) > 400 else "")
+            # --- Uddrag (synligt direkte, ikke skjult i expander) ---
+            uddrag = indhold[:500].strip()
+            if uddrag:
+                if len(indhold) > 500:
+                    uddrag += "…"
+                st.markdown(
+                    f'<div class="arkiv-uddrag">{uddrag}</div>',
+                    unsafe_allow_html=True,
+                )
 
-            with st.expander("Vis uddrag"):
-                st.text(uddrag)
-                if len(indhold) > 400:
-                    with st.expander("Se hele indholdet"):
-                        st.text(indhold)
+            # --- Action-række: "Find lignende" + "Vis fuldt indhold" ---
+            kol_act1, kol_act2, _ = st.columns([1.3, 1.3, 4])
+            with kol_act1:
+                if st.button(
+                    "🔍 Find lignende",
+                    key=f"find_lignende_{idx}_{filnavn}",
+                    help=(
+                        "Brug denne sag som søgegrundlag — find andre "
+                        "sager der semantisk minder om den."
+                    ),
+                ):
+                    # Brug de første 600 tegn af sagen som søgekontekst
+                    st.session_state._find_lignende_query = (
+                        indhold[:600] or filnavn
+                    )
+                    st.rerun()
+            with kol_act2:
+                with st.popover("Vis fuldt indhold"):
+                    st.text(indhold)
