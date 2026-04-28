@@ -1982,34 +1982,105 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
 
     prompt = (
         "Du får nedenfor en NY KLAGESAG (sagsmateriale fra rejseselskabet) og "
-        f"{len(relevante_sager)} TIDLIGERE AFGØRELSER der ligner den nye sag.\n\n"
-        "For hver tidligere afgørelse skal du udlede struktureret metadata og "
-        "forklare kort hvorfor netop den afgørelse ligner den nye sag.\n\n"
+        f"{len(relevante_sager)} TIDLIGERE AFGØRELSER fra Pakkerejse-Ankenævnet "
+        "der EVENTUELT kan være relevante for den nye sag.\n\n"
+        "DIN OPGAVE: For hver tidligere afgørelse skal du (1) udlede "
+        "struktureret metadata, og (2) AFGØRE om den faktisk er JURIDISK "
+        "RELEVANT for den nye sag — eller om matchet kun er overfladisk.\n\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "KRITISK: HVAD ER ET JURIDISK RELEVANT MATCH?\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        "Et match SKAL være baseret på SPECIFIKKE detaljer der har "
+        "RETSANVENDELIG BETYDNING for den nye sag. Det er IKKE nok at "
+        "sagerne ligner hinanden overfladisk.\n\n"
+        "✗ FORBUDTE (overfladiske, irrelevante) ligheder — DISSE GIVER "
+        "IKKE ET MATCH:\n"
+        "  - 'Begge sager involverer en familie' — type af rejsende "
+        "(familie/par/single) har INGEN juridisk betydning\n"
+        "  - 'Begge sager er om et hotel i Grækenland' — destination "
+        "(Grækenland, Tyrkiet, Spanien osv.) har INGEN juridisk betydning\n"
+        "  - 'Begge sager handler om mangler' — 'mangel' er ALT FOR "
+        "BREDT; der findes hundredvis af typer mangler der intet har "
+        "med hinanden at gøre juridisk\n"
+        "  - 'Begge er pakkerejser' — alle Nævn-sager er pakkerejser\n"
+        "  - 'Samme rejsearrangør' — irrelevant medmindre sagen handler "
+        "om en specifik praksis hos den arrangør\n"
+        "  - 'Samme hotel-kategori (3-stjernet, 4-stjernet osv.)' — "
+        "INGEN juridisk betydning\n\n"
+        "✓ KRÆVEDE (specifikke, juridisk relevante) ligheder — KUN "
+        "DISSE TÆLLER SOM ÆGTE MATCH:\n"
+        "  - SAMME KONKRETE MANGEL-TYPE: 'pool-mangel vs pool-mangel', "
+        "'værelses-standard vs værelses-standard', 'ekstrasenge-mangel "
+        "vs ekstrasenge-mangel', 'manglende tilkøbt udflugt vs "
+        "manglende tilkøbt udflugt', 'støj fra nabolag vs støj fra "
+        "nabolag', 'rengøringsmangel vs rengøringsmangel', 'fejlagtige "
+        "afstandsangivelser i markedsføring vs samme'\n"
+        "  - SAMME JURIDISKE SPØRGSMÅL: rettidig reklamation, "
+        "bistandspligt, forholdsmæssigt afslag, illusorisk opgradering, "
+        "manglende guide-respons, hotellets pres ved udtjekning osv.\n"
+        "  - SAMME PARAGRAF eller vilkårspunkt anvendt: § 22 "
+        "(forholdsmæssigt afslag), § 25 (bistandspligt), vilkårenes "
+        "pkt. 5.1 osv.\n"
+        "  - SAMME KONKRETE SITUATION: 'hotellet truede med anholdelse "
+        "ved udtjekning', 'transfer leveret med taxa i stedet for bus', "
+        "'guide afviste reklamation på destinationen', 'illusorisk "
+        "opgradering' osv.\n\n"
+        "TIP TIL HVOR DU FINDER DE KONKRETE MANGLER:\n"
+        "I tidligere afgørelser fra Pakkerejse-Ankenævnet står "
+        "klagepunkterne ofte EKSPLICIT på første side under "
+        "'Klagen angår' eller lignende. Brug DENNE sektion som "
+        "primærkilde til at identificere de konkrete mangler — ikke "
+        "kun det generelle resume.\n\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "ÆRLIGHED VED FALSKE MATCH:\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        "Hvis en tidligere afgørelse KUN har overfladiske ligheder med "
+        "den nye sag (fx samme destination, samme rejsearrangør, samme "
+        "type rejsende — men IKKE samme konkrete mangel-type), SKAL du "
+        "sætte juridisk_relevant_match=false. Det er FAR bedre at "
+        "udelukke en false-positive end at vise jurister vildledende "
+        "matches.\n\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "MATERIALE:\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
         "NY SAG (uddrag af de uploadede filer):\n"
         f"{uploadet_resume}\n\n"
         "TIDLIGERE AFGØRELSER:"
         f"{sager_tekst}\n\n"
-        "OPGAVE:\n"
-        f"Returnér KUN en gyldig JSON-array med præcis {len(relevante_sager)} objekter, "
-        "i nøjagtig samme rækkefølge som afgørelserne ovenfor. Ingen forklaring, "
-        "ingen markdown-blok, intet ud over JSON. Hvert objekt skal have disse nøgler:\n"
-        "  - sagsnummer (string): Nævnets sagsnummer, typisk 'ÅÅ-NNNN' (fx '24-290'). "
-        "Udled fra filnavn eller tekst.\n"
-        "  - titel (string): Kort beskrivende titel på sagens tema — 4-8 danske ord "
-        "(fx 'Navneændring afvist ved check-in' eller 'Forsinket fly pga. vejrlig').\n"
-        "  - rejsearrangoer (string): Navn på rejsearrangøren (fx 'TUI Danmark A/S'). "
-        "IKKE CVR-nummer — udelad det. Hvis ikke nævnt, skriv 'ukendt'.\n"
-        "  - klagers_krav (string): Hvad klageren krævede, fx '12.500 kr.' — eller "
-        "'ukendt' hvis ikke tydeligt i teksten.\n"
-        "  - tilkendt_beloeb (string): Hvad Nævnet tilkendte klageren, fx '4.000 kr.' "
-        "eller '0 kr.' hvis afvist, eller 'ukendt'.\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "OUTPUT-FORMAT:\n"
+        "═══════════════════════════════════════════════════════════════\n\n"
+        f"Returnér KUN en gyldig JSON-array med præcis {len(relevante_sager)} "
+        "objekter, i nøjagtig samme rækkefølge som afgørelserne ovenfor. "
+        "Ingen forklaring, ingen markdown-blok, intet ud over JSON. "
+        "Hvert objekt skal have disse nøgler:\n"
+        "  - sagsnummer (string): Nævnets sagsnummer, typisk 'ÅÅ-NNNN' "
+        "(fx '24-290'). Udled fra filnavn eller tekst.\n"
+        "  - titel (string): Kort beskrivende titel på sagens tema — "
+        "4-8 danske ord (fx 'Pool-mangel og refusion afvist').\n"
+        "  - rejsearrangoer (string): Navn på rejsearrangøren (fx 'TUI "
+        "Danmark A/S'). IKKE CVR-nummer — udelad det. Hvis ikke nævnt, "
+        "skriv 'ukendt'.\n"
+        "  - klagers_krav (string): Hvad klageren krævede, fx '12.500 kr.' "
+        "— eller 'ukendt' hvis ikke tydeligt i teksten.\n"
+        "  - tilkendt_beloeb (string): Hvad Nævnet tilkendte klageren, "
+        "fx '4.000 kr.' eller '0 kr.' hvis afvist, eller 'ukendt'.\n"
         "  - udfald (string): ÉN af disse PRÆCISE værdier: "
-        "'Fuld medhold til klager', 'Delvist medhold', 'Afvist', eller 'Ukendt'.\n"
-        "  - match_begrundelse (array of strings): 2-4 KORTE bullets (6-14 ord hver) "
-        "der forklarer hvorfor netop denne afgørelse ligner den nye sag — fx "
-        "tilsvarende mangel, samme rejsearrangør, tilsvarende faktum, samme "
-        "juridiske grundlag. Vær specifik.\n\n"
-        "VIGTIGT: Returnér intet andet end selve JSON-arrayet. Start med '[' og slut med ']'."
+        "'Fuld medhold til klager', 'Delvist medhold', 'Afvist', eller "
+        "'Ukendt'.\n"
+        "  - juridisk_relevant_match (bool): TRUE hvis sagen har MINIMUM "
+        "ÉN konkret juridisk relevant lighed (specifik mangel-type, "
+        "samme paragraf, samme juridiske spørgsmål). FALSE hvis kun "
+        "overfladiske ligheder (destination, rejsearrangør, "
+        "rejsetype).\n"
+        "  - match_begrundelse (array of strings): 2-4 KORTE bullets "
+        "(6-14 ord hver) der KUN nævner KONKRETE juridisk relevante "
+        "ligheder. INGEN overfladiske observationer. Hvis "
+        "juridisk_relevant_match=false, skriv da én bullet: 'Ingen "
+        "juridisk relevant lighed — kun overfladisk match (fx samme "
+        "destination eller rejsearrangør)'.\n\n"
+        "VIGTIGT: Returnér intet andet end selve JSON-arrayet. Start "
+        "med '[' og slut med ']'."
     )
 
     try:
@@ -2035,6 +2106,19 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
             if not isinstance(item, dict):
                 resultat.append({})
                 continue
+            # juridisk_relevant_match defaulter til True for backward
+            # kompatibilitet — hvis AI'en ikke returnerer feltet, antager
+            # vi at sagen er relevant. Det betyder dog at filteringen i
+            # forside.py kun har effekt når AI'en eksplicit har vurderet
+            # juridisk_relevant_match=false.
+            jr_raw = item.get("juridisk_relevant_match", True)
+            if isinstance(jr_raw, str):
+                juridisk_relevant = jr_raw.strip().lower() in (
+                    "true", "1", "ja", "yes",
+                )
+            else:
+                juridisk_relevant = bool(jr_raw)
+
             resultat.append({
                 "sagsnummer": str(item.get("sagsnummer", "")).strip(),
                 "titel": str(item.get("titel", "")).strip(),
@@ -2042,6 +2126,7 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
                 "klagers_krav": str(item.get("klagers_krav", "")).strip(),
                 "tilkendt_beloeb": str(item.get("tilkendt_beloeb", "")).strip(),
                 "udfald": str(item.get("udfald", "Ukendt")).strip(),
+                "juridisk_relevant_match": juridisk_relevant,
                 "match_begrundelse": [
                     str(b).strip()
                     for b in (item.get("match_begrundelse") or [])

@@ -1808,6 +1808,28 @@ if st.session_state.get("aktuel_sag"):
         afgoerelser_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "afgoerelse"]
         vilkaar_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "vilkaar"]
 
+        # KRITISK: Filtrer afgørelser så kun JURIDISK RELEVANTE matches
+        # vises. AI'en mærker hver match med juridisk_relevant_match —
+        # hvis FALSE er det kun overfladisk lighed (samme destination,
+        # rejsearrangør osv.) der ikke har juridisk værdi for sagen.
+        # Vi viser KUN ægte juridisk relevante matches for at undgå at
+        # vildlede juristen.
+        _match_info_alle = st.session_state.get("match_info") or []
+        _filtreret_afgoerelser = []
+        _filtreret_match_info = []
+        for _idx, _ag in enumerate(afgoerelser_ud[:5]):
+            _info = (
+                _match_info_alle[_idx]
+                if _idx < len(_match_info_alle)
+                else {}
+            )
+            # Default til True (vis) hvis flag mangler — backward compat
+            _er_relevant = _info.get("juridisk_relevant_match", True)
+            if _er_relevant:
+                _filtreret_afgoerelser.append(_ag)
+                _filtreret_match_info.append(_info)
+        afgoerelser_ud = _filtreret_afgoerelser
+
         if afgoerelser_ud:
             # Apple Health-pillar wrapper — lavendel baggrund, indigo accent
             st.markdown(
@@ -1825,7 +1847,8 @@ if st.session_state.get("aktuel_sag"):
             _pillar_nummer += 1
             from badges import udled_afgoerelsesdato, badge
 
-            match_info_list = st.session_state.get("match_info") or []
+            # Brug den FILTREREDE liste — kun juridisk relevante matches
+            match_info_list = _filtreret_match_info
 
             for i, sag_ref in enumerate(afgoerelser_ud[:5], 1):
                 sim = sag_ref.get("similarity") or 0
