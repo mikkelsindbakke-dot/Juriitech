@@ -36,6 +36,7 @@ from ui import (
     thinking,
     render_analyse_som_pillars,
     render_sagsresume,
+    render_tidslinje,
     vis_brugerfejl,
 )
 
@@ -378,6 +379,99 @@ st.markdown(
     .analyse-pillar-body strong {
         font-weight: 600;
         color: #111827 !important;
+    }
+
+    /* ========== TIDSLINJE — vertikal Apple Health-style timeline ========== */
+    .tidslinje-advarsel {
+        background: rgba(217, 119, 6, 0.12);
+        border-left: 4px solid #D97706;
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 18px;
+    }
+    .tidslinje-advarsel-titel {
+        font-weight: 700;
+        color: #92400E !important;
+        font-size: 0.95rem;
+        margin-bottom: 4px;
+    }
+    .tidslinje-advarsel-tekst {
+        color: #78350F !important;
+        font-size: 0.9rem;
+        line-height: 1.55;
+    }
+
+    .tidslinje-container {
+        position: relative;
+        padding-left: 8px;
+        margin-top: 8px;
+    }
+    .tidslinje-container::before {
+        content: '';
+        position: absolute;
+        left: 13px;
+        top: 12px;
+        bottom: 12px;
+        width: 2px;
+        background: rgba(0, 0, 0, 0.1);
+        z-index: 0;
+    }
+    .tidslinje-item {
+        position: relative;
+        margin-bottom: 14px;
+        padding-left: 32px;
+        min-height: 24px;
+    }
+    .tidslinje-item:last-child {
+        margin-bottom: 0;
+    }
+    .tidslinje-dot {
+        position: absolute;
+        left: 6px;
+        top: 8px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 3px solid white;
+        z-index: 1;
+    }
+    .tidslinje-card {
+        background: rgba(255, 255, 255, 0.7);
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(0, 0, 0, 0.06);
+    }
+    .tidslinje-meta {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        align-items: baseline;
+        margin-bottom: 4px;
+    }
+    .tidslinje-dato {
+        font-weight: 700 !important;
+        color: #111827 !important;
+        font-size: 0.95rem;
+    }
+    .tidslinje-tid {
+        color: #4B5563 !important;
+        font-size: 0.88rem;
+        font-weight: 500;
+    }
+    .tidslinje-aktoer {
+        color: #6B7280 !important;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        font-weight: 600;
+        background: rgba(99, 102, 241, 0.08);
+        padding: 2px 8px;
+        border-radius: 100px;
+    }
+    .tidslinje-beskrivelse {
+        color: #1F2937 !important;
+        font-size: 0.95rem;
+        line-height: 1.55;
     }
 
     /* Kildehenvisninger — fremhævet i accent-farve på hvid pille */
@@ -1874,51 +1968,19 @@ if st.session_state.get("aktuel_sag"):
             )
             _pillar_nummer += 1
 
-        # ---------- TIDSFORHOLD — KRITISK FORSVARSARGUMENT ----------
-        # Pakkerejse-Ankenævnet vægter rettidig reklamation MEGET HØJT.
-        # Hvis vi har detekteret en problematisk forsinkelse mellem
-        # konstatering af mangler og kontakt til TUI, fremhæves det her
-        # som en gul/orange advarsels-pillar SÅ JURISTEN STRAKS SER DET.
-        # Vises KUN hvis der er en faktisk forsinkelse — undgår noise.
+        # ---------- TIDSLINJE — KRONOLOGISK OVERBLIK ----------
+        # Visuelt overblik over sagens begivenheder med farvede dots
+        # per begivenheds betydning for TUI's forsvarsposition. Vises
+        # kun hvis vi har udledt mindst én begivenhed med dato. Hvis
+        # der også er problematisk forsinkelse, vises en advarsel
+        # øverst i tidslinjen som forsvars-pointer.
         _tf = st.session_state.get("tidsforhold")
-        if (
-            _tf
-            and _tf.get("har_problematisk_forsinkelse")
-            and not _tf.get("kunne_ikke_udledes")
-        ):
-            import html as _html_tf
-            _tf_vurdering = _html_tf.escape(
-                _tf.get("samlet_vurdering") or ""
-            )
-            _tf_observationer_html = ""
-            if _tf.get("konkrete_observationer"):
-                _tf_observationer_html = (
-                    "<ul style='margin: 0.75rem 0; padding-left: 1.3rem;'>"
-                )
-                for _obs in _tf["konkrete_observationer"]:
-                    _tf_observationer_html += (
-                        f"<li style='margin-bottom: 0.4rem;'>"
-                        f"{_html_tf.escape(_obs)}</li>"
-                    )
-                _tf_observationer_html += "</ul>"
-
-            # Gul/peach-advarsels-pillar — varmere accent (rødt/orange)
-            # for at signalere "vigtig opmærksomhed".
-            st.markdown(
-                f'<div class="analyse-pillar"'
-                ' style="--pillar-bg: #FEF3C7; --pillar-accent: #D97706;">'
-                '<div class="analyse-pillar-accent-dot"></div>'
-                f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
-                'Tidsforhold og rettidig reklamation</h2>'
-                '<div class="analyse-pillar-body">'
-                '<p style="font-weight: 600; color: #92400E;">'
-                'Pakkerejse-Ankenævnet vægter rettidig reklamation højt. '
-                'juriitech PAX har identificeret følgende relevante '
-                'tidsforhold der bør indgå som forsvarsargument:</p>'
-                f'<p>{_tf_vurdering}</p>'
-                f'{_tf_observationer_html}'
-                '</div></div>',
-                unsafe_allow_html=True,
+        if _tf and _tf.get("begivenheder"):
+            render_tidslinje(
+                _tf,
+                accent="#D97706",
+                bg="#FEF3C7",
+                nummer=_pillar_nummer,
             )
             _pillar_nummer += 1
 

@@ -1746,10 +1746,20 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
     Returnerer:
     {
         "rejseperiode": str,                # fx "8.-22. juni 2025"
-        "har_problematisk_forsinkelse": bool,  # True hvis der er bekymrende forsinkelse
-        "samlet_vurdering": str,           # 2-4 sætninger der opsummerer timing
-        "konkrete_observationer": [str],   # liste af "mangel X: konstateret Y, kontaktet Z (forsinkelse N dage)"
-        "kunne_ikke_udledes": bool         # True hvis datoer mangler i materialet
+        "har_problematisk_forsinkelse": bool,
+        "samlet_vurdering": str,
+        "konkrete_observationer": [str],
+        "kunne_ikke_udledes": bool,
+        "begivenheder": [                   # NY: kronologisk tidslinje
+            {
+                "dato": str,                # "8. juni 2025"
+                "tidspunkt": str | None,    # "14:30" eller None
+                "type": str,                # "ankomst" | "klage_til_guide" | "tui_reaktion" | "klage_til_tui" | "afgang" | "andet"
+                "aktoer": str,              # "Klager" | "TUI guide" | "TUI After Travel" | "Hotel" | etc.
+                "beskrivelse": str,         # 1-2 sætninger om hvad der skete
+                "betydning": str            # "neutral" | "positiv_for_tui" | "negativ_for_tui"
+            }
+        ]
     }
     Returnerer None hvis ekstraktion fejler.
     """
@@ -1821,12 +1831,22 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         'forsinkelse) — for sen reklamation\\"",\n'
         '    "..."\n'
         '  ],\n'
-        '  "kunne_ikke_udledes": true|false\n'
+        '  "kunne_ikke_udledes": true|false,\n'
+        '  "begivenheder": [\n'
+        '    {\n'
+        '      "dato": "8. juni 2025",\n'
+        '      "tidspunkt": "14:30 eller null hvis ikke angivet",\n'
+        '      "type": "ankomst|klage_til_guide|tui_reaktion|klage_til_tui|afgang|andet",\n'
+        '      "aktoer": "Klager / TUI guide / TUI After Travel / Hotel / etc.",\n'
+        '      "beskrivelse": "1-2 sætninger om hvad der skete",\n'
+        '      "betydning": "neutral|positiv_for_tui|negativ_for_tui"\n'
+        '    }\n'
+        '  ]\n'
         "}\n\n"
         "VIGTIGE REGLER:\n"
-        "- har_problematisk_forsinkelse SKAL være TRUE hvis "
-        "AT LEAST ÉN mangel blev reklameret med betydelig forsinkelse "
-        "(typisk 3+ dage efter konstatering, eller efter hjemkomst).\n"
+        "- har_problematisk_forsinkelse SKAL være TRUE hvis AT LEAST "
+        "ÉN mangel blev reklameret med betydelig forsinkelse (typisk "
+        "3+ dage efter konstatering, eller efter hjemkomst).\n"
         "- har_problematisk_forsinkelse SKAL være FALSE hvis alle "
         "mangler blev rettidigt reklameret eller hvis forsinkelsen "
         "er ubetydelig.\n"
@@ -1834,7 +1854,30 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "udlede dette, sæt kunne_ikke_udledes=true og skriv det ærligt "
         "i samlet_vurdering. OPFIND ALDRIG datoer.\n"
         "- konkrete_observationer skal kun indeholde punkter hvor "
-        "datoer faktisk fremgår — ikke gæt."
+        "datoer faktisk fremgår — ikke gæt.\n"
+        "\n"
+        "REGLER FOR begivenheder (TIDSLINJE):\n"
+        "- Inkludér ALLE relevante kronologiske begivenheder med dato:\n"
+        "  • Klagers ankomst til destinationen\n"
+        "  • Hver gang klager henvendte sig til guide/hotel/After Travel\n"
+        "  • Hver gang TUI reagerede/svarede/handlede\n"
+        "  • Klagers afgang fra destinationen\n"
+        "  • Klage til Pakkerejse-Ankenævnet (hvis dato fremgår)\n"
+        "  • Andre vigtige milesten med dato\n"
+        "- Sortér ALTID kronologisk (ældste først).\n"
+        "- Inkludér tidspunkt KUN hvis det fremgår af materialet — "
+        "ellers sæt 'tidspunkt': null.\n"
+        "- 'aktoer' beskriver hvem der handler/skriver (ikke hvem der "
+        "modtager). Brug 'Klager', 'TUI guide', 'TUI After Travel', "
+        "'Hotel', 'Pakkerejse-Ankenævnet'.\n"
+        "- 'betydning' er hvordan begivenheden påvirker TUI's "
+        "forsvarsposition: 'positiv_for_tui' (fx TUI reagerede hurtigt, "
+        "klager reklamerede sent), 'negativ_for_tui' (fx TUI ignorerede "
+        "klage, lang ventetid på respons), 'neutral' (faktuel begivenhed "
+        "uden vurdering).\n"
+        "- Hvis ingen datoer kan udledes, returnér tom liste: "
+        '"begivenheder": [].\n'
+        "- OPFIND ALDRIG datoer eller begivenheder.\n"
     )
 
     try:
@@ -1857,6 +1900,36 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         svar = _re.sub(r"\s*```$", "", svar).strip()
         data = _json.loads(svar)
 
+        # Normalisér begivenheder til konsistent format
+        raa_begivenheder = data.get("begivenheder") or []
+        begivenheder = []
+        for b in raa_begivenheder:
+            if not isinstance(b, dict):
+                continue
+            dato = str(b.get("dato") or "").strip()
+            if not dato:
+                continue
+            tidspunkt_raw = b.get("tidspunkt")
+            tidspunkt = (
+                str(tidspunkt_raw).strip()
+                if tidspunkt_raw and str(tidspunkt_raw).strip().lower()
+                not in ("null", "none", "")
+                else None
+            )
+            betydning = str(b.get("betydning") or "neutral").strip().lower()
+            if betydning not in (
+                "neutral", "positiv_for_tui", "negativ_for_tui"
+            ):
+                betydning = "neutral"
+            begivenheder.append({
+                "dato": dato,
+                "tidspunkt": tidspunkt,
+                "type": str(b.get("type") or "andet").strip(),
+                "aktoer": str(b.get("aktoer") or "").strip(),
+                "beskrivelse": str(b.get("beskrivelse") or "").strip(),
+                "betydning": betydning,
+            })
+
         return {
             "rejseperiode": str(data.get("rejseperiode") or "").strip(),
             "har_problematisk_forsinkelse": bool(
@@ -1871,6 +1944,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
                 if str(o).strip()
             ],
             "kunne_ikke_udledes": bool(data.get("kunne_ikke_udledes")),
+            "begivenheder": begivenheder,
         }
     except Exception as e:
         print(f"DEBUG: udled_tidsforhold fejlede: {e}")

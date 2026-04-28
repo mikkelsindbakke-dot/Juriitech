@@ -493,6 +493,103 @@ def render_sagsresume(
     st.markdown(html, unsafe_allow_html=True)
 
 
+def render_tidslinje(
+    tidsforhold,
+    accent="#D97706",
+    bg="#FEF3C7",
+    nummer=2,
+):
+    """Renderer en kronologisk tidslinje af sagens begivenheder som
+    en Apple Health-pillar med vertikal timeline. Hver begivenhed har
+    en farvet dot (grøn=positiv for TUI, rød=negativ, grå=neutral),
+    dato + evt. tidspunkt, aktør og kort beskrivelse.
+
+    Vises kun når tidsforhold-dictet indeholder begivenheder.
+    """
+    if not tidsforhold:
+        return
+    begivenheder = tidsforhold.get("begivenheder") or []
+    if not begivenheder:
+        return
+
+    import html as _html
+
+    # Eventuel advarsels-banner hvis problematisk forsinkelse
+    advarsel_html = ""
+    if (
+        tidsforhold.get("har_problematisk_forsinkelse")
+        and not tidsforhold.get("kunne_ikke_udledes")
+    ):
+        vurd = _html.escape(
+            (tidsforhold.get("samlet_vurdering") or "").strip()
+        )
+        if vurd:
+            advarsel_html = (
+                '<div class="tidslinje-advarsel">'
+                '<div class="tidslinje-advarsel-titel">'
+                '⚠ Reklamationsrettidighed:'
+                '</div>'
+                f'<div class="tidslinje-advarsel-tekst">{vurd}</div>'
+                '</div>'
+            )
+
+    # Byg event-liste
+    items_html = ""
+    for event in begivenheder:
+        dato = _html.escape(event.get("dato", "") or "")
+        tidspunkt = event.get("tidspunkt")
+        tid_html = (
+            f'<span class="tidslinje-tid">'
+            f'kl. {_html.escape(tidspunkt)}</span>'
+            if tidspunkt else ""
+        )
+        aktoer = _html.escape(event.get("aktoer", "") or "")
+        beskrivelse = _html.escape(event.get("beskrivelse", "") or "")
+        betydning = event.get("betydning", "neutral")
+
+        # Farvekod dot per betydning
+        if betydning == "positiv_for_tui":
+            dot_color = "#16A34A"  # grøn
+            dot_glow = "rgba(22, 163, 74, 0.25)"
+        elif betydning == "negativ_for_tui":
+            dot_color = "#DC2626"  # rød
+            dot_glow = "rgba(220, 38, 38, 0.25)"
+        else:
+            dot_color = "#6B7280"  # grå
+            dot_glow = "rgba(107, 114, 128, 0.2)"
+
+        items_html += (
+            '<div class="tidslinje-item">'
+            f'<div class="tidslinje-dot" style="background: {dot_color}; '
+            f'box-shadow: 0 0 0 4px {dot_glow};"></div>'
+            '<div class="tidslinje-card">'
+            '<div class="tidslinje-meta">'
+            f'<span class="tidslinje-dato">{dato}</span>'
+            f'{tid_html}'
+            f'<span class="tidslinje-aktoer">{aktoer}</span>'
+            '</div>'
+            f'<div class="tidslinje-beskrivelse">{beskrivelse}</div>'
+            '</div>'
+            '</div>'
+        )
+
+    html_out = (
+        f'<div class="analyse-pillar" style="--pillar-bg: {bg}; '
+        f'--pillar-accent: {accent};">'
+        '<div class="analyse-pillar-accent-dot"></div>'
+        f'<h2 class="analyse-pillar-title">{nummer}. '
+        'Tidslinje over sagens begivenheder</h2>'
+        '<div class="analyse-pillar-body">'
+        f'{advarsel_html}'
+        '<div class="tidslinje-container">'
+        f'{items_html}'
+        '</div>'
+        '</div>'
+        '</div>'
+    )
+    st.markdown(html_out, unsafe_allow_html=True)
+
+
 def render_analyse_som_pillars(
     svar_tekst,
     skip_resume=False,
