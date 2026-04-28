@@ -316,6 +316,26 @@ def _split_analyse_i_sektioner(tekst):
         # Ingen sektion-headers fundet — returner hele teksten som én sektion
         sections.append(("Juridisk førstevurdering", "\n".join(current_body).strip()))
 
+    # SAFETY-NET: Hvis AI'en alligevel har lavet >8 top-level sektioner,
+    # er det med stor sandsynlighed en fejl (klagepunkter splittet ud
+    # som egne sektioner). Slå de overskydende sammen i den sidste
+    # legitime sektion som bullets, så layoutet ikke bryder sammen.
+    MAX_SEKTIONER = 8
+    if len(sections) > MAX_SEKTIONER:
+        beholdt = sections[:MAX_SEKTIONER - 1]
+        overflødige = sections[MAX_SEKTIONER - 1:]
+        # Saml de overflødige som én "Yderligere punkter"-sektion
+        sammenfletning = []
+        for titel, body in overflødige:
+            sammenfletning.append(
+                f"- **{titel}**" + (f": {body}" if body else "")
+            )
+        beholdt.append((
+            "Yderligere klagepunkter og detaljer",
+            "\n".join(sammenfletning),
+        ))
+        sections = beholdt
+
     return sections
 
 

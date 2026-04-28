@@ -1459,18 +1459,29 @@ if st.session_state.get("aktuel_sag"):
                 st.session_state.tidsforhold = tidsforhold
 
                 # Byg klagepunkter-blok der injiceres i førstevurderings-
-                # prompten så AI'en bruger den verificerede liste
+                # prompten så AI'en bruger den verificerede liste.
+                # KRITISK: Listen skal vises som BULLETS i én sektion
+                # ('Klagens kernepunkter'), IKKE som separate top-level
+                # sektioner. Tidligere bug: AI'en lavede 17+ pillars
+                # i stedet for at samle bullets under én overskrift.
                 if alle_klagepunkter:
                     klagepunkter_facit = (
                         "VERIFICERET LISTE OVER ALLE KLAGEPUNKTER "
-                        "(udtrukket separat — SKAL ALLE adresseres):\n"
+                        "(udtrukket separat):\n"
                     )
                     for _i, _kp in enumerate(alle_klagepunkter, 1):
                         klagepunkter_facit += f"  {_i}. {_kp}\n"
                     klagepunkter_facit += (
-                        f"\nTotal: {len(alle_klagepunkter)} klagepunkter "
-                        "der ALLE skal stå i 'Klagens kernepunkter'-"
-                        "sektionen — ingen må udelades.\n\n"
+                        f"\nTotal: {len(alle_klagepunkter)} klagepunkter.\n\n"
+                        "FORMAT-KRITISK INSTRUKTION:\n"
+                        "Disse klagepunkter skal listes som BULLETS "
+                        "(- punkt 1\\n- punkt 2 osv.) under ÉN sektion "
+                        "med titlen '**2. Klagens kernepunkter**'. De "
+                        "må ABSOLUT IKKE blive separate nummererede "
+                        "top-level sektioner i analysen — det ville "
+                        "ødelægge layoutet med 10-20 mini-pillars i "
+                        "stedet for de 5 hoved-pillars. Brug ÉN sektion, "
+                        "MANGE bullets.\n\n"
                     )
                 else:
                     klagepunkter_facit = ""
@@ -1511,22 +1522,43 @@ if st.session_state.get("aktuel_sag"):
                         klagepunkter_facit +
                         tidsforhold_facit +
                         "Lav en struktureret juridisk førstevurdering af sagen "
-                        "baseret på de uploadede dokumenter. Følg præcis denne "
-                        "rækkefølge:\n\n"
+                        "baseret på de uploadede dokumenter.\n\n"
+                        "═══════════════════════════════════════════════════\n"
+                        "ABSOLUT KRAV TIL STRUKTUR — PRÆCIS 5 SEKTIONER:\n"
+                        "═══════════════════════════════════════════════════\n"
+                        "Output SKAL bestå af PRÆCIS 5 top-level sektioner — "
+                        "hverken flere eller færre. Hver sektion skal starte "
+                        "med en linje på formen '**N. Titel**' (med blank "
+                        "linje før — splitter detekterer sektioner sådan).\n\n"
+                        "INDE I HVER SEKTION må der gerne være underpunkter "
+                        "som bullets (-) eller nummereret liste (1. 2. 3.) "
+                        "— men disse må IKKE have blank linje før, så de "
+                        "ikke fejlagtigt opfattes som nye top-level sektioner.\n\n"
+                        "ALLE klagepunkter (uanset hvor mange) går som "
+                        "BULLETS inde i sektion 2 — IKKE som egne sektioner.\n\n"
+                        "═══════════════════════════════════════════════════\n"
+                        "DE 5 SEKTIONER (følg rækkefølgen præcist):\n"
+                        "═══════════════════════════════════════════════════\n\n"
                         "1. **Kort resume af sagen** (2-4 sætninger)\n"
-                        "2. **Klagens kernepunkter** — KRITISK KRAV: Du SKAL "
-                        "identificere og oplistede ALLE klagepunkter klager "
-                        "rejser mod TUI — uden undtagelse. Det er IKKE "
-                        "nok at finde de 'vigtigste' eller de '3-5 store'. "
-                        "ALT klager kritiserer TUI for skal med, uanset om det "
-                        "er stort eller småt. Læs hele klagen igennem TO GANGE "
-                        "og kryds hvert klagepunkt af, før du skriver. Hvis "
-                        "klager nævner 8 forskellige problemer, skal alle 8 "
-                        "stå på listen. Brug bullet-form. Eksempler på ting "
-                        "der ofte overses: kommunikations-problemer med "
-                        "guiden, manglende informationer, små afgivelser fra "
-                        "det aftalte, ventetider, småt-sløvhed i kompensation, "
-                        "tone i korrespondance osv. Tag IKKE genvej.\n"
+                        "2. **Klagens kernepunkter** — KRITISK FORMAT: "
+                        "Listed ALLE klagepunkter (fra den verificerede "
+                        "liste ovenfor) som bullets med '-' foran hver. "
+                        "Det skal være ÉN sektion med MANGE bullets, "
+                        "IKKE mange sektioner. Eksempel-format:\n"
+                        "   - Klagepunkt 1: kort beskrivelse\n"
+                        "   - Klagepunkt 2: kort beskrivelse\n"
+                        "   - osv.\n"
+                        "Alle klagepunkter klager rejser mod TUI skal med "
+                        "— uden undtagelse. Læs hele klagen igennem TO "
+                        "GANGE og kryds hvert klagepunkt af, før du "
+                        "skriver. Hvis klager nævner 8 problemer, listes "
+                        "8 bullets. Hvis 17, listes 17 bullets — men "
+                        "stadig som bullets i ÉN sektion, ikke 17 "
+                        "sektioner. Eksempler på ting der ofte overses: "
+                        "kommunikations-problemer med guiden, manglende "
+                        "informationer, små afgivelser fra det aftalte, "
+                        "ventetider, sløvhed i kompensation, tone i "
+                        "korrespondance osv.\n"
                         "3. **Rejseselskabets stillingtagen indtil nu** — "
                         "beskriv hvad rejseselskabet (TUI) har gjort, tilbudt "
                         "eller afvist i forhold til klagen INDEN Nævnet blev "
