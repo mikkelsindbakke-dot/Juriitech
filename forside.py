@@ -26,6 +26,7 @@ from ai_engine import (
     opsummer_matches_til_visning,
     udled_sandsynligheder_strukturelt,
     udled_sagsresume_strukturelt,
+    udled_alle_klagepunkter,
 )
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
@@ -1411,6 +1412,7 @@ if st.session_state.get("aktuel_sag"):
         with thinking(
             "juriitech PAX laver en grundig første vurdering af sagen",
             faser=[
+                "Identificerer alle klagepunkter klager rejser...",
                 "Læser sagsakterne og høringsbrevet...",
                 "Søger i vidensbanken efter tidligere afgørelser...",
                 "Sammenholder med pakkerejseloven og rejsevilkårene...",
@@ -1420,8 +1422,37 @@ if st.session_state.get("aktuel_sag"):
             ],
         ):
             try:
+                # FØRST: Udtræk udtømmende liste over ALLE klagepunkter
+                # i en dedikeret AI-kald. Listen bruges som autoritativ
+                # 'source of truth' i alle downstream-prompts (resume,
+                # førstevurdering, svarbrev) — så ingen klagepunkter
+                # overses. Dette er kritisk for kvaliteten af outputtet.
+                alle_klagepunkter = udled_alle_klagepunkter(
+                    sag=st.session_state.aktuel_sag,
+                    sagsakter_tekst=st.session_state.get("sagsakter", ""),
+                )
+                st.session_state.alle_klagepunkter = alle_klagepunkter
+
+                # Byg klagepunkter-blok der injiceres i førstevurderings-
+                # prompten så AI'en bruger den verificerede liste
+                if alle_klagepunkter:
+                    klagepunkter_facit = (
+                        "VERIFICERET LISTE OVER ALLE KLAGEPUNKTER "
+                        "(udtrukket separat — SKAL ALLE adresseres):\n"
+                    )
+                    for _i, _kp in enumerate(alle_klagepunkter, 1):
+                        klagepunkter_facit += f"  {_i}. {_kp}\n"
+                    klagepunkter_facit += (
+                        f"\nTotal: {len(alle_klagepunkter)} klagepunkter "
+                        "der ALLE skal stå i 'Klagens kernepunkter'-"
+                        "sektionen — ingen må udelades.\n\n"
+                    )
+                else:
+                    klagepunkter_facit = ""
+
                 auto_svar, rel_sager = spoerg_ai_med_sag(
                     spoergsmaal=(
+                        klagepunkter_facit +
                         "Lav en struktureret juridisk førstevurdering af sagen "
                         "baseret på de uploadede dokumenter. Følg præcis denne "
                         "rækkefølge:\n\n"
@@ -2471,11 +2502,21 @@ if st.session_state.get("aktuel_sag"):
             ],
         ):
             try:
+                # Genbrug den verificerede klagepunkter-liste fra
+                # førstevurderingen hvis den findes — sparer et AI-kald
+                # og sikrer konsistens mellem analyse og svarbrev.
+                # Hvis den ikke findes (fx hvis brugeren skipper
+                # førstevurdering), udtrækker generer_svarbrev_til_sag
+                # den selv.
+                _gemte_klagepunkter = st.session_state.get(
+                    "alle_klagepunkter"
+                )
                 svarbrev = generer_svarbrev_til_sag(
                     sag=st.session_state.aktuel_sag,
                     sagsakter=st.session_state.get("sagsakter", ""),
                     ekstra_instrukser=ekstra_instrukser,
                     inkluder_kildehenvisninger=_inkluder_kildehenvisninger,
+                    verificerede_klagepunkter=_gemte_klagepunkter,
                 )
             except Exception as e:
                 vis_brugerfejl(

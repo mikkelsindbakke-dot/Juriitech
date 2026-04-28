@@ -911,7 +911,10 @@ def generer_tjekliste(sag):
         return f"Fejl i generering af tjekliste: {str(e)}"
 
 
-def byg_svarbrev_opgave(inkluder_kildehenvisninger: bool = False) -> str:
+def byg_svarbrev_opgave(
+    inkluder_kildehenvisninger: bool = False,
+    verificerede_klagepunkter: list = None,
+) -> str:
     """Bygger svarbrev-prompten dynamisk.
 
     inkluder_kildehenvisninger:
@@ -923,7 +926,33 @@ def byg_svarbrev_opgave(inkluder_kildehenvisninger: bool = False) -> str:
           rejsevilkår og pakkerejseloven (fx "[Bilag 04, s. 1]" og
           "jf. § 22"). Bruges når juristen specifikt har brug for at
           dokumentere argumentationens grundlag.
+
+    verificerede_klagepunkter (valgfri men STÆRKT anbefalet):
+        Liste over alle klagepunkter klager rejser, udtrukket på forhånd
+        af udled_alle_klagepunkter(). Når listen er sat, injiceres den
+        i prompten som autoritativt facit der SKAL adresseres punkt for
+        punkt — det er den eneste pålidelige måde at sikre 100%
+        klagepunkt-dækning i svarbrevet.
     """
+    # Sektion om verificerede klagepunkter — kritisk for fuld dækning
+    if verificerede_klagepunkter:
+        klagepunkter_blok = (
+            "\nVERIFICERET LISTE OVER ALLE KLAGEPUNKTER (SKAL ALLE "
+            "ADRESSERES I BREVET):\n"
+            "Følgende liste er udtrukket på forhånd af en dedikeret "
+            "research-AI, og hvert punkt SKAL behandles i svarbrevet — "
+            "uden undtagelse. Hvis et punkt udelades, betragtes brevet "
+            "som ufuldstændigt. Adressér ALLE punkter, også de små.\n\n"
+        )
+        for i, kp in enumerate(verificerede_klagepunkter, 1):
+            klagepunkter_blok += f"  {i}. {kp}\n"
+        klagepunkter_blok += (
+            f"\nTotal: {len(verificerede_klagepunkter)} klagepunkter "
+            "der ALLE skal adresseres med egen behandling i brevet.\n"
+        )
+    else:
+        klagepunkter_blok = ""
+
     # Sektion om kildehenvisninger — varierer efter flag
     if inkluder_kildehenvisninger:
         kildehenvisninger_regel = (
@@ -1011,6 +1040,8 @@ de 4 'vigtigste'. At udelade et klagepunkt giver Nævnet indtryk af at
 {REJSESELSKAB_NAVN} ignorerer klager. Adressér også de 'små' punkter
 (fx kommunikation, ventetider, tone) — de kan kort behandles, men de
 SKAL behandles.
+
+{klagepunkter_blok}
 
 ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
 Svarbrevet til Nævnet MÅ UNDER INGEN OMSTÆNDIGHEDER indeholde klagerens
@@ -1110,7 +1141,11 @@ def generer_svarbrev(
     Returnerer svarbrevets tekst som markdown, eller en fejlbesked.
     """
     try:
-        # Byg den korrekte svarbrev-prompt baseret på flaget
+        # Byg den korrekte svarbrev-prompt baseret på flaget.
+        # Bemærk: denne single-fil-version har ikke direkte adgang til
+        # at udtrække klagepunkter (sag-objekt mangler), så den bruger
+        # ikke verificerede_klagepunkter. Den primære flow er via
+        # generer_svarbrev_til_sag() som har fuld dækning.
         svarbrev_opgave = byg_svarbrev_opgave(
             inkluder_kildehenvisninger=inkluder_kildehenvisninger
         )
@@ -1485,6 +1520,110 @@ def udled_sandsynligheder_strukturelt(analyse_tekst):
     except Exception as e:
         print(f"DEBUG: Struktureret sandsynlighedsudledning fejlede: {e}")
     return None
+
+
+def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
+    """
+    DEDIKERET ekstraktions-funktion: udtrækker UDTØMMENDE liste over
+    ALLE klagepunkter klager rejser mod rejseselskabet.
+
+    Bruges som autoritativ 'source of truth' der injiceres i alle
+    downstream-prompts (førstevurdering, sagsresume, svarbrev) — så de
+    ikke skal gen-finde klagepunkter selv, men har en verificeret liste
+    at arbejde fra. Dette er den eneste pålidelige måde at sikre 100%
+    klagepunkt-dækning på tværs af alle output.
+
+    Returnerer: list[str] med én kort beskrivelse per klagepunkt.
+    Tom liste hvis ekstraktion fejler.
+    """
+    import json as _json
+    import re as _re
+
+    indled = (
+        "Du er en præcis juridisk research-assistent. Din ENESTE opgave "
+        "lige nu er at identificere ALLE klagepunkter klager rejser mod "
+        "rejseselskabet i nedenstående sag.\n\n"
+        "KRITISK INSTRUKTION (LÆS GRUNDIGT):\n"
+        "- Læs HVER ENESTE fil i sagen grundigt.\n"
+        "- Læs derefter ALT materialet igennem TO GANGE for at sikre "
+        "at du ikke har misset noget. Det er BEDRE at oplistede et "
+        "klagepunkt for meget end et for lidt.\n"
+        "- Inkludér STORE OG SMÅ klagepunkter — ALLE klagepunkter "
+        "skal med, uanset om de virker centrale eller marginale.\n"
+        "- Husk at klagepunkter inkluderer BÅDE:\n"
+        "  • Konkrete mangler ved rejsen (hotel-standard, mad, "
+        "transport, pool, værelse, beliggenhed, faciliteter, "
+        "støj, rengøring, manglende ydelser osv.)\n"
+        "  • Procesuelle/relations-klager (dårlig kommunikation, "
+        "ventetider, tonen i korrespondance, manglende information, "
+        "sagsbehandlingstid, kompensations-tilbuddets størrelse, "
+        "guide-håndtering, refusion-procedurer osv.)\n"
+        "  • Krav om kompensation/refusion (også selvom det måske "
+        "er afvist eller delvist accepteret)\n"
+        "- Hvis klager nævner 12 forskellige problemer, skal alle "
+        "12 stå på listen. Tag ALDRIG genvej eller gruppér flere "
+        "punkter sammen.\n"
+        "- Hvert klagepunkt formuleres som ÉN kort sætning "
+        "(max 20 ord).\n\n"
+        "FILER FRA SAGEN FØLGER NEDENFOR:\n"
+    )
+
+    sagsakter_block = ""
+    if sagsakter_tekst and sagsakter_tekst.strip():
+        sagsakter_block = (
+            f"\n\nSUPPLERENDE SAGSAKTER (interne notater, mails osv. "
+            f"der kan indeholde flere klagepunkter):\n"
+            f"{sagsakter_tekst[:6000]}"
+        )
+
+    slutning = (
+        sagsakter_block +
+        "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
+        "ingen markdown, ingen kodeblok:\n"
+        "{\n"
+        '  "klagepunkter": [\n'
+        '    "Klagepunkt 1 i én kort sætning",\n'
+        '    "Klagepunkt 2 i én kort sætning",\n'
+        '    "..."\n'
+        '  ]\n'
+        "}\n\n"
+        "ABSOLUT REGEL: Returnér ALLE klagepunkter — ingen undtagelser. "
+        "Hellere ét for mange end ét for lidt. Det er kritisk at "
+        "INTET klagepunkt overses, da det får alvorlige konsekvenser "
+        "for downstream juridisk rådgivning."
+    )
+
+    try:
+        user_content = _byg_sag_content(sag, indled, slutning)
+
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=2000,
+            temperature=0,
+            system=(
+                "Du er en grundig juridisk research-assistent specialiseret "
+                "i Pakkerejse-Ankenævnet sager. Du leverer altid "
+                "udtømmende, præcise klagepunkt-lister."
+            ),
+            messages=[{"role": "user", "content": user_content}],
+        )
+
+        svar = response.content[0].text.strip()
+        svar = _re.sub(r"^```(?:json)?\s*", "", svar)
+        svar = _re.sub(r"\s*```$", "", svar).strip()
+        data = _json.loads(svar)
+
+        klagepunkter = data.get("klagepunkter", [])
+        if isinstance(klagepunkter, str):
+            klagepunkter = [klagepunkter]
+        klagepunkter = [
+            str(k).strip() for k in klagepunkter if str(k).strip()
+        ]
+
+        return klagepunkter
+    except Exception as e:
+        print(f"DEBUG: udled_alle_klagepunkter fejlede: {e}")
+        return []
 
 
 def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
@@ -1982,6 +2121,7 @@ def generer_svarbrev_til_sag(
     sagsakter=None,
     ekstra_instrukser=None,
     inkluder_kildehenvisninger=False,
+    verificerede_klagepunkter=None,
 ):
     """
     Genererer et komplet udkast til svarbrev baseret på HELE sagspakken
@@ -1989,11 +2129,29 @@ def generer_svarbrev_til_sag(
 
     inkluder_kildehenvisninger: bool. Hvis True inkluderer brevet
         eksplicitte bilag-/lov-/vilkårs-referencer. Default False.
+
+    verificerede_klagepunkter: list[str] eller None. Hvis None, kører
+        vi udled_alle_klagepunkter() automatisk for at sikre 100%
+        klagepunkt-dækning. Hvis listen allerede er udtrukket
+        (typisk i forside.py før førstevurdering), genbruges den her
+        for at spare et AI-kald.
     """
     try:
-        # Byg den korrekte svarbrev-prompt baseret på flaget
+        # KRITISK: Sikr at vi har en udtømmende liste over alle
+        # klagepunkter før vi genererer svarbrevet. Uden listen kan AI'en
+        # springe punkter over — med listen som facit garanterer vi at
+        # alle adresseres. Hvis kalderen allerede har udtrukket listen
+        # (forside.py gør det før førstevurderingen), genbruger vi den.
+        if verificerede_klagepunkter is None:
+            verificerede_klagepunkter = udled_alle_klagepunkter(
+                sag=sag,
+                sagsakter_tekst=(sagsakter or "").strip(),
+            )
+
+        # Byg den korrekte svarbrev-prompt baseret på flag + klagepunkter
         svarbrev_opgave = byg_svarbrev_opgave(
-            inkluder_kildehenvisninger=inkluder_kildehenvisninger
+            inkluder_kildehenvisninger=inkluder_kildehenvisninger,
+            verificerede_klagepunkter=verificerede_klagepunkter,
         )
         sagsakter_tekst = (sagsakter or "").strip()
         filer = sag.get("filer") or []
