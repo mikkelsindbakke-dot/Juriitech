@@ -914,6 +914,7 @@ def generer_tjekliste(sag):
 def byg_svarbrev_opgave(
     inkluder_kildehenvisninger: bool = False,
     verificerede_klagepunkter: list = None,
+    tidsforhold: dict = None,
 ) -> str:
     """Bygger svarbrev-prompten dynamisk.
 
@@ -934,6 +935,37 @@ def byg_svarbrev_opgave(
         punkt — det er den eneste pålidelige måde at sikre 100%
         klagepunkt-dækning i svarbrevet.
     """
+    # Sektion om tidsforhold — kritisk forsvarsargument hvis klager
+    # ikke har reklameret rettidigt. Pakkerejse-Ankenævnet vægter dette
+    # ekstremt højt. Vi injicerer kun blokken hvis vi har faktiske
+    # observationer at bygge på (ikke gætterier).
+    tidsforhold_blok = ""
+    if (
+        tidsforhold
+        and tidsforhold.get("har_problematisk_forsinkelse")
+        and not tidsforhold.get("kunne_ikke_udledes")
+    ):
+        tidsforhold_blok = (
+            "\nKRITISK FORSVARSARGUMENT — REKLAMATIONSRETTIDIGHED:\n"
+            "Pakkerejse-Ankenævnet vægter rettidig reklamation MEGET "
+            "HØJT. Følgende tidsforhold er udledt af bilagene og UDGØR "
+            "et stærkt forsvarsargument der SKAL fremhæves i svarbrevet "
+            "(typisk i et eget afsnit eller integreret i argumentationen "
+            "for relevante klagepunkter):\n\n"
+        )
+        if tidsforhold.get("samlet_vurdering"):
+            tidsforhold_blok += (
+                f"  Samlet vurdering: {tidsforhold['samlet_vurdering']}\n\n"
+            )
+        for obs in tidsforhold.get("konkrete_observationer", []):
+            tidsforhold_blok += f"  • {obs}\n"
+        tidsforhold_blok += (
+            "\nSvarbrevet SKAL adressere denne forsinkelse som "
+            "forsvarsargument — TUI havde ikke mulighed for at "
+            "afhjælpe manglen på destinationen, hvilket Nævnet "
+            "lægger vægt på. Brug konkrete datoer i argumentationen.\n"
+        )
+
     # Sektion om verificerede klagepunkter — kritisk for fuld dækning
     if verificerede_klagepunkter:
         klagepunkter_blok = (
@@ -1042,6 +1074,7 @@ de 4 'vigtigste'. At udelade et klagepunkt giver Nævnet indtryk af at
 SKAL behandles.
 
 {klagepunkter_blok}
+{tidsforhold_blok}
 
 ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
 Svarbrevet til Nævnet MÅ UNDER INGEN OMSTÆNDIGHEDER indeholde klagerens
@@ -1626,6 +1659,146 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
         return []
 
 
+def udled_tidsforhold(sag, sagsakter_tekst=""):
+    """
+    DEDIKERET ekstraktions-funktion: udtrækker tidsforhold mellem
+    konstatering af mangler og kontakt til rejseselskabet.
+
+    Pakkerejse-Ankenævnet vægter rettidig reklamation MEGET HØJT — det
+    er ofte den vigtigste enkelt-faktor i deres afgørelser. Hvis klager
+    først reklamerer dage efter en mangel blev konstateret (eller først
+    efter hjemkomst), har rejseselskabet ikke haft chancen for at
+    afhjælpe på destinationen — og dette er et stærkt forsvarsargument.
+
+    Funktionen returnerer en struktureret dict, der bruges som autoritativ
+    'source of truth' i alle downstream-prompts (resume, førstevurdering,
+    svarbrev) — så timing-aspektet ikke overses.
+
+    Returnerer:
+    {
+        "rejseperiode": str,                # fx "8.-22. juni 2025"
+        "har_problematisk_forsinkelse": bool,  # True hvis der er bekymrende forsinkelse
+        "samlet_vurdering": str,           # 2-4 sætninger der opsummerer timing
+        "konkrete_observationer": [str],   # liste af "mangel X: konstateret Y, kontaktet Z (forsinkelse N dage)"
+        "kunne_ikke_udledes": bool         # True hvis datoer mangler i materialet
+    }
+    Returnerer None hvis ekstraktion fejler.
+    """
+    import json as _json
+    import re as _re
+
+    indled = (
+        "Du er en præcis juridisk research-assistent specialiseret i "
+        "Pakkerejse-Ankenævnet sager. Din ENESTE opgave lige nu er at "
+        "kortlægge TIDSFORHOLDET mellem hvornår klager konstaterede "
+        "mangler/problemer og hvornår klager kontaktede rejseselskabet "
+        "(TUI) om dem.\n\n"
+        "JURIDISK BAGGRUND:\n"
+        "Pakkerejse-Ankenævnet vægter RETTIDIG REKLAMATION ekstremt højt. "
+        "Hvis klager:\n"
+        "  • Kontaktede TUI samme dag eller umiddelbart efter en mangel "
+        "blev konstateret (på destinationen) → RETTIDIG reklamation, "
+        "neutralt for sagen\n"
+        "  • Ventede flere dage efter konstatering med at kontakte TUI "
+        "→ POTENTIELT FOR SEN reklamation, fordel for TUI\n"
+        "  • Først kontaktede TUI EFTER hjemkomst → ALMINDELIGVIS FOR "
+        "SEN reklamation, stærkt forsvarsargument for TUI\n\n"
+        "Det er kritisk vigtigt at finde præcise datoer og udregne "
+        "forsinkelsen i dage, hvor det er muligt.\n\n"
+        "INSTRUKTION:\n"
+        "1. Find rejseperioden (udrejse + hjemrejse).\n"
+        "2. For HVERT klagepunkt der er identificeret i bilagene:\n"
+        "   - Hvornår blev manglen konstateret? (dato eller "
+        "  rejsedag, fx '9. juni 2025' eller 'dag 2 af opholdet')\n"
+        "   - Hvornår kontaktede klager TUI om det? (e-mail-dato, "
+        "  guide-kontakt-dato, telefon-dato)\n"
+        "   - Beregn forsinkelse i dage.\n"
+        "3. Vurdér samlet om reklamationen var rettidig.\n\n"
+        "FILER FRA SAGEN FØLGER NEDENFOR:\n"
+    )
+
+    sagsakter_block = ""
+    if sagsakter_tekst and sagsakter_tekst.strip():
+        sagsakter_block = (
+            f"\n\nSUPPLERENDE SAGSAKTER (e-mails, C4C-noter, guide-"
+            f"rapporter osv. — INDEHOLDER OFTE DE PRÆCISE DATOER):\n"
+            f"{sagsakter_tekst[:8000]}"
+        )
+
+    slutning = (
+        sagsakter_block +
+        "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
+        "ingen markdown, ingen kodeblok:\n"
+        "{\n"
+        '  "rejseperiode": "fx 8.-22. juni 2025 — eller fremgår ikke",\n'
+        '  "har_problematisk_forsinkelse": true|false,\n'
+        '  "samlet_vurdering": "2-4 sætninger der opsummerer om '
+        'reklamationen var rettidig. Vær KONKRET og NÆVN DATOERNE. '
+        'Hvis intet kan udledes, skriv det ærligt.",\n'
+        '  "konkrete_observationer": [\n'
+        '    "Kort beskrivelse af hvert relevant tidsforhold, fx: '
+        '\\"Pool-problem konstateret 9. juni, TUI kontaktet samme dag — '
+        'rettidig\\" eller \\"Ekstraseng-problem konstateret 8. juni, '
+        'TUI først kontaktet 14. juni efter hjemkomst (6 dages '
+        'forsinkelse) — for sen reklamation\\"",\n'
+        '    "..."\n'
+        '  ],\n'
+        '  "kunne_ikke_udledes": true|false\n'
+        "}\n\n"
+        "VIGTIGE REGLER:\n"
+        "- har_problematisk_forsinkelse SKAL være TRUE hvis "
+        "AT LEAST ÉN mangel blev reklameret med betydelig forsinkelse "
+        "(typisk 3+ dage efter konstatering, eller efter hjemkomst).\n"
+        "- har_problematisk_forsinkelse SKAL være FALSE hvis alle "
+        "mangler blev rettidigt reklameret eller hvis forsinkelsen "
+        "er ubetydelig.\n"
+        "- Hvis materialet IKKE indeholder tilstrækkelige datoer til at "
+        "udlede dette, sæt kunne_ikke_udledes=true og skriv det ærligt "
+        "i samlet_vurdering. OPFIND ALDRIG datoer.\n"
+        "- konkrete_observationer skal kun indeholde punkter hvor "
+        "datoer faktisk fremgår — ikke gæt."
+    )
+
+    try:
+        user_content = _byg_sag_content(sag, indled, slutning)
+
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=2000,
+            temperature=0,
+            system=(
+                "Du er en præcis juridisk research-assistent. Du finder "
+                "kun datoer der faktisk fremgår af materialet — du "
+                "opfinder ALDRIG tidsangivelser."
+            ),
+            messages=[{"role": "user", "content": user_content}],
+        )
+
+        svar = response.content[0].text.strip()
+        svar = _re.sub(r"^```(?:json)?\s*", "", svar)
+        svar = _re.sub(r"\s*```$", "", svar).strip()
+        data = _json.loads(svar)
+
+        return {
+            "rejseperiode": str(data.get("rejseperiode") or "").strip(),
+            "har_problematisk_forsinkelse": bool(
+                data.get("har_problematisk_forsinkelse")
+            ),
+            "samlet_vurdering": str(
+                data.get("samlet_vurdering") or ""
+            ).strip(),
+            "konkrete_observationer": [
+                str(o).strip()
+                for o in (data.get("konkrete_observationer") or [])
+                if str(o).strip()
+            ],
+            "kunne_ikke_udledes": bool(data.get("kunne_ikke_udledes")),
+        }
+    except Exception as e:
+        print(f"DEBUG: udled_tidsforhold fejlede: {e}")
+        return None
+
+
 def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
     """
     Udtrækker et struktureret resume af sagen baseret på den allerede
@@ -2122,6 +2295,7 @@ def generer_svarbrev_til_sag(
     ekstra_instrukser=None,
     inkluder_kildehenvisninger=False,
     verificerede_klagepunkter=None,
+    tidsforhold=None,
 ):
     """
     Genererer et komplet udkast til svarbrev baseret på HELE sagspakken
@@ -2132,9 +2306,11 @@ def generer_svarbrev_til_sag(
 
     verificerede_klagepunkter: list[str] eller None. Hvis None, kører
         vi udled_alle_klagepunkter() automatisk for at sikre 100%
-        klagepunkt-dækning. Hvis listen allerede er udtrukket
-        (typisk i forside.py før førstevurdering), genbruges den her
-        for at spare et AI-kald.
+        klagepunkt-dækning.
+
+    tidsforhold: dict eller None. Hvis None, kører vi udled_tidsforhold()
+        for at finde reklamations-tidsforhold. Bruges som forsvars-
+        argument i svarbrevet hvis klager har reklameret for sent.
     """
     try:
         # KRITISK: Sikr at vi har en udtømmende liste over alle
@@ -2148,10 +2324,20 @@ def generer_svarbrev_til_sag(
                 sagsakter_tekst=(sagsakter or "").strip(),
             )
 
-        # Byg den korrekte svarbrev-prompt baseret på flag + klagepunkter
+        # Tilsvarende: udtræk tidsforhold (rettidig reklamation) hvis
+        # ikke allerede gjort. Pakkerejse-Ankenævnet vægter dette
+        # ekstremt højt og det er ofte et stærkt forsvarsargument.
+        if tidsforhold is None:
+            tidsforhold = udled_tidsforhold(
+                sag=sag,
+                sagsakter_tekst=(sagsakter or "").strip(),
+            )
+
+        # Byg den korrekte svarbrev-prompt baseret på flag + data
         svarbrev_opgave = byg_svarbrev_opgave(
             inkluder_kildehenvisninger=inkluder_kildehenvisninger,
             verificerede_klagepunkter=verificerede_klagepunkter,
+            tidsforhold=tidsforhold,
         )
         sagsakter_tekst = (sagsakter or "").strip()
         filer = sag.get("filer") or []

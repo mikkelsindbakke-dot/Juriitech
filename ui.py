@@ -398,7 +398,9 @@ def _highlight_kildehenvisninger(tekst):
     )
 
 
-def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
+def render_sagsresume(
+    resume_dict, accent="#00D4C2", bg="#FDE9EE", nummer=1
+):
     """
     Renderer 'Resume af sagen' som en Apple Health-pillar — samme visuelle
     sprog som de øvrige sektioner (farvet pastel baggrund, accent-prik og
@@ -407,6 +409,10 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
 
     resume_dict forventes at indeholde nøglerne:
         emne, klagepunkter (liste), krav, tui_handtering
+
+    nummer: heltal — sektion-nummer der prepends til titlen
+        (fx "1. Resume af sagen"). Forrige sektioner i siden
+        bestemmer hvilket nummer denne får.
     """
     if not resume_dict or not isinstance(resume_dict, dict):
         return
@@ -458,7 +464,7 @@ def render_sagsresume(resume_dict, accent="#00D4C2", bg="#FDE9EE"):
     html = (
         f'<div class="analyse-pillar" style="--pillar-bg: {bg}; --pillar-accent: {accent};">'
         '<div class="analyse-pillar-accent-dot"></div>'
-        '<h2 class="analyse-pillar-title">Resume af sagen</h2>'
+        f'<h2 class="analyse-pillar-title">{nummer}. Resume af sagen</h2>'
         '<div class="analyse-pillar-body">'
         f'<p class="sagsresume-emne-in-pillar">{emne}</p>'
         '<div class="sagsresume-grid">'
@@ -488,6 +494,7 @@ def render_analyse_som_pillars(
     skip_referencer=False,
     skip_sandsynlighed=False,
     skip_konklusion=False,
+    start_nummer=1,
 ):
     """
     Renderer en juridisk analyse som Apple-Health-inspirerede "pillars"
@@ -500,6 +507,11 @@ def render_analyse_som_pillars(
       skip_referencer    — hvis referencer vises som visuelle kort separat
       skip_sandsynlighed — hvis udfalds-dashboardet allerede vises øverst
       skip_konklusion    — hvis konklusion-en-linje vises i sagsresume-kortet
+
+    start_nummer: heltal — det første sektion-nummer der bruges i denne
+        render. Bruges til at fortsætte sekvensen fra de pillars der
+        renderes ovenfor (resume, referencer osv.) — så hele siden har
+        konsekutiv 1, 2, 3, 4, 5... nummering på tværs af kald.
     """
     if not svar_tekst:
         return
@@ -538,9 +550,16 @@ def render_analyse_som_pillars(
     for i, (titel, body) in enumerate(sektioner):
         accent, bg = _PILLAR_PALETTER[i % len(_PILLAR_PALETTER)]
 
-        # Escape titel så specialtegn ikke bryder HTML
+        # Escape titel så specialtegn ikke bryder HTML.
+        # Strip eventuelt eksisterende leading nummer fra titlen
+        # (fx hvis AI'en allerede har skrevet "1. Klagens kernepunkter")
+        # — vi prepender vores eget konsekutive nummer i stedet.
         import html as _html
-        titel_safe = _html.escape(titel)
+        titel_uden_nummer = re.sub(
+            r"^\s*\d+\.\s*", "", (titel or "")
+        )
+        titel_safe = _html.escape(titel_uden_nummer)
+        sektion_nummer = start_nummer + i
 
         # Body konverteres fra markdown til HTML (med citation-spans)
         body_html = _markdown_til_html(body)
@@ -553,7 +572,7 @@ def render_analyse_som_pillars(
                     --pillar-accent: {accent};
                  ">
                 <div class="analyse-pillar-accent-dot"></div>
-                <h2 class="analyse-pillar-title">{titel_safe}</h2>
+                <h2 class="analyse-pillar-title">{sektion_nummer}. {titel_safe}</h2>
                 <div class="analyse-pillar-body">{body_html}</div>
             </div>
             """,

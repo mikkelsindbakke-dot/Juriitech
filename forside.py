@@ -27,6 +27,7 @@ from ai_engine import (
     udled_sandsynligheder_strukturelt,
     udled_sagsresume_strukturelt,
     udled_alle_klagepunkter,
+    udled_tidsforhold,
 )
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
@@ -312,8 +313,21 @@ st.markdown(
         margin-bottom: 1.75rem;
     }
 
-    .analyse-pillar-title {
+    /* KONSEKVENT FONT-FAMILY i HELE pillaren — både overskrift og
+       brødtekst bruger samme serif-font. Det giver et editorial,
+       sammenhængende look. !important sikrer at Streamlit's
+       default-fonts (Inter via base.css) ikke overstyrer. */
+    .analyse-pillar-title,
+    .analyse-pillar-body,
+    .analyse-pillar-body p,
+    .analyse-pillar-body li,
+    .analyse-pillar-body strong,
+    .analyse-pillar-body span,
+    .analyse-pillar-body div {
         font-family: 'Source Serif 4', Georgia, serif !important;
+    }
+
+    .analyse-pillar-title {
         font-size: 2.4rem !important;
         font-weight: 700 !important;
         line-height: 1.08 !important;
@@ -326,7 +340,6 @@ st.markdown(
     }
 
     .analyse-pillar-body {
-        font-family: 'Inter', sans-serif;
         font-size: 1.08rem;
         line-height: 1.75;
         color: #1F2937 !important;
@@ -1413,6 +1426,7 @@ if st.session_state.get("aktuel_sag"):
             "juriitech PAX laver en grundig første vurdering af sagen",
             faser=[
                 "Identificerer alle klagepunkter klager rejser...",
+                "Kortlægger tidsforhold mellem mangler og reklamation...",
                 "Læser sagsakterne og høringsbrevet...",
                 "Søger i vidensbanken efter tidligere afgørelser...",
                 "Sammenholder med pakkerejseloven og rejsevilkårene...",
@@ -1433,6 +1447,17 @@ if st.session_state.get("aktuel_sag"):
                 )
                 st.session_state.alle_klagepunkter = alle_klagepunkter
 
+                # OG SAMTIDIG: Udtræk tidsforhold mellem konstatering af
+                # mangler og kontakt til TUI. Pakkerejse-Ankenævnet
+                # vægter rettidig reklamation MEGET HØJT — det er ofte
+                # afgørende. Vi udtrækker det som dedikeret strukturet
+                # data så det aldrig overses i analysen eller svarbrevet.
+                tidsforhold = udled_tidsforhold(
+                    sag=st.session_state.aktuel_sag,
+                    sagsakter_tekst=st.session_state.get("sagsakter", ""),
+                )
+                st.session_state.tidsforhold = tidsforhold
+
                 # Byg klagepunkter-blok der injiceres i førstevurderings-
                 # prompten så AI'en bruger den verificerede liste
                 if alle_klagepunkter:
@@ -1450,9 +1475,41 @@ if st.session_state.get("aktuel_sag"):
                 else:
                     klagepunkter_facit = ""
 
+                # Byg tidsforhold-blok hvis vi har en problematisk
+                # forsinkelse — så bliver det IKKE blot nævnt, men
+                # fremhævet eksplicit som forsvarsargument
+                tidsforhold_facit = ""
+                if (
+                    tidsforhold
+                    and tidsforhold.get("har_problematisk_forsinkelse")
+                    and not tidsforhold.get("kunne_ikke_udledes")
+                ):
+                    tidsforhold_facit = (
+                        "VERIFICERET TIDSFORHOLD — REKLAMATIONSRETTIDIGHED "
+                        "(udtrukket separat — SKAL fremhæves i analysen):\n"
+                        "Pakkerejse-Ankenævnet vægter rettidig "
+                        "reklamation MEGET HØJT. Følgende er udledt:\n\n"
+                    )
+                    if tidsforhold.get("samlet_vurdering"):
+                        tidsforhold_facit += (
+                            f"  Samlet vurdering: "
+                            f"{tidsforhold['samlet_vurdering']}\n\n"
+                        )
+                    for _obs in tidsforhold.get(
+                        "konkrete_observationer", []
+                    ):
+                        tidsforhold_facit += f"  • {_obs}\n"
+                    tidsforhold_facit += (
+                        "\nDette tidsforhold udgør et VIGTIGT forsvars-"
+                        "argument for TUI og SKAL adresseres i analysen "
+                        "— enten som eget afsnit eller integreret i den "
+                        "juridiske vurdering. Brug konkrete datoer.\n\n"
+                    )
+
                 auto_svar, rel_sager = spoerg_ai_med_sag(
                     spoergsmaal=(
                         klagepunkter_facit +
+                        tidsforhold_facit +
                         "Lav en struktureret juridisk førstevurdering af sagen "
                         "baseret på de uploadede dokumenter. Følg præcis denne "
                         "rækkefølge:\n\n"
@@ -1674,6 +1731,13 @@ if st.session_state.get("aktuel_sag"):
 
         vis_udfalds_dashboard(st.session_state.auto_vurdering_tekst)
 
+        # ---------- KONSEKUTIV SEKTION-NUMMERERING ----------
+        # Hver pillar på siden får et fortløbende nummer (1, 2, 3, ...)
+        # uanset om de renderes via render_sagsresume, inline markdown
+        # eller render_analyse_som_pillars. Vi sporer tælleren her og
+        # passerer det til hver render-funktion.
+        _pillar_nummer = 1
+
         # ---------- RESUME AF SAGEN — FØRSTE sektion efter dashboardet ----------
         # Apple Health-pillar-stilen med emne + struktureret grid (klagepunkter,
         # klagers krav, TUI's håndtering). Vises før de relevante afgørelser
@@ -1684,7 +1748,57 @@ if st.session_state.get("aktuel_sag"):
                 st.session_state.sagsresume,
                 accent="#00D4C2",
                 bg="#FDE9EE",
+                nummer=_pillar_nummer,
             )
+            _pillar_nummer += 1
+
+        # ---------- TIDSFORHOLD — KRITISK FORSVARSARGUMENT ----------
+        # Pakkerejse-Ankenævnet vægter rettidig reklamation MEGET HØJT.
+        # Hvis vi har detekteret en problematisk forsinkelse mellem
+        # konstatering af mangler og kontakt til TUI, fremhæves det her
+        # som en gul/orange advarsels-pillar SÅ JURISTEN STRAKS SER DET.
+        # Vises KUN hvis der er en faktisk forsinkelse — undgår noise.
+        _tf = st.session_state.get("tidsforhold")
+        if (
+            _tf
+            and _tf.get("har_problematisk_forsinkelse")
+            and not _tf.get("kunne_ikke_udledes")
+        ):
+            import html as _html_tf
+            _tf_vurdering = _html_tf.escape(
+                _tf.get("samlet_vurdering") or ""
+            )
+            _tf_observationer_html = ""
+            if _tf.get("konkrete_observationer"):
+                _tf_observationer_html = (
+                    "<ul style='margin: 0.75rem 0; padding-left: 1.3rem;'>"
+                )
+                for _obs in _tf["konkrete_observationer"]:
+                    _tf_observationer_html += (
+                        f"<li style='margin-bottom: 0.4rem;'>"
+                        f"{_html_tf.escape(_obs)}</li>"
+                    )
+                _tf_observationer_html += "</ul>"
+
+            # Gul/peach-advarsels-pillar — varmere accent (rødt/orange)
+            # for at signalere "vigtig opmærksomhed".
+            st.markdown(
+                f'<div class="analyse-pillar"'
+                ' style="--pillar-bg: #FEF3C7; --pillar-accent: #D97706;">'
+                '<div class="analyse-pillar-accent-dot"></div>'
+                f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
+                'Tidsforhold og rettidig reklamation</h2>'
+                '<div class="analyse-pillar-body">'
+                '<p style="font-weight: 600; color: #92400E;">'
+                'Pakkerejse-Ankenævnet vægter rettidig reklamation højt. '
+                'juriitech PAX har identificeret følgende relevante '
+                'tidsforhold der bør indgå som forsvarsargument:</p>'
+                f'<p>{_tf_vurdering}</p>'
+                f'{_tf_observationer_html}'
+                '</div></div>',
+                unsafe_allow_html=True,
+            )
+            _pillar_nummer += 1
 
         # Visuelle kort for de 3-5 mest relevante tidligere sager.
         # Indrammes i en Apple Health-pillar med overskriften "Relevante
@@ -1697,10 +1811,10 @@ if st.session_state.get("aktuel_sag"):
         if afgoerelser_ud:
             # Apple Health-pillar wrapper — lavendel baggrund, indigo accent
             st.markdown(
-                '<div class="analyse-pillar"'
+                f'<div class="analyse-pillar"'
                 ' style="--pillar-bg: #EEEAFF; --pillar-accent: #6366F1;">'
                 '<div class="analyse-pillar-accent-dot"></div>'
-                '<h2 class="analyse-pillar-title">Relevante referencer</h2>'
+                f'<h2 class="analyse-pillar-title">{_pillar_nummer}. Relevante referencer</h2>'
                 '<div class="analyse-pillar-body">'
                 '<p>Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om '
                 'din nuværende sag. juriitech PAX bruger dem aktivt som '
@@ -1708,6 +1822,7 @@ if st.session_state.get("aktuel_sag"):
                 '</div></div>',
                 unsafe_allow_html=True,
             )
+            _pillar_nummer += 1
             from badges import udled_afgoerelsesdato, badge
 
             match_info_list = st.session_state.get("match_info") or []
@@ -1830,6 +1945,7 @@ if st.session_state.get("aktuel_sag"):
                 # Konklusion flyttes op som 'Forventet udfald' i sagsresume-
                 # kortet ovenfor — vi undgår at duplikere den her.
                 skip_konklusion=_har_struktureret_resume,
+                start_nummer=_pillar_nummer,
             )
 
         # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
@@ -2502,21 +2618,23 @@ if st.session_state.get("aktuel_sag"):
             ],
         ):
             try:
-                # Genbrug den verificerede klagepunkter-liste fra
-                # førstevurderingen hvis den findes — sparer et AI-kald
+                # Genbrug både klagepunkter-liste og tidsforhold fra
+                # førstevurderingen hvis de findes — sparer to AI-kald
                 # og sikrer konsistens mellem analyse og svarbrev.
-                # Hvis den ikke findes (fx hvis brugeren skipper
+                # Hvis de ikke findes (fx hvis brugeren skipper
                 # førstevurdering), udtrækker generer_svarbrev_til_sag
-                # den selv.
+                # dem selv.
                 _gemte_klagepunkter = st.session_state.get(
                     "alle_klagepunkter"
                 )
+                _gemt_tidsforhold = st.session_state.get("tidsforhold")
                 svarbrev = generer_svarbrev_til_sag(
                     sag=st.session_state.aktuel_sag,
                     sagsakter=st.session_state.get("sagsakter", ""),
                     ekstra_instrukser=ekstra_instrukser,
                     inkluder_kildehenvisninger=_inkluder_kildehenvisninger,
                     verificerede_klagepunkter=_gemte_klagepunkter,
+                    tidsforhold=_gemt_tidsforhold,
                 )
             except Exception as e:
                 vis_brugerfejl(
