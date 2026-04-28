@@ -316,25 +316,10 @@ def _split_analyse_i_sektioner(tekst):
         # Ingen sektion-headers fundet — returner hele teksten som én sektion
         sections.append(("Juridisk førstevurdering", "\n".join(current_body).strip()))
 
-    # SAFETY-NET: Hvis AI'en alligevel har lavet >8 top-level sektioner,
-    # er det med stor sandsynlighed en fejl (klagepunkter splittet ud
-    # som egne sektioner). Slå de overskydende sammen i den sidste
-    # legitime sektion som bullets, så layoutet ikke bryder sammen.
-    MAX_SEKTIONER = 8
-    if len(sections) > MAX_SEKTIONER:
-        beholdt = sections[:MAX_SEKTIONER - 1]
-        overflødige = sections[MAX_SEKTIONER - 1:]
-        # Saml de overflødige som én "Yderligere punkter"-sektion
-        sammenfletning = []
-        for titel, body in overflødige:
-            sammenfletning.append(
-                f"- **{titel}**" + (f": {body}" if body else "")
-            )
-        beholdt.append((
-            "Yderligere klagepunkter og detaljer",
-            "\n".join(sammenfletning),
-        ))
-        sections = beholdt
+    # NB: Safety-net for >8 sektioner er flyttet til
+    # render_analyse_som_pillars, så den kan køre EFTER skip-filtrene
+    # (resume, referencer, sandsynlighed, konklusion). Ellers kunne
+    # filtrerede sektioner fejlagtigt ende i 'Yderligere klagepunkter'.
 
     return sections
 
@@ -566,6 +551,28 @@ def render_analyse_som_pillars(
         filtreret.append((titel, body))
 
     sektioner = filtreret
+
+    # SAFETY-NET: Hvis AI'en alligevel har lavet >7 top-level sektioner
+    # EFTER skip-filtreringen, er det med stor sandsynlighed en fejl
+    # (klagepunkter splittet ud som egne sektioner). Slå de overskydende
+    # sammen i én "Yderligere klagepunkter"-sektion. Vi sætter grænsen
+    # ved 7 så der er plads til de 4-5 forventede pillars + lidt
+    # luft til legitime ekstra-sektioner. Vigtigt: skip-filtrene har
+    # allerede kørt, så vi merger KUN ægte indholds-sektioner.
+    MAX_SEKTIONER_EFTER_SKIP = 7
+    if len(sektioner) > MAX_SEKTIONER_EFTER_SKIP:
+        beholdt = sektioner[:MAX_SEKTIONER_EFTER_SKIP - 1]
+        overflødige = sektioner[MAX_SEKTIONER_EFTER_SKIP - 1:]
+        sammenfletning = []
+        for titel, body in overflødige:
+            sammenfletning.append(
+                f"- **{titel}**" + (f": {body}" if body else "")
+            )
+        beholdt.append((
+            "Yderligere klagepunkter og detaljer",
+            "\n".join(sammenfletning),
+        ))
+        sektioner = beholdt
 
     for i, (titel, body) in enumerate(sektioner):
         accent, bg = _PILLAR_PALETTER[i % len(_PILLAR_PALETTER)]
