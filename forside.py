@@ -1148,6 +1148,68 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ---------- HJÆLPER: Tilføj nye filer til en eksisterende sag ----------
+def _tilfoej_nye_filer_til_sag(nye_filer):
+    """ADDS nye filer til den eksisterende aktuelle sag, uden at
+    erstatte de allerede scannede filer. Bruges når brugeren i active
+    state uploader yderligere bilag og klikker 'Tilføj filer'.
+    """
+    if not nye_filer:
+        return
+
+    aktuel = st.session_state.get("aktuel_sag") or {"filer": []}
+    eksisterende_filnavne = {
+        f.get("filnavn") for f in (aktuel.get("filer") or [])
+    }
+    # Filtrer fra: filer der allerede er i sagen
+    rene_nye = [
+        f for f in nye_filer if f.name not in eksisterende_filnavne
+    ]
+    if not rene_nye:
+        st.toast("Disse filer er allerede i sagen.")
+        return
+
+    with st.spinner(f"Læser {len(rene_nye)} nye filer..."):
+        ny_data = laes_sag_fra_filer(rene_nye)
+        nye_dicts = ny_data.get("filer", []) if ny_data else []
+
+        # Append til eksisterende sag
+        kombinerede_filer = list(aktuel.get("filer") or []) + nye_dicts
+        st.session_state.aktuel_sag = {
+            **aktuel,
+            "filer": kombinerede_filer,
+        }
+
+        # Opdater scannet-signatur så førstevurdering re-trigges
+        ny_signatur = tuple(sorted(
+            (f["filnavn"], len(f.get("tekst") or ""))
+            for f in kombinerede_filer
+        ))
+        st.session_state.sidste_sagsfil_signatur = ny_signatur
+
+        # Auto-gem nye filer i databasen
+        for fil in nye_dicts:
+            if sag_findes(fil["filnavn"]):
+                continue
+            if fil["type"] == "tekst" and fil.get("tekst", "").strip():
+                emb = embed_dokument(fil["tekst"])
+                gem_sag_i_db(
+                    fil["filnavn"], fil["tekst"],
+                    dokumenttype="klage", embedding=emb,
+                )
+            else:
+                gem_sag_i_db(
+                    fil["filnavn"],
+                    f"[Scannet sagsbilag — analyseres via vision. "
+                    f"Filnavn: {fil['filnavn']}]",
+                    dokumenttype="klage",
+                )
+
+        st.toast(f"{len(nye_dicts)} nye filer tilføjet til sagen.")
+
+    st.rerun()
+
+
 # ---------- HJÆLPER: Scan og gem filer ----------
 # Defineres her så både empty-state-knappen (inde i _kol_upload) og
 # active-state-knappen (efter columns) kan kalde samme logik uden
@@ -1290,18 +1352,32 @@ if not _har_aktiv_sag:
                     uploadede_sagsfiler, _aktuel_sig_inline
                 )
 else:
+    # Active state: brug en SEPARAT file_uploader med eget key.
+    # Tidligere genbrugte vi 'sag_uploader' fra empty state, men det
+    # gav state-konflikter når brugeren klikkede X — siden scrollede
+    # til toppen og virkede broken. Med eget key er state isoleret:
+    # X-klik fjerner kun fra DENNE uploader, ikke fra den scannede sag.
+    # Scannede filer styres separat via 'Ryd sag' eller via at uploade
+    # flere og klikke 'Opdatér filer'.
+    st.markdown(
+        "<div style='margin-top: 8px; color: #6B7280; font-size: 0.88rem;'>"
+        "Vil du tilføje flere sagsfiler til den aktuelle sag? "
+        "Upload dem her — klik derefter 'Opdatér filer'. For at fjerne "
+        "scannede filer eller starte forfra, brug 'Ryd sag' nedenfor."
+        "</div>",
+        unsafe_allow_html=True,
+    )
     uploadede_sagsfiler = st.file_uploader(
-        "Upload sagsfilerne",
+        "Tilføj flere sagsfiler",
         type=["zip", "pdf", "docx", "png", "jpg", "jpeg", "mp4"],
         accept_multiple_files=True,
-        key="sag_uploader",
+        key="sag_uploader_active",  # SEPARAT key fra empty state
+        label_visibility="collapsed",
     )
 
 # Beregn upload-signatur for at detektere om der er nye/ændrede filer.
-# Brugeren skal AKTIVT trykke "Scan filer" / "Opdatér filer" for at
-# trigge læsning + analyse — så undgår vi, at appen begynder at loade
-# midt i et upload-flow, hvor brugeren stadig er ved at finde flere
-# dokumenter. Det er en BEVIDST UX-beslutning fra Mikkel.
+# I empty state bruges denne signatur til at trigge "Scan filer"-knappen.
+# I active state bruges separat logik nedenfor til at "Tilføje filer".
 _aktuel_sagsfiler_signatur = tuple(sorted(
     (f.name, f.size) for f in uploadede_sagsfiler or []
 ))
@@ -1312,29 +1388,33 @@ _har_uskannede_aendringer = (
 )
 _har_scannet_filer_foer = _sidste_scannet_signatur is not None
 
-# I aktiv-state (efter første scan, hvor brugeren tilføjer flere
-# filer) vises knappen som en kompakt knap i en smal kolonne. Det er
-# IKKE i empty-state — der vises knappen inde i _kol_upload ovenfor.
-if _har_uskannede_aendringer and _har_aktiv_sag:
-    _knap_tekst = (
-        "Opdatér filer" if _har_scannet_filer_foer else "Scan filer"
-    )
-    _btn_kol, _spacer_kol = st.columns([1, 3])
-    with _btn_kol:
-        _knap_klik = st.button(
-            _knap_tekst,
-            type="primary",
-            use_container_width=True,
-            key="scan_filer_btn",
-            help=(
-                "Klik når du er klar — først da læses filerne og "
-                "analysen starter. Du kan uploade flere filer først."
-            ),
-        )
-    if _knap_klik:
-        _udfor_scan_filer_og_gem(
-            uploadede_sagsfiler, _aktuel_sagsfiler_signatur
-        )
+# I active state — vis "Tilføj filer"-knap når der er nye filer i den
+# separate uploader (sag_uploader_active) der IKKE allerede er i sagen.
+# Vi sammenligner mod aktuel_sag.filer i stedet for sidste_signatur, så
+# X-klik på en ALLEREDE-scannet fil ikke fejlagtigt udløser noget.
+if _har_aktiv_sag and uploadede_sagsfiler:
+    _eksisterende_filnavne = {
+        f.get("filnavn")
+        for f in (st.session_state.aktuel_sag.get("filer") or [])
+    }
+    _nye_kun = [
+        f for f in uploadede_sagsfiler
+        if f.name not in _eksisterende_filnavne
+    ]
+    if _nye_kun:
+        _btn_kol, _spacer_kol = st.columns([1.3, 3])
+        with _btn_kol:
+            if st.button(
+                f"Tilføj {len(_nye_kun)} nye filer",
+                type="primary",
+                use_container_width=True,
+                key="tilfoej_nye_filer_btn",
+                help=(
+                    "Tilføj de nye filer til den eksisterende sag. "
+                    "Allerede scannede filer bevares."
+                ),
+            ):
+                _tilfoej_nye_filer_til_sag(_nye_kun)
 
 # Knap til at rydde sagen
 if st.session_state.get("aktuel_sag"):
