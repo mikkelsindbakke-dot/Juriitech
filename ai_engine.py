@@ -83,14 +83,56 @@ SYSTEM_PROMPT = (
     "objektiv og analytisk. Du skal altid finde de stærkeste forsvarspunkter "
     "for rejseselskabet baseret på de tidligere afgørelser i vidensbanken.\n"
     "\n"
-    "FLERSPROGEDE DOKUMENTER:\n"
-    "Sagens bilag kan være på flere sprog — typisk dansk, engelsk, tysk, "
-    "svensk eller norsk. Du skal læse, forstå og bruge indholdet i ALLE "
-    "bilag uanset sprog. Når du citerer fra et ikke-dansk bilag i din "
-    "analyse, så oversæt citatet til dansk og angiv det oprindelige sprog "
-    "i parentes, fx: 'Ifølge hotellets e-mail (oversat fra engelsk): "
-    '"Vi tilbød værelsesskift ved ankomst." (Bilag 05)\'. Dine svar, '
-    "analyser og svarbreve skal altid skrives på dansk.\n"
+    "FLERSPROGEDE DOKUMENTER — PRÆCIS OVERSÆTTELSE TIL DANSK:\n"
+    "Sagens bilag er ofte på engelsk (hotel-korrespondance, "
+    "booking-bekræftelser, hotel-managerens svar, internationale "
+    "samarbejdspartnere) eller andre sprog (tysk, svensk, norsk). Du SKAL\n"
+    "læse, forstå og bruge indholdet i ALLE bilag uanset sprog, og du\n"
+    "skal oversætte præcist og juridisk korrekt til dansk. Følg disse\n"
+    "regler nøje:\n"
+    "\n"
+    "  1. ALT analyse-output skal være på DANSK — ingen undtagelser.\n"
+    "     Klagens indhold, hotellets svar, citater, vurderinger — alt\n"
+    "     formuleres på dansk uanset originalsproget.\n"
+    "\n"
+    "  2. Brug PRÆCISE DANSKE JURIDISKE TERMER — ikke direkte\n"
+    "     ord-for-ord-oversættelse. Eksempler:\n"
+    "       • 'mangel' (ikke 'deficiency' eller 'fault')\n"
+    "       • 'rettidig reklamation' (ikke 'timely complaint')\n"
+    "       • 'forholdsmæssigt afslag' (ikke 'proportional reduction')\n"
+    "       • 'bistandspligt' (ikke 'duty to assist')\n"
+    "       • 'klagepunkt' (ikke 'complaint point')\n"
+    "       • 'pakkerejse' (ikke 'package travel')\n"
+    "       • 'sælger' om rejsearrangøren (ikke 'seller')\n"
+    "\n"
+    "  3. CITATER fra engelske kilder — oversæt PRÆCIST til dansk i\n"
+    "     selve teksten, og inkluder originalcitatet i parentes når det\n"
+    "     er en konkret formulering med juridisk eller faktuel vægt:\n"
+    "     Eksempel:\n"
+    "       'Hotellets manager skrev til klager: \"Vi kan desværre ikke\n"
+    "       garantere en fejlfri leverance\" (oversat fra engelsk:\n"
+    "       \"We cannot unfortunately guarantee a flawless delivery\")\n"
+    "       [Bilag 05, s. 2]'\n"
+    "     For løse beskrivelser uden citat-præcision behøves\n"
+    "     originalteksten ikke.\n"
+    "\n"
+    "  4. NAVNE og EGENNAVNE bevares på originalsproget: hotelnavne,\n"
+    "     personer, byer, lande, lufthavne, virksomheder. Kun beskrivende\n"
+    "     tekst og citater oversættes.\n"
+    "\n"
+    "  5. DATOER og BELØB — konverter til dansk format:\n"
+    "       • '12 June 2025' → '12. juni 2025'\n"
+    "       • '€500' → '500 EUR' eller '500 EUR (ca. 3.730 DKK)'\n"
+    "       • '$1,500.50' → '1.500,50 USD'\n"
+    "\n"
+    "  6. Hvis et engelsk udtryk IKKE har en præcis dansk juridisk\n"
+    "     modsvarighed, brug et klart dansk udtryk og forklar evt. i\n"
+    "     parentes: fx 'overbooking (engelsk: overbooking)'.\n"
+    "\n"
+    "  7. KVALITETSKRAV: Oversættelsen skal være så præcis at en dansk\n"
+    "     jurist kan bruge den direkte i et svarbrev til Pakkerejse-\n"
+    "     Ankenævnet uden at skulle gå tilbage til originalkilden.\n"
+    "\n"
     "\n"
     "ABSOLUT REGEL OM KILDEHENVISNINGER — OBLIGATORISK VED HVER PÅSTAND:\n"
     "Eftersom brugeren skal kunne stole på din argumentation, SKAL du tilføje "
@@ -1049,6 +1091,23 @@ og ører (fx "Det opdaterede krav udgør herefter X DKK, subsidiært
 Y DKK..."). Hvis specifikke beløb er relevante for argumentationen, kan
 de indgå løbende i teksten — men ikke som en samlet krav-sammenfatning.
 
+OVERSÆTTELSE FRA ENGELSK (vigtig):
+Mange bilag er på engelsk (hotel-mails, partner-korrespondance,
+booking-bekræftelser). Hele svarbrevet skal være på korrekt JURIDISK
+DANSK. Når du citerer fra eller henviser til engelske dokumenter:
+  • Oversæt PRÆCIST til dansk i selve brevteksten
+  • Brug danske juridiske termer (mangel, rettidig reklamation,
+    forholdsmæssigt afslag — ikke deficiency, timely complaint,
+    proportional reduction)
+  • Konverter datoer til dansk format ('12. juni 2025')
+  • Konverter beløb hvor relevant ('500 EUR (ca. 3.730 DKK)')
+  • Bevar egennavne (hotel-, person-, by-navne) på originalsproget
+  • Hvis et engelsk citat er centralt for argumentationen, kan
+    originalcitatet stå i parentes — fx '"Vi tilbød afhjælpning"
+    (oversat fra engelsk: "We offered remediation")'
+Pakkerejse-Ankenævnet læser kun dansk — alt skal kunne forstås uden
+opslag i originalbilag.
+
 UNDLAD bevidst at citere tidligere afgørelser fra Nævnet — det forventes
 ikke i rejsearrangørens svar og gør brevet for detaljeret.
 
@@ -1598,6 +1657,16 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
         "punkter sammen.\n"
         "- Hvert klagepunkt formuleres som ÉN kort sætning "
         "(max 20 ord).\n\n"
+        "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
+        "Mange dokumenter er på engelsk (hotel-mails, korrespondance osv.). "
+        "Du SKAL formulere ALLE klagepunkter på dansk — også når de "
+        "stammer fra engelsk-sprogede bilag. Brug PRÆCISE danske termer, "
+        "ikke direkte ord-for-ord-oversættelser:\n"
+        "  • 'mangel' (ikke 'deficiency')\n"
+        "  • 'rettidig reklamation' (ikke 'timely complaint')\n"
+        "  • 'manglende bistand' (ikke 'lack of assistance')\n"
+        "Klagepunkterne skal kunne læses og forstås direkte af en "
+        "dansk jurist uden behov for at konsultere originalsproget.\n\n"
         "FILER FRA SAGEN FØLGER NEDENFOR:\n"
     )
 
@@ -1714,6 +1783,15 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "  guide-kontakt-dato, telefon-dato)\n"
         "   - Beregn forsinkelse i dage.\n"
         "3. Vurdér samlet om reklamationen var rettidig.\n\n"
+        "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
+        "Hotel-mails, korrespondance og bookings er ofte på engelsk. "
+        "Du SKAL skrive ALT output på dansk:\n"
+        "  • Datoer på dansk format ('12. juni 2025', ikke '12 June 2025')\n"
+        "  • Vurderinger og observationer i danske juridiske termer\n"
+        "  • Brug 'rettidig reklamation' (ikke 'timely complaint'),\n"
+        "    'mangel' (ikke 'deficiency'), 'henvendelse til TUI' osv.\n"
+        "Output skal kunne læses direkte af en dansk jurist uden\n"
+        "konsultation af originalsproget.\n\n"
         "FILER FRA SAGEN FØLGER NEDENFOR:\n"
     )
 
