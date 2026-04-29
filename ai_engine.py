@@ -2201,6 +2201,126 @@ def udled_sagsmetadata(sag, sagsakter_tekst=""):
         return {"sagsnummer": "", "klagers_navn": ""}
 
 
+def udled_bilag_overskrifter(filer):
+    """
+    Foreslår en kort dansk overskrift til hvert bilag i bilag-listen
+    på et svarbrev (fx 'Første bekræftelsesmail på rejsebestillingen',
+    'TUIs rejsevilkår', 'Hotelbeskrivelse vedhæftet i 1. bekræftelsesmail').
+
+    Tager en liste af fil-dicts på formen:
+      [{"filnavn": "bilag_05.pdf", "tekst": "...", "rolle": "..."}, ...]
+
+    Returnerer en dict mappet på filnavn:
+      {"bilag_05.pdf": "Første bekræftelsesmail på rejsebestillingen", ...}
+
+    Hvis AI-kaldet fejler eller en fil ikke kan beskrives, falder den
+    tilbage til et default udledt af filnavnet (uden extension, snyde-
+    konverteret til mellemrum).
+
+    Bruges til at auto-udfylde bilag-overskriftsfelterne i bilag-
+    håndteringssektionen, så brugeren ikke skal skrive dem fra bunden
+    — men kan altid redigere bagefter.
+    """
+    import json as _json
+    import re as _re
+
+    if not filer:
+        return {}
+
+    def _filnavn_til_default(fn):
+        """Pænt fallback hvis AI'en ikke kan udlede en overskrift."""
+        base = (fn or "").rsplit(".", 1)[0]
+        base = base.replace("_", " ").replace("-", " ").strip()
+        # Kapitaliser første bogstav, behold resten
+        if base:
+            return base[0].upper() + base[1:]
+        return "Bilag"
+
+    # Byg et kompakt prompt-input: filnavn + første ~600 tegn tekst.
+    # Vi sender op til 25 filer ad gangen (mere end nok til typiske sager).
+    fil_uddrag = []
+    for f in filer[:25]:
+        filnavn = f.get("filnavn") or ""
+        tekst = (f.get("tekst") or "")[:600].strip()
+        rolle = (f.get("rolle") or "").strip()
+        rolle_str = f" [rolle: {rolle}]" if rolle and rolle != "ukendt" else ""
+        fil_uddrag.append(
+            f"--- {filnavn}{rolle_str} ---\n{tekst or '(ingen tekst udtrukket)'}"
+        )
+
+    indled = (
+        "Du er en præcis dokument-klassifikator. Din ENESTE opgave er at "
+        "foreslå en KORT dansk overskrift til hvert af nedenstående bilag, "
+        "som det vil blive vist i bilag-listen øverst på et svarbrev til "
+        "Pakkerejse-Ankenævnet.\n\n"
+        "REGLER:\n"
+        "- Skriv KUN på dansk.\n"
+        "- Hver overskrift må MAX være 80 tegn.\n"
+        "- Vær KONKRET og BESKRIVENDE — fortæl hvad bilaget INDEHOLDER, "
+        "ikke bare 'Mail 1' eller 'Dokument'.\n"
+        "- Eksempler på gode overskrifter:\n"
+        "  • 'Første bekræftelsesmail på rejsebestillingen'\n"
+        "  • 'TUIs rejsevilkår'\n"
+        "  • 'Hotelbeskrivelse vedhæftet i 1. bekræftelsesmail'\n"
+        "  • 'Klagers korrespondance med TUI efter hjemkomst'\n"
+        "  • 'Voucher vedr. Hotel InterContinental Bali Resort'\n"
+        "- Hvis du IKKE kan udlede et fornuftigt indhold (fx fordi teksten "
+        "er tom eller meningsløs), brug en pæn default som 'Bilag — "
+        "[filnavn]' eller skriv en tom streng.\n"
+        "- OPFIND ALDRIG indhold der ikke står i teksten.\n\n"
+        "BILAGENE:\n\n"
+        + "\n\n".join(fil_uddrag)
+    )
+
+    slutning = (
+        "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
+        "ingen markdown, ingen kodeblok. Keys er filnavnene, values "
+        "er de foreslåede overskrifter:\n"
+        "{\n"
+        '  "filnavn1.pdf": "Foreslået overskrift",\n'
+        '  "filnavn2.docx": "Foreslået overskrift"\n'
+        "}\n"
+    )
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=1500,  # rigeligt til 25 korte overskrifter
+            temperature=0,
+            system=(
+                "Du er en præcis dokument-klassifikator. Du foreslår "
+                "korte danske overskrifter til bilag — du opfinder "
+                "aldrig indhold der ikke står i teksten."
+            ),
+            messages=[{"role": "user", "content": indled + slutning}],
+        )
+
+        svar = response.content[0].text.strip()
+        svar = _re.sub(r"^```(?:json)?\s*", "", svar)
+        svar = _re.sub(r"\s*```$", "", svar).strip()
+
+        data = _json.loads(svar)
+
+        # Saml resultatet, og fyld defaults ud for filer AI'en ikke nævnte
+        resultat = {}
+        for f in filer:
+            fn = f.get("filnavn") or ""
+            forslag = data.get(fn) or ""
+            forslag = str(forslag).strip()
+            # Limit hard cap så lange svar ikke smadrer layoutet
+            if len(forslag) > 80:
+                forslag = forslag[:77].rstrip() + "…"
+            resultat[fn] = forslag or _filnavn_til_default(fn)
+        return resultat
+    except Exception as e:
+        print(f"DEBUG: udled_bilag_overskrifter fejlede: {e}")
+        # Fallback: alle får filnavn-baseret default
+        return {
+            (f.get("filnavn") or ""): _filnavn_til_default(f.get("filnavn") or "")
+            for f in filer
+        }
+
+
 def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
     """
     Udtrækker et struktureret resume af sagen baseret på den allerede

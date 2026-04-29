@@ -247,8 +247,62 @@ def _fjern_celle_kant(cell):
     tc_pr.append(tc_borders)
 
 
+def _byg_bilag_liste(doc, bilag_liste):
+    """
+    Renders 'Bilag:'-overskrift efterfulgt af en pæn 2-kolonne-tabel
+    (uden synlige kanter) der viser hvert bilag som "Bilag X | beskrivelse".
+    Layoutet matcher det Mikkel sendte i referencebilledet:
+
+        Bilag:
+
+        Bilag A    TUIs bemærkninger til sagen
+        Bilag B    Første bekræftelsesmail på rejsebestillingen
+        Bilag C    ...
+
+    bilag_liste er en liste af dicts på formen:
+      [{"bogstav": "A", "overskrift": "TUIs bemærkninger til sagen"}, ...]
+
+    Hvis listen er tom rendres ingenting (defensivt).
+    """
+    if not bilag_liste:
+        return
+
+    # "Bilag:"-overskrift
+    bilag_p = doc.add_paragraph()
+    bilag_run = bilag_p.add_run("Bilag:")
+    bilag_run.bold = True
+    bilag_run.font.size = Pt(12)
+
+    # 2-kolonne-tabel uden synlige kanter
+    tabel = doc.add_table(rows=len(bilag_liste), cols=2)
+    tabel.autofit = False
+    for r, post in enumerate(bilag_liste):
+        bogstav_celle = tabel.cell(r, 0)
+        beskrivelse_celle = tabel.cell(r, 1)
+        bogstav_celle.width = Cm(2.5)
+        beskrivelse_celle.width = Cm(13.5)
+        _fjern_celle_kant(bogstav_celle)
+        _fjern_celle_kant(beskrivelse_celle)
+
+        # Venstre: "Bilag X"
+        bogstav_p = bogstav_celle.paragraphs[0]
+        bogstav_run = bogstav_p.add_run(f"Bilag {post.get('bogstav', '')}")
+        bogstav_run.font.size = Pt(11)
+
+        # Højre: beskrivelsen
+        beskrivelse_p = beskrivelse_celle.paragraphs[0]
+        beskrivelse_run = beskrivelse_p.add_run(
+            post.get("overskrift") or ""
+        )
+        beskrivelse_run.font.size = Pt(11)
+
+    # Lidt luft før brødteksten
+    doc.add_paragraph()
+
+
 def _byg_svarbrev_header(
-    doc, profil, sagsnummer, klagers_navn, hoeringssvar_nr
+    doc, profil, sagsnummer, klagers_navn, hoeringssvar_nr,
+    bilag_liste=None,
 ):
     """
     Bygger den klassiske brevhoved-opsætning til et svarbrev:
@@ -329,8 +383,15 @@ def _byg_svarbrev_header(
     vedr_run.font.size = Pt(11)
     _saet_paragraf_under_streg(vedr_p)
 
-    # Lidt ekstra luft før selve brødteksten
+    # Lidt ekstra luft før bilag-listen / brødteksten
     doc.add_paragraph()
+
+    # ---------- BILAG-LISTE (lige under Vedr-linjen) ----------
+    # Vises KUN hvis bilag_liste indeholder mindst én post. Bilag A er
+    # altid svarbrevet selv (det første element); resten er medsendte
+    # filer.
+    if bilag_liste:
+        _byg_bilag_liste(doc, bilag_liste)
 
 
 def svarbrev_til_docx(
@@ -340,6 +401,7 @@ def svarbrev_til_docx(
     klagers_navn="",
     hoeringssvar_nr=1,
     profil=None,
+    bilag_liste=None,
 ):
     """
     Konverterer et svarbrev til en .docx-fil med klassisk brev-opsætning:
@@ -358,6 +420,11 @@ def svarbrev_til_docx(
       hoeringssvar_nr   — 1, 2 eller 3
       profil            — selskabs-profil-dict (fra selskab_profiler).
                           Hvis None bruges den aktive profil.
+      bilag_liste       — liste af dicts på formen
+                          [{"bogstav": "A", "overskrift": "..."}, ...]
+                          Vises som bilag-liste lige under Vedr-linjen.
+                          Bilag A er pr. konvention selve svarbrevet.
+                          Hvis None/tom rendres ingen bilag-liste.
     """
     # Lazy-import så modulet stadig kan importeres i miljøer hvor
     # selskab_profiler endnu ikke er på plads (defensivt — bør altid være der)
@@ -389,6 +456,7 @@ def svarbrev_til_docx(
         sagsnummer=sagsnummer or "",
         klagers_navn=klagers_navn or "",
         hoeringssvar_nr=hoeringssvar_nr,
+        bilag_liste=bilag_liste or [],
     )
 
     # ---------- BRØDTEKST (svarbrevet) ----------
