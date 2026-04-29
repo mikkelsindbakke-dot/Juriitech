@@ -1680,7 +1680,46 @@ if st.session_state.get("aktuel_sag"):
             f"({antal_tekst} læst, {antal_scannet} scannede PDF'er)"
         )
     with kol2:
-        if st.button("Ryd sag"):
+        # ---------- TO-TRINS BEKRÆFTELSE PÅ 'RYD SAG' ----------
+        # Tidligere wipede knappen ALT i et enkelt klik — sag, sagsakter,
+        # vurdering, svarbrev, anon-resultater, alt. En kollega til Mikkel
+        # mistede hele sit arbejde da hun klikkede knappen i et forsøg på
+        # at omdøbe en fil. To-trins-bekræftelsen forhindrer denne
+        # data-tab-bug uden at låse knappen for legitim brug.
+        _ryd_bekraeft_key = "_ryd_sag_bekraefter"
+        if st.session_state.get(_ryd_bekraeft_key):
+            # I bekræftelses-tilstand: vis tydelig advarsel + rød knap
+            st.markdown(
+                "<div style='font-size: 0.78rem; color: #B91C1C; "
+                "font-weight: 600; text-align: center; margin-bottom: 4px;'>"
+                "Sikker? ALT går tabt</div>",
+                unsafe_allow_html=True,
+            )
+            _kol_ja, _kol_nej = st.columns(2)
+            with _kol_ja:
+                _bekraeft_klik = st.button(
+                    "Ja, ryd",
+                    type="primary",
+                    use_container_width=True,
+                    key="ryd_sag_bekraeft",
+                )
+            with _kol_nej:
+                if st.button(
+                    "Fortryd",
+                    use_container_width=True,
+                    key="ryd_sag_fortryd",
+                ):
+                    del st.session_state[_ryd_bekraeft_key]
+                    st.rerun()
+        else:
+            _bekraeft_klik = False
+            if st.button("Ryd sag"):
+                # Første klik: vis bekræftelse i stedet for at wipe
+                st.session_state[_ryd_bekraeft_key] = True
+                st.rerun()
+
+        if _bekraeft_klik:
+            # Bekræftet — udfør den fulde rydning
             st.session_state.aktuel_sag = None
             st.session_state.sidste_sagsfil_signatur = None
             st.session_state.sagsakter = ""
@@ -1709,6 +1748,9 @@ if st.session_state.get("aktuel_sag"):
                     or _key.startswith("fjern_instruks_")
                 ):
                     del st.session_state[_key]
+            # Ryd selve bekræftelses-flaget
+            if _ryd_bekraeft_key in st.session_state:
+                del st.session_state[_ryd_bekraeft_key]
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -2879,30 +2921,97 @@ if st.session_state.get("aktuel_sag"):
         st.markdown("**Uploadede sagsakter:**")
         _fil_til_fjern = None
         for idx, fil in enumerate(st.session_state.sagsakter_filer):
-            kol_a, kol_b = st.columns([10, 1])
-            with kol_a:
-                ikon = {
-                    "image_bytes": "🖼",
-                    "pdf_bytes": "📄",
-                    "tekst": "📄",
-                }.get(fil["type"], "📄")
-                laengde_info = ""
-                if fil["type"] == "tekst" and fil.get("tekst"):
-                    laengde_info = f" — {len(fil['tekst'])} tegn læst"
-                elif fil["type"] == "image_bytes":
-                    laengde_info = " — scannes via vision"
-                elif fil["type"] == "pdf_bytes":
-                    laengde_info = " — scannet PDF (læses via vision)"
-                st.markdown(
-                    f"<div style='padding: 6px 10px;'>"
-                    f"<strong>{fil['filnavn']}</strong>"
-                    f"<span style='color: #6B7280;'>{laengde_info}</span>"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            with kol_b:
-                if st.button("✕", key=f"sagsakter_fjern_{idx}", help="Fjern fil"):
-                    _fil_til_fjern = idx
+            # Inline-rename-tilstand: hvis brugeren har klikket blyanten,
+            # vises et tekstfelt + Gem/Fortryd. Ellers normal visning.
+            _rename_aktiv_key = f"sagsakter_rename_aktiv_{idx}"
+            _rename_aktiv = st.session_state.get(_rename_aktiv_key, False)
+
+            if _rename_aktiv:
+                # Rename-tilstand: tekstfelt med eksisterende navn + Gem/Fortryd
+                kol_a, kol_b, kol_c = st.columns([8, 1, 1])
+                with kol_a:
+                    _nyt_navn_key = f"sagsakter_nyt_navn_{idx}"
+                    if _nyt_navn_key not in st.session_state:
+                        st.session_state[_nyt_navn_key] = fil["filnavn"]
+                    st.text_input(
+                        "Nyt filnavn",
+                        key=_nyt_navn_key,
+                        label_visibility="collapsed",
+                        placeholder="Skriv nyt filnavn…",
+                    )
+                with kol_b:
+                    if st.button(
+                        "Gem",
+                        key=f"sagsakter_rename_gem_{idx}",
+                        type="primary",
+                        use_container_width=True,
+                    ):
+                        _nyt_navn = (
+                            st.session_state.get(_nyt_navn_key) or ""
+                        ).strip()
+                        if _nyt_navn:
+                            st.session_state.sagsakter_filer[idx][
+                                "filnavn"
+                            ] = _nyt_navn
+                        # Ryd rename-tilstand uanset
+                        st.session_state[_rename_aktiv_key] = False
+                        if _nyt_navn_key in st.session_state:
+                            del st.session_state[_nyt_navn_key]
+                        st.rerun()
+                with kol_c:
+                    if st.button(
+                        "✕",
+                        key=f"sagsakter_rename_fortryd_{idx}",
+                        help="Fortryd",
+                        use_container_width=True,
+                    ):
+                        st.session_state[_rename_aktiv_key] = False
+                        if _nyt_navn_key in st.session_state:
+                            del st.session_state[_nyt_navn_key]
+                        st.rerun()
+            else:
+                # Normal visning: filnavn + (rename, fjern)-knapper
+                kol_a, kol_b, kol_c = st.columns([10, 1, 1])
+                with kol_a:
+                    ikon = {
+                        "image_bytes": "🖼",
+                        "pdf_bytes": "📄",
+                        "tekst": "📄",
+                    }.get(fil["type"], "📄")
+                    laengde_info = ""
+                    if fil["type"] == "tekst" and fil.get("tekst"):
+                        laengde_info = (
+                            f" — {len(fil['tekst'])} tegn læst"
+                        )
+                    elif fil["type"] == "image_bytes":
+                        laengde_info = " — scannes via vision"
+                    elif fil["type"] == "pdf_bytes":
+                        laengde_info = (
+                            " — scannet PDF (læses via vision)"
+                        )
+                    st.markdown(
+                        f"<div style='padding: 6px 10px;'>"
+                        f"<strong>{fil['filnavn']}</strong>"
+                        f"<span style='color: #6B7280;'>"
+                        f"{laengde_info}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with kol_b:
+                    if st.button(
+                        "✏️",
+                        key=f"sagsakter_rename_{idx}",
+                        help="Omdøb fil",
+                    ):
+                        st.session_state[_rename_aktiv_key] = True
+                        st.rerun()
+                with kol_c:
+                    if st.button(
+                        "✕",
+                        key=f"sagsakter_fjern_{idx}",
+                        help="Fjern fil",
+                    ):
+                        _fil_til_fjern = idx
 
         if _fil_til_fjern is not None:
             st.session_state.sagsakter_filer.pop(_fil_til_fjern)
