@@ -2918,6 +2918,416 @@ def spoerg_ai_med_sag(
         return fejl
 
 
+# ============================================================
+# JSON-STRUKTURERET FØRSTEVURDERING (sektion 3-8 på forsiden)
+# ============================================================
+# Erstatter den frie markdown-tilgang (spoerg_ai_med_sag) for
+# førstevurderingen. AI'en kaldes med tool-use og en stram JSON-schema —
+# den kan literally ikke afvige fra strukturen fordi schemaet kun
+# tillader de 6 felter vi har defineret.
+#
+# Hvert felt har en RIG beskrivelse der fortæller AI'en præcis hvad
+# der skal stå, så indholdet bliver lige så fyldigt og juridisk skarpt
+# som før. Forskellen er kun at strukturen er ufravigelig.
+FOERSTEVURDERING_TOOL_NAME = "lever_juridisk_foerstevurdering"
+
+FOERSTEVURDERING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "klagens_kernepunkter": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Liste af de PRIMÆRE klagepunkter klager rejser mod "
+                "rejseselskabet. Hvert element er en kort beskrivelse "
+                "af et klagepunkt (max ~150 tegn). Inkludér ALLE "
+                "klagepunkter fra den verificerede liste i "
+                "kontekstprompten — uden undtagelse. Hvis klager "
+                "nævner 8 problemer, angiv 8 elementer. Hvis 17, "
+                "angiv 17. Brug formatet 'Klagepunkt N: [beskrivelse] "
+                "[Bilag XX]' hvor [Bilag XX] er en eksplicit "
+                "kildehenvisning i firkantede parenteser."
+            ),
+        },
+        "yderligere_klagepunkter_og_detaljer": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": (
+                "Liste af SEKUNDÆRE klagepunkter, kontekstuelle "
+                "detaljer og mindre kritikpunkter. Disse er IKKE "
+                "primære for den juridiske vurdering men giver et "
+                "komplet billede. Hver post er en kort beskrivelse "
+                "med [Bilag XX]-reference. Hvis der ingen sekundære "
+                "punkter er, returnér en tom liste []."
+            ),
+        },
+        "rejseselskabets_stillingtagen_indtil_nu": {
+            "type": "string",
+            "description": (
+                "Beskriv KRONOLOGISK hvad rejseselskabet (TUI/Spies/"
+                "Apollo osv.) har gjort, tilbudt eller afvist i "
+                "forhold til klagen INDEN Nævnet blev involveret. "
+                "Inkluder konkrete datoer fra mail-korrespondance og "
+                "sagsakter. Strukturér som flere afsnit (separer med "
+                "\\n\\n) hvis der er flere faser (på destinationen, "
+                "efter hjemkomst, sagsbehandlers svar, osv.). Brug "
+                "[Bilag XX]-referencer. Hvis det ikke fremgår tydeligt, "
+                "skriv 'fremgår ikke af bilagene'."
+            ),
+        },
+        "kort_juridisk_vurdering": {
+            "type": "string",
+            "description": (
+                "2-4 sætninger om de centrale juridiske spørgsmål i "
+                "sagen. Hvilke paragraffer i pakkerejseloven finder "
+                "anvendelse? Hvad er kernen i den juridiske "
+                "vurdering? Brug konkrete §-henvisninger (fx '§ 22', "
+                "'§ 25') og bilag-referencer. SKAL VÆRE KORT — ikke "
+                "flere afsnit, ikke nummererede underargumenter, ikke "
+                "Argument 1/2/3-format. Den fulde argumentation hører "
+                "ikke hjemme her."
+            ),
+        },
+        "sandsynlighedsvurdering": {
+            "type": "object",
+            "properties": {
+                "fuld_medhold_til_klager": {
+                    "type": "integer",
+                    "description": (
+                        "Procentpoint (0-100) for sandsynligheden af "
+                        "FULDT medhold til klager."
+                    ),
+                },
+                "delvist_medhold_til_klager": {
+                    "type": "integer",
+                    "description": (
+                        "Procentpoint (0-100) for sandsynligheden af "
+                        "DELVIST medhold til klager."
+                    ),
+                },
+                "afvisning_af_klagen": {
+                    "type": "integer",
+                    "description": (
+                        "Procentpoint (0-100) for sandsynligheden af "
+                        "FULD afvisning af klagen."
+                    ),
+                },
+                "begrundelse": {
+                    "type": "string",
+                    "description": (
+                        "Kort begrundelse for de tre procenter (3-5 "
+                        "sætninger) der forklarer hvorfor netop denne "
+                        "fordeling er sandsynlig. Kan henvise til "
+                        "tidligere afgørelser fra vidensbanken via "
+                        "[Afgørelse XX-YYYY (ÅÅÅÅ)]-format."
+                    ),
+                },
+            },
+            "required": [
+                "fuld_medhold_til_klager",
+                "delvist_medhold_til_klager",
+                "afvisning_af_klagen",
+                "begrundelse",
+            ],
+            "description": (
+                "Tre procenttal der summer til 100 + en begrundelse. "
+                "Selv hvis sagen er ufuldstændigt oplyst, estimér "
+                "ærligt baseret på hvad du kan udlede."
+            ),
+        },
+        "konklusion_en_linje": {
+            "type": "string",
+            "description": (
+                "ÉN ENKELT sætning (max 200 tegn) der opsummerer hvad "
+                "denne sag samlet anbefales at ende med. Eksempel: "
+                "'Sagen anbefales delvist afvist da reklamationen var "
+                "for sen, mens TUI tilbyder 1.500 kr. for booking-"
+                "fejlen.' INGEN bullets, INGEN flere sætninger, INGEN "
+                "ekstra argumentation — kun ÉN linje."
+            ),
+        },
+    },
+    "required": [
+        "klagens_kernepunkter",
+        "yderligere_klagepunkter_og_detaljer",
+        "rejseselskabets_stillingtagen_indtil_nu",
+        "kort_juridisk_vurdering",
+        "sandsynlighedsvurdering",
+        "konklusion_en_linje",
+    ],
+}
+
+
+def udled_foerstevurdering_struktureret(
+    sag,
+    sagsakter=None,
+    sagsakter_filer=None,
+    klagepunkter_facit="",
+    tidsforhold_facit="",
+):
+    """
+    Genererer den juridiske førstevurdering som STRUKTURERET JSON via
+    Anthropics tool-use. AI'en kan bogstaveligt talt ikke producere
+    andre felter end de 6 vi har defineret — schemaet håndhæves af
+    Anthropic-API'et.
+
+    Returnerer en tuple (data_dict, relevante_sager) hvor:
+      data_dict — dict med præcis disse 6 keys:
+        • klagens_kernepunkter (list of str)
+        • yderligere_klagepunkter_og_detaljer (list of str)
+        • rejseselskabets_stillingtagen_indtil_nu (str)
+        • kort_juridisk_vurdering (str)
+        • sandsynlighedsvurdering (dict)
+        • konklusion_en_linje (str)
+      relevante_sager — same RAG-result som spoerg_ai_med_sag returnerer,
+        bruges af kalderen til match_info + visuelle reference-kort.
+
+    Hvis AI-kaldet fejler, returneres (None, []) og kalderen kan vise
+    en venlig fejlboks.
+    """
+    try:
+        sagsakter_tekst = (sagsakter or "").strip()
+        filer = sag.get("filer") or []
+
+        # ---------- RAG-RETRIEVAL (præcis samme som spoerg_ai_med_sag) ----------
+        dele = []
+        for fil in filer:
+            if fil.get("type") == "tekst" and fil.get("tekst"):
+                dele.append((fil.get("tekst") or "")[:3000])
+        if sagsakter_tekst:
+            dele.append(sagsakter_tekst[:3000])
+        soge_tekst = "\n\n".join(dele)
+
+        udeluk_filnavne = {f.get("filnavn") for f in filer}
+
+        sporgsmaal_emb = embed_sporgsmaal(soge_tekst)
+        relevante = []
+        if sporgsmaal_emb is not None:
+            afgoerelser = find_relevante_sager(
+                sporgsmaal_emb, top_k=TOP_K_AFGOERELSER,
+                dokumenttype="afgoerelse",
+            )
+            vilkaar = find_relevante_sager(
+                sporgsmaal_emb, top_k=TOP_K_VILKAAR,
+                dokumenttype="vilkaar",
+            )
+            lovgivning = find_relevante_sager(
+                sporgsmaal_emb, top_k=TOP_K_LOVGIVNING,
+                dokumenttype="lovgivning",
+            )
+            relevante = [
+                r for r in (afgoerelser + vilkaar + lovgivning)
+                if r.get("filnavn") not in udeluk_filnavne
+            ]
+
+        vidensbank = (
+            _byg_vidensbank_tekst(relevante) if relevante
+            else "(Ingen tidligere sager fundet i vidensbanken.)"
+        )
+
+        # ---------- BYG PROMPT-INDLEDNING ----------
+        indled = (
+            f"VIDENSBANK (de mest relevante tidligere afgørelser og "
+            f"TUI's rejsevilkår):\n{vidensbank}\n\n"
+            f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + "
+            f"bilag — {len(filer)} filer i alt):"
+        )
+
+        sagsakter_blok = ""
+        if sagsakter_tekst:
+            sagsakter_blok = (
+                "\nSAGSAKTER (intern viden: C4C-notater, e-mails, "
+                f"bookingdetaljer):\n{sagsakter_tekst}\n\n"
+                "Disse sagsakter supplerer de officielle bilag ovenfor.\n"
+            )
+
+        slutning = (
+            sagsakter_blok
+            + klagepunkter_facit
+            + tidsforhold_facit
+            + "\n\nDIN OPGAVE:\n"
+            + "Du skal kalde tool'et "
+            + f"'{FOERSTEVURDERING_TOOL_NAME}' med en JSON-struktureret "
+            + "førstevurdering af sagen. Læs ALLE bilag, krydsrefer mellem "
+            + "klagerens påstande og bilagenes dokumentation, brug "
+            + "vidensbanken som juridisk præcedens, og inkluder "
+            + "[Bilag XX]-referencer i alle felter. Følg felt-"
+            + "beskrivelserne præcist — de definerer indholdet af hver "
+            + "sektion. Husk: 'kort_juridisk_vurdering' er KORT (2-4 "
+            + "sætninger), og 'konklusion_en_linje' er ÉN sætning."
+        )
+
+        user_content = _byg_sag_content(
+            sag, indled, slutning, ekstra_sagsakter_filer=sagsakter_filer
+        )
+
+        # ---------- KALD CLAUDE MED TOOL-USE ----------
+        # tool_choice tvinger modellen til at kalde præcis dette tool —
+        # den kan ikke svare med fri tekst i stedet.
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=MAX_TOKENS,
+            temperature=0,
+            system=SYSTEM_PROMPT,
+            tools=[{
+                "name": FOERSTEVURDERING_TOOL_NAME,
+                "description": (
+                    "Lever en struktureret juridisk førstevurdering af "
+                    "sagen som JSON. Alle 6 felter er obligatoriske og "
+                    "skal udfyldes baseret på sagens dokumenter, "
+                    "vidensbankens præcedens og de verificerede "
+                    "klagepunkter."
+                ),
+                "input_schema": FOERSTEVURDERING_SCHEMA,
+            }],
+            tool_choice={
+                "type": "tool",
+                "name": FOERSTEVURDERING_TOOL_NAME,
+            },
+            messages=[{"role": "user", "content": user_content}],
+        )
+
+        # ---------- HENT TOOL-USE OUTPUT ----------
+        for block in response.content:
+            if (
+                getattr(block, "type", None) == "tool_use"
+                and getattr(block, "name", None)
+                == FOERSTEVURDERING_TOOL_NAME
+            ):
+                data = block.input
+                # Defensive normalisering af typer
+                return _normalisér_foerstevurdering(data), relevante
+
+        # Hvis vi når hertil har modellen ikke kaldt tool'et — det er
+        # meget sjældent når tool_choice er sat, men vi vil ikke crashe.
+        print(
+            "DEBUG: udled_foerstevurdering_struktureret — modellen "
+            "kaldte ikke tool'et som forventet"
+        )
+        return None, relevante
+
+    except Exception as e:
+        print(f"DEBUG: udled_foerstevurdering_struktureret fejlede: {e}")
+        return None, []
+
+
+def _normalisér_foerstevurdering(data):
+    """
+    Sikrer at alle 6 forventede felter er til stede med korrekte typer.
+    Hvis AI-resultatet mangler et felt eller har forkert type, sættes
+    en tom default ind — så frontend-renderingen aldrig crasher.
+    """
+    if not isinstance(data, dict):
+        data = {}
+
+    def _str(v):
+        if v is None:
+            return ""
+        if isinstance(v, str):
+            return v.strip()
+        return str(v).strip()
+
+    def _list_str(v):
+        if not isinstance(v, list):
+            return []
+        return [_str(x) for x in v if _str(x)]
+
+    sandsynlighed = data.get("sandsynlighedsvurdering") or {}
+    if not isinstance(sandsynlighed, dict):
+        sandsynlighed = {}
+
+    def _int(v, default=0):
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            return default
+
+    return {
+        "klagens_kernepunkter": _list_str(
+            data.get("klagens_kernepunkter")
+        ),
+        "yderligere_klagepunkter_og_detaljer": _list_str(
+            data.get("yderligere_klagepunkter_og_detaljer")
+        ),
+        "rejseselskabets_stillingtagen_indtil_nu": _str(
+            data.get("rejseselskabets_stillingtagen_indtil_nu")
+        ),
+        "kort_juridisk_vurdering": _str(
+            data.get("kort_juridisk_vurdering")
+        ),
+        "sandsynlighedsvurdering": {
+            "fuld_medhold_til_klager": _int(
+                sandsynlighed.get("fuld_medhold_til_klager")
+            ),
+            "delvist_medhold_til_klager": _int(
+                sandsynlighed.get("delvist_medhold_til_klager")
+            ),
+            "afvisning_af_klagen": _int(
+                sandsynlighed.get("afvisning_af_klagen")
+            ),
+            "begrundelse": _str(sandsynlighed.get("begrundelse")),
+        },
+        "konklusion_en_linje": _str(data.get("konklusion_en_linje")),
+    }
+
+
+def foerstevurdering_dict_til_markdown(data):
+    """
+    Konverterer JSON-output fra udled_foerstevurdering_struktureret
+    til den markdown-format som render_analyse_som_pillars forventer
+    (sektioner med **N. Titel**-headers + body).
+
+    Vi bygger markdownen DETERMINISTISK — så uanset hvad AI'en gjorde
+    inde i hvert felt, er sektion-strukturen 100% korrekt. Force-mappingen
+    i render_analyse_som_pillars vil bekræfte dette og gøre intet (no-op).
+    """
+    if not data:
+        return ""
+
+    def _bullets(items):
+        if not items:
+            return "_(Ingen punkter at vise.)_"
+        return "\n".join(f"- {item}" for item in items)
+
+    sandsynlighed = data.get("sandsynlighedsvurdering") or {}
+    fuld = sandsynlighed.get("fuld_medhold_til_klager", 0)
+    delvist = sandsynlighed.get("delvist_medhold_til_klager", 0)
+    afvist = sandsynlighed.get("afvisning_af_klagen", 0)
+    begrundelse = sandsynlighed.get("begrundelse", "")
+
+    # Sandsynlighedsvurdering-sektionen indeholder de tre procenter i
+    # det format som vurdering.parse_sandsynligheder kan parse + en
+    # kort begrundelse.
+    sandsynlighed_body = (
+        f"**Fuld medhold til klager:** {fuld}%\n"
+        f"**Delvist medhold til klager:** {delvist}%\n"
+        f"**Afvisning af klagen:** {afvist}%"
+    )
+    if begrundelse:
+        sandsynlighed_body += f"\n\n{begrundelse}"
+
+    sektioner = [
+        ("1. Klagens kernepunkter",
+         _bullets(data.get("klagens_kernepunkter") or [])),
+        ("2. Yderligere klagepunkter og detaljer",
+         _bullets(data.get("yderligere_klagepunkter_og_detaljer") or [])),
+        ("3. Rejseselskabets stillingtagen indtil nu",
+         data.get("rejseselskabets_stillingtagen_indtil_nu") or
+         "_(Fremgår ikke af bilagene.)_"),
+        ("4. Kort juridisk vurdering",
+         data.get("kort_juridisk_vurdering") or
+         "_(Vurdering kunne ikke udledes.)_"),
+        ("5. Sandsynlighedsvurdering", sandsynlighed_body),
+        ("6. Konklusion i én linje",
+         data.get("konklusion_en_linje") or
+         "_(Konklusion kunne ikke udledes.)_"),
+    ]
+
+    return "\n\n".join(
+        f"**{titel}**\n\n{body}" for titel, body in sektioner
+    )
+
+
 def generer_svarbrev_til_sag(
     sag,
     sagsakter=None,

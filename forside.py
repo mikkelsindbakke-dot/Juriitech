@@ -30,6 +30,8 @@ from ai_engine import (
     udled_tidsforhold,
     udled_sagsmetadata,
     udled_bilag_overskrifter,
+    udled_foerstevurdering_struktureret,
+    foerstevurdering_dict_til_markdown,
 )
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
@@ -1840,11 +1842,46 @@ if st.session_state.get("aktuel_sag"):
                         "juridiske vurdering. Brug konkrete datoer.\n\n"
                     )
 
-                auto_svar, rel_sager = spoerg_ai_med_sag(
-                    spoergsmaal=(
-                        klagepunkter_facit +
-                        tidsforhold_facit +
-                        "Lav en struktureret juridisk førstevurdering af sagen "
+                # ---------- JSON-STRUKTURERET FØRSTEVURDERING ----------
+                # Bruger Anthropics tool-use til at TVINGE AI'en til at
+                # returnere et JSON-objekt med præcis de 6 felter vi har
+                # defineret. AI kan ikke afvige fra strukturen — schemaet
+                # håndhæves af API'et. Erstatter den gamle frie-markdown-
+                # tilgang der konstant freestylede ekstra sektioner.
+                _foerstevurdering_dict, rel_sager = (
+                    udled_foerstevurdering_struktureret(
+                        sag=st.session_state.aktuel_sag,
+                        sagsakter=st.session_state.get("sagsakter", ""),
+                        sagsakter_filer=st.session_state.get(
+                            "sagsakter_filer", []
+                        ),
+                        klagepunkter_facit=klagepunkter_facit,
+                        tidsforhold_facit=tidsforhold_facit,
+                    )
+                )
+                # Konvertér det strukturerede dict til markdown i det
+                # format render_analyse_som_pillars forventer. Strukturen
+                # er nu 100% deterministisk — force-mappingen i UI-laget
+                # bliver et no-op fordi sektionerne allerede er korrekte.
+                if _foerstevurdering_dict:
+                    auto_svar = foerstevurdering_dict_til_markdown(
+                        _foerstevurdering_dict
+                    )
+                    st.session_state.foerstevurdering_dict = (
+                        _foerstevurdering_dict
+                    )
+                else:
+                    auto_svar = ""
+                    st.session_state.foerstevurdering_dict = None
+
+                # OUDATERET: den gamle frie-markdown-prompt bevares i
+                # if False-blok som dokumentation. Eksekveres aldrig.
+                if False:
+                    _gammel = spoerg_ai_med_sag(
+                        spoergsmaal=(
+                            klagepunkter_facit +
+                            tidsforhold_facit +
+                            "Lav en struktureret juridisk førstevurdering af sagen "
                         "baseret på de uploadede dokumenter.\n\n"
                         "═══════════════════════════════════════════════════\n"
                         "ABSOLUT KRAV TIL STRUKTUR — PRÆCIS 6 SEKTIONER:\n"
@@ -2511,13 +2548,11 @@ if st.session_state.get("aktuel_sag"):
         afgoerelser_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "afgoerelse"]
         vilkaar_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "vilkaar"]
 
-        # FILTRER svage matches HELT VÆK. Brugeren skal ikke spilde tid
-        # på sager der ikke har juridisk relevans for den nye sag.
-        # Hvis AI'en har markeret en match som juridisk_relevant_match=
-        # false (kun overfladiske ligheder som destination, rejsearrangør
-        # eller generisk 'mangel'), inkluderes den IKKE i visningen.
-        # Hvis ingen af top-5 matches er juridisk relevante, vises
-        # 'Relevante referencer'-sektionen slet ikke.
+        # FILTRER svage matches væk PRIMÆRT. Hvis ALLE matches er flaget
+        # som ikke-relevante (juridisk_relevant_match=False), falder vi
+        # tilbage til at vise top-3 med en lille advarsel — så Mikkel
+        # ikke ender med at se en tom referencer-sektion (han har
+        # rapporteret at have ikke set kortene 'i meget lang tid').
         _match_info_alle = st.session_state.get("match_info") or []
         _filtreret_afgoerelser = []
         _filtreret_match_info = []
@@ -2533,6 +2568,23 @@ if st.session_state.get("aktuel_sag"):
                 _filtreret_afgoerelser.append(_ag)
                 _filtreret_match_info.append(_info)
                 _relevans_per_idx.append(True)
+
+        # Fallback: hvis filtreringen fjerner ALT og vi stadig har
+        # rå-matches, brug top-3 så kortene ALDRIG forsvinder helt.
+        # Markeres med _svag_match_fallback så vi kan vise en disclaimer.
+        _svag_match_fallback = False
+        if not _filtreret_afgoerelser and afgoerelser_ud:
+            _svag_match_fallback = True
+            for _idx, _ag in enumerate(afgoerelser_ud[:3]):
+                _info = (
+                    _match_info_alle[_idx]
+                    if _idx < len(_match_info_alle)
+                    else {}
+                )
+                _filtreret_afgoerelser.append(_ag)
+                _filtreret_match_info.append(_info)
+                _relevans_per_idx.append(False)
+
         afgoerelser_ud = _filtreret_afgoerelser
 
         # 'Relevante referencer' er IKKE en selvstændig top-level sektion
@@ -2544,22 +2596,34 @@ if st.session_state.get("aktuel_sag"):
         def _render_relevante_referencer_blok():
             """Renderer relevante tidligere afgørelser som under-blok
             efter 'Kort juridisk vurdering'. Bruges som callback fra
-            render_analyse_som_pillars. Læser afgoerelser_ud og
-            _filtreret_match_info via closure."""
+            render_analyse_som_pillars. Læser afgoerelser_ud,
+            _filtreret_match_info og _svag_match_fallback via closure."""
             if not afgoerelser_ud:
                 return
 
-            # Lille intro-blok med samme stil som de øvrige sub-headere
+            # Intro-blok — tilpasset om det er stærke matches eller
+            # svage match-fallback
+            if _svag_match_fallback:
+                _intro_text = (
+                    'Disse afgørelser blev fundet via semantisk søgning '
+                    'men er flaget som SVAGE matches. Kontrollér selv '
+                    'om de er juridisk relevante for din sag.'
+                )
+                _label_color = "#92400E"  # ravgul advarselsfarve
+            else:
+                _intro_text = (
+                    'Tidligere afgørelser fra Pakkerejse-Ankenævnet som '
+                    'juriitech PAX har brugt som juridisk præcedens i '
+                    'vurderingen ovenfor.'
+                )
+                _label_color = "#1F2937"
+
             st.markdown(
-                '<div style="margin: 18px 0 8px 0; padding-left: 4px;">'
-                '<div style="font-weight: 700; font-size: 1.05rem; '
-                'color: #1F2937;">Relevante referencer</div>'
-                '<div style="color: #6B7280; font-size: 0.88rem; '
-                'margin-top: 4px;">'
-                'Tidligere afgørelser fra Pakkerejse-Ankenævnet som '
-                'juriitech PAX har brugt som juridisk præcedens i '
-                'vurderingen ovenfor.'
-                '</div></div>',
+                f'<div style="margin: 18px 0 8px 0; padding-left: 4px;">'
+                f'<div style="font-weight: 700; font-size: 1.05rem; '
+                f'color: {_label_color};">Relevante referencer</div>'
+                f'<div style="color: #6B7280; font-size: 0.88rem; '
+                f'margin-top: 4px;">{_intro_text}</div></div>',
                 unsafe_allow_html=True,
             )
 

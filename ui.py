@@ -526,6 +526,13 @@ def render_sagsresume(
     # VIGTIGT: HTML må ikke indrykkes med 4+ mellemrum, ellers opfatter
     # Streamlits markdown-parser linjerne som kodeblokke og renderer
     # </div>-tags som rå tekst.
+    #
+    # NOTE: 'TUI's håndtering indtil nu'-cellen er bevidst FJERNET fra
+    # Resumé-pillaren. Det indhold hører hjemme i sektion 5
+    # (Rejseselskabets stillingtagen indtil nu) — at duplikere det her
+    # rodede strukturen sammen og blev fanget som en fejl af brugeren.
+    # Resumé skal kun indeholde: emne + klagepunkter + klagers krav +
+    # forventet udfald.
     html = (
         f'<div class="analyse-pillar" style="--pillar-bg: {bg}; --pillar-accent: {accent};">'
         '<div class="analyse-pillar-accent-dot"></div>'
@@ -540,10 +547,6 @@ def render_sagsresume(
         '<div class="sagsresume-celle">'
         '<div class="sagsresume-celle-titel">Klagers krav</div>'
         f'<div class="sagsresume-celle-body"><p>{krav}</p></div>'
-        '</div>'
-        '<div class="sagsresume-celle sagsresume-celle-bred">'
-        '<div class="sagsresume-celle-titel">TUI\'s håndtering indtil nu</div>'
-        f'<div class="sagsresume-celle-body"><p>{tui}</p></div>'
         '</div>'
         '</div>'
         f'{udfald_html}'
@@ -712,16 +715,20 @@ LAASTE_AI_SEKTIONER = [
 def _saniter_sektion_body(body, er_konklusion=False):
     """
     Renser en sektions body-tekst for AI's freestyle-tilføjelser der
-    ellers ville bløde ind i den rendrede pillar:
+    ellers ville bløde ind i den rendrede pillar.
 
-      • Afkort ved første '\\n---\\n' (markdown-separator) — alt efter
-        er typisk AI's freestyle ekstra-content
-      • Afkort ved første '\\n## ' eller '\\n### ' (markdown-headers
-        som vores nye section-detection burde have opfanget, men hvis
-        de er INDE i en body fjerner vi dem her)
-      • For Konklusion i én linje (sektion 6): tag KUN første paragraph
-        og afkort til max 300 tegn — sektionen SKAL være én linje, så
-        vi tvinger den.
+    Defense-in-depth strategi — vi anvender flere uafhængige stripping-
+    regler så indholdet er rent uanset hvilken freestyle-mønster AI'en
+    bruger:
+
+      1. Afkort ved første '---' (hvor som helst, ikke krav om newlines)
+         — markdown-separator betyder næsten altid 'her starter freestyle'
+      2. Afkort ved første '## ' eller '### ' (markdown headers inde i
+         body) — det er forsøg på at lave nye sektioner inde i body
+      3. Filtrer bullets der starter med kendte freestyle-mønstre:
+         '- RELEVANTE REFERENCER', '- Stærkeste forsvar',
+         '- JURIDISK ARGUMENTATION', '- Argument N'
+      4. For Konklusion i én linje: tag KUN første paragraph + max 300 tegn
 
     Returnerer den rensede body-tekst.
     """
@@ -730,19 +737,47 @@ def _saniter_sektion_body(body, er_konklusion=False):
     if not body:
         return ""
 
-    # Trin 1: afkort ved markdown-separator
-    body = _re.split(r"\n\s*---\s*\n", body, maxsplit=1)[0]
+    # Trin 1: afkort ved første '---' (3+ bindestreger med valgfrit
+    # whitespace omkring). Vi kræver IKKE newlines — '---' inde i tekst
+    # er næsten altid en separator AI'en bruger til at skille hovedindhold
+    # fra sin ekstra freestyle-blok.
+    body = _re.split(r"\s*-{3,}\s*", body, maxsplit=1)[0]
 
-    # Trin 2: afkort ved freestyle h2/h3-header
+    # Trin 2: afkort ved første markdown-header (## eller ###) der ligner
+    # en ny sektion-start (start på linje, valgfri whitespace foran)
     body = _re.split(r"\n\s*##{1,3}\s+\S", body, maxsplit=1)[0]
+
+    # Trin 3: linje-for-linje filter — drop bullets der starter med
+    # kendte freestyle-mønstre. Vi processerer linjerne og fjerner
+    # alt fra den FØRSTE freestyle-bullet og fremad (alt under denne
+    # bullet er typisk relateret freestyle).
+    FREESTYLE_BULLET_MONSTRE = _re.compile(
+        r"^\s*[-*•]\s*(?:\*\*)?"            # bullet-marker + valgfri **
+        r"(?:relevante?\s+referencer|"      # - RELEVANTE REFERENCER
+        r"stærkeste?\s+forsvars?punkter?|"  # - Stærkeste forsvarspunkter
+        r"juridisk\s+argumentation|"        # - JURIDISK ARGUMENTATION
+        r"argument\s*\d+|"                  # - Argument 1, Argument 2
+        r"forsvarsstrategi|"
+        r"bevisførelse|"
+        r"juridisk\s+forsvar|"
+        r"konklusion\s+for\s+tui)\b",
+        _re.IGNORECASE,
+    )
+    rene_linjer = []
+    for linje in body.split("\n"):
+        if FREESTYLE_BULLET_MONSTRE.match(linje):
+            # Stop her — alt herfra og ned er sandsynligvis freestyle
+            break
+        rene_linjer.append(linje)
+    body = "\n".join(rene_linjer)
 
     body = body.strip()
 
-    # Trin 3: for Konklusion — kun første paragraph + max 300 tegn
+    # Trin 4: for Konklusion — kun første paragraph + max 300 tegn
     if er_konklusion:
         # Første paragraph = alt før første blank linje
         forste_para = body.split("\n\n", 1)[0].strip()
-        # Yderligere afkort ved første nye linje hvis paragraph er meget lang
+        # Yderligere afkort hvis paragraph er meget lang
         if len(forste_para) > 300:
             forste_para = forste_para[:297].rstrip() + "…"
         body = forste_para
