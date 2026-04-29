@@ -505,7 +505,7 @@ def render_sagsresume(
     html = (
         f'<div class="analyse-pillar" style="--pillar-bg: {bg}; --pillar-accent: {accent};">'
         '<div class="analyse-pillar-accent-dot"></div>'
-        f'<h2 class="analyse-pillar-title">{nummer}. Resume af sagen</h2>'
+        f'<h2 class="analyse-pillar-title">{nummer}. Resumé</h2>'
         '<div class="analyse-pillar-body">'
         f'<p class="sagsresume-emne-in-pillar">{emne}</p>'
         '<div class="sagsresume-grid">'
@@ -633,6 +633,7 @@ def render_analyse_som_pillars(
     skip_sandsynlighed=False,
     skip_konklusion=False,
     start_nummer=1,
+    inject_after_titel=None,
 ):
     """
     Renderer en juridisk analyse som Apple-Health-inspirerede "pillars"
@@ -650,6 +651,13 @@ def render_analyse_som_pillars(
         render. Bruges til at fortsætte sekvensen fra de pillars der
         renderes ovenfor (resume, referencer osv.) — så hele siden har
         konsekutiv 1, 2, 3, 4, 5... nummering på tværs af kald.
+
+    inject_after_titel: dict eller None — hvis sat skal nøglerne være
+        substrings (case-insensitive) som matches mod sektions-titlerne.
+        Værdien er en callable der køres LIGE EFTER den matchende sektion
+        er rendret — bruges fx til at indsætte 'Relevante referencer'
+        som fast under-blok efter 'Kort juridisk vurdering'. Hver callable
+        kaldes uden argumenter og forventes selv at rendre via st.*.
     """
     if not svar_tekst:
         return
@@ -685,14 +693,14 @@ def render_analyse_som_pillars(
 
     sektioner = filtreret
 
-    # SAFETY-NET: Hvis AI'en alligevel har lavet >7 top-level sektioner
+    # SAFETY-NET: Hvis AI'en alligevel har lavet >8 top-level sektioner
     # EFTER skip-filtreringen, er det med stor sandsynlighed en fejl
     # (klagepunkter splittet ud som egne sektioner). Slå de overskydende
     # sammen i én "Yderligere klagepunkter"-sektion. Vi sætter grænsen
-    # ved 7 så der er plads til de 4-5 forventede pillars + lidt
-    # luft til legitime ekstra-sektioner. Vigtigt: skip-filtrene har
-    # allerede kørt, så vi merger KUN ægte indholds-sektioner.
-    MAX_SEKTIONER_EFTER_SKIP = 7
+    # ved 8 så der er plads til de 6 låste pillars + lidt luft til
+    # legitime ekstra-sektioner. Vigtigt: skip-filtrene har allerede
+    # kørt, så vi merger KUN ægte indholds-sektioner.
+    MAX_SEKTIONER_EFTER_SKIP = 8
     if len(sektioner) > MAX_SEKTIONER_EFTER_SKIP:
         beholdt = sektioner[:MAX_SEKTIONER_EFTER_SKIP - 1]
         overflødige = sektioner[MAX_SEKTIONER_EFTER_SKIP - 1:]
@@ -738,6 +746,25 @@ def render_analyse_som_pillars(
             """,
             unsafe_allow_html=True,
         )
+
+        # Inject-callback hvis denne sektions titel matcher en af de
+        # angivne nøgler (case-insensitive substring match). Bruges fx
+        # til at indsætte 'Relevante referencer' som fast under-blok
+        # efter 'Kort juridisk vurdering'.
+        if inject_after_titel:
+            titel_lower = (titel or "").lower()
+            for nogle_substring, callback in inject_after_titel.items():
+                if nogle_substring.lower() in titel_lower:
+                    try:
+                        callback()
+                    except Exception as _e:
+                        # Defensivt — en callback-fejl må ikke vælte
+                        # rendering af de øvrige sektioner.
+                        print(
+                            f"DEBUG: inject_after_titel-callback for "
+                            f"'{nogle_substring}' fejlede: {_e}"
+                        )
+                    break
 
 
 def render_svarbrev_forside_preview(

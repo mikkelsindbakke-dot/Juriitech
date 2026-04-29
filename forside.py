@@ -1799,11 +1799,11 @@ if st.session_state.get("aktuel_sag"):
                         "FORMAT-KRITISK INSTRUKTION:\n"
                         "Disse klagepunkter skal listes som BULLETS "
                         "(- punkt 1\\n- punkt 2 osv.) under ÉN sektion "
-                        "med titlen '**2. Klagens kernepunkter**'. De "
+                        "med titlen '**1. Klagens kernepunkter**'. De "
                         "må ABSOLUT IKKE blive separate nummererede "
                         "top-level sektioner i analysen — det ville "
                         "ødelægge layoutet med 10-20 mini-pillars i "
-                        "stedet for de 5 hoved-pillars. Brug ÉN sektion, "
+                        "stedet for de 6 hoved-pillars. Brug ÉN sektion, "
                         "MANGE bullets.\n\n"
                     )
                 else:
@@ -1847,9 +1847,9 @@ if st.session_state.get("aktuel_sag"):
                         "Lav en struktureret juridisk førstevurdering af sagen "
                         "baseret på de uploadede dokumenter.\n\n"
                         "═══════════════════════════════════════════════════\n"
-                        "ABSOLUT KRAV TIL STRUKTUR — PRÆCIS 5 SEKTIONER:\n"
+                        "ABSOLUT KRAV TIL STRUKTUR — PRÆCIS 6 SEKTIONER:\n"
                         "═══════════════════════════════════════════════════\n"
-                        "Output SKAL bestå af PRÆCIS 5 top-level sektioner — "
+                        "Output SKAL bestå af PRÆCIS 6 top-level sektioner — "
                         "hverken flere eller færre. Hver sektion skal starte "
                         "med en linje på formen '**N. Titel**' (med blank "
                         "linje før — splitter detekterer sektioner sådan).\n\n"
@@ -1858,12 +1858,11 @@ if st.session_state.get("aktuel_sag"):
                         "— men disse må IKKE have blank linje før, så de "
                         "ikke fejlagtigt opfattes som nye top-level sektioner.\n\n"
                         "ALLE klagepunkter (uanset hvor mange) går som "
-                        "BULLETS inde i sektion 2 — IKKE som egne sektioner.\n\n"
+                        "BULLETS inde i sektion 1 — IKKE som egne sektioner.\n\n"
                         "═══════════════════════════════════════════════════\n"
-                        "DE 5 SEKTIONER (følg rækkefølgen præcist):\n"
+                        "DE 6 SEKTIONER (følg rækkefølgen præcist):\n"
                         "═══════════════════════════════════════════════════\n\n"
-                        "1. **Kort resume af sagen** (2-4 sætninger)\n"
-                        "2. **Klagens kernepunkter** — KRITISK FORMAT: "
+                        "1. **Klagens kernepunkter** — KRITISK FORMAT: "
                         "Listed ALLE klagepunkter (fra den verificerede "
                         "liste ovenfor) som bullets med '-' foran hver. "
                         "Det skal være ÉN sektion med MANGE bullets, "
@@ -1871,17 +1870,21 @@ if st.session_state.get("aktuel_sag"):
                         "   - Klagepunkt 1: kort beskrivelse\n"
                         "   - Klagepunkt 2: kort beskrivelse\n"
                         "   - osv.\n"
-                        "Alle klagepunkter klager rejser mod TUI skal med "
-                        "— uden undtagelse. Læs hele klagen igennem TO "
-                        "GANGE og kryds hvert klagepunkt af, før du "
-                        "skriver. Hvis klager nævner 8 problemer, listes "
-                        "8 bullets. Hvis 17, listes 17 bullets — men "
-                        "stadig som bullets i ÉN sektion, ikke 17 "
-                        "sektioner. Eksempler på ting der ofte overses: "
-                        "kommunikations-problemer med guiden, manglende "
-                        "informationer, små afgivelser fra det aftalte, "
-                        "ventetider, sløvhed i kompensation, tone i "
-                        "korrespondance osv.\n"
+                        "Her hører de PRIMÆRE klagepunkter til — altså "
+                        "det klager hovedsageligt brokker sig over og som "
+                        "udgør sagens juridiske kerne. Yderligere "
+                        "klagepunkter med mindre vægt eller kontekstuelle "
+                        "detaljer skal i sektion 2.\n"
+                        "2. **Yderligere klagepunkter og detaljer** — "
+                        "sekundære klagepunkter, kontekstuelle detaljer, "
+                        "mindre kritikpunkter, observationer der ikke er "
+                        "primære for den juridiske vurdering men som "
+                        "alligevel er vigtige at have med så billedet er "
+                        "komplet. Listes som bullets med '-' foran hver. "
+                        "Hvis der ingen sekundære punkter er, skriv "
+                        "'Ingen yderligere punkter ud over kernepunkterne "
+                        "ovenfor.' (men IKKE som ny sektion — som body i "
+                        "denne sektion).\n"
                         "3. **Rejseselskabets stillingtagen indtil nu** — "
                         "beskriv hvad rejseselskabet (TUI) har gjort, tilbudt "
                         "eller afvist i forhold til klagen INDEN Nævnet blev "
@@ -1900,37 +1903,55 @@ if st.session_state.get("aktuel_sag"):
                         "**Afvisning af klagen:** Z%\n\n"
                         "Selv hvis sagen er ufuldstændigt oplyst, estimér de tre "
                         "procenter baseret på hvad du KAN udlede. Angiv eventuelt "
-                        "'Lavt grundlag' hvis et estimat er særligt usikkert.\n\n"
+                        "'Lavt grundlag' hvis et estimat er særligt usikkert.\n"
+                        "6. **Konklusion i én linje** — én ENKEL sætning "
+                        "(maks 200 tegn) der opsummerer hvad denne sag "
+                        "samlet anbefales at ende med. Skal kunne læses "
+                        "alene og give et lynhurtigt overblik. Eksempler: "
+                        "'Sagen anbefales delvist afvist da reklamationen "
+                        "var for sen, mens TUI tilbyder 1.500 kr. for "
+                        "booking-fejlen.' eller 'Sagen anbefales fuldt "
+                        "afvist — klager reklamerede først efter "
+                        "hjemkomst og bistandspligt blev opfyldt.' "
+                        "Ingen bullets, ingen flere sætninger, kun ÉN "
+                        "linje.\n\n"
                         "═══════════════════════════════════════════════════\n"
                         "OVERSKRIFTER ER FASTLÅSTE — INGEN OMSKRIVNING\n"
                         "═══════════════════════════════════════════════════\n"
-                        "Du SKAL bruge PRÆCIS disse 5 overskrifter, i denne "
+                        "Du SKAL bruge PRÆCIS disse 6 overskrifter, i denne "
                         "rækkefølge, ord-for-ord (kun nummer + titel "
                         "som vist — ingen omskrivninger, ingen synonymer, "
                         "ingen tilføjede ord):\n\n"
-                        "  1. **Kort resume af sagen**\n"
-                        "  2. **Klagens kernepunkter**\n"
+                        "  1. **Klagens kernepunkter**\n"
+                        "  2. **Yderligere klagepunkter og detaljer**\n"
                         "  3. **Rejseselskabets stillingtagen indtil nu**\n"
                         "  4. **Kort juridisk vurdering**\n"
-                        "  5. **Sandsynlighedsvurdering**\n\n"
+                        "  5. **Sandsynlighedsvurdering**\n"
+                        "  6. **Konklusion i én linje**\n\n"
                         "FORBUDTE alternativer (eksempler — opfind ALDRIG "
                         "egne titler):\n"
-                        "  ✗ 'Sagsfremstilling' (skal være 'Kort resume af sagen')\n"
-                        "  ✗ 'Resumé' eller 'Resumé af klagen' (skal være "
-                        "'Kort resume af sagen')\n"
                         "  ✗ 'Klagepunkter' eller 'Klagers påstande' "
                         "(skal være 'Klagens kernepunkter')\n"
+                        "  ✗ 'Mindre punkter', 'Sekundære klager', "
+                        "'Andre forhold' (skal være 'Yderligere "
+                        "klagepunkter og detaljer')\n"
                         "  ✗ 'TUI's håndtering' eller 'Rejseselskabets "
                         "håndtering' (skal være 'Rejseselskabets "
                         "stillingtagen indtil nu')\n"
                         "  ✗ 'Juridisk analyse' eller 'Juridisk vurdering' "
                         "uden 'Kort' (skal være 'Kort juridisk vurdering')\n"
                         "  ✗ 'Konklusion', 'Vurdering', 'Anbefaling' "
-                        "(skal være 'Sandsynlighedsvurdering')\n"
+                        "(skal være 'Sandsynlighedsvurdering' for "
+                        "procenter, eller 'Konklusion i én linje' for "
+                        "den afsluttende oneliner)\n"
+                        "  ✗ 'Sagsfremstilling', 'Resumé', 'Resume af "
+                        "sagen' som top-level (resuméet bygges via et "
+                        "separat AI-kald — du skal IKKE skrive et resumé "
+                        "her)\n"
                         "  ✗ Ekstra sektioner som 'Anbefalinger', "
                         "'Næste skridt', 'Bemærkninger', 'Kildehenvisninger' "
                         "som top-level — disse må KUN optræde som "
-                        "underpunkter eller bullets inde i en af de 5 "
+                        "underpunkter eller bullets inde i en af de 6 "
                         "fastlåste sektioner.\n\n"
                         "Hvis du fristes til at omdøbe en overskrift fordi "
                         "den 'passer bedre' til sagen — LAD VÆRE. "
@@ -2174,7 +2195,7 @@ if st.session_state.get("aktuel_sag"):
                 '--pillar-accent: #00D4C2;">'
                 '<div class="analyse-pillar-accent-dot"></div>'
                 f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
-                'Resume af sagen</h2>'
+                'Resumé</h2>'
                 '<div class="analyse-pillar-body">'
                 f'<p>{_html_res.escape(_resume_fallback)}</p>'
                 '</div></div>',
@@ -2473,7 +2494,7 @@ if st.session_state.get("aktuel_sag"):
             f'--pillar-accent: {_tf_accent};">'
             '<div class="analyse-pillar-accent-dot"></div>'
             f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
-            'Tidsforhold og rettidig reklamation</h2>'
+            'Tidsforhold og rettidig kommunikation</h2>'
             '<div class="analyse-pillar-body">'
             f'{_tf_intro_html}'
             f'{_tf_body}'
@@ -2514,21 +2535,34 @@ if st.session_state.get("aktuel_sag"):
                 _relevans_per_idx.append(True)
         afgoerelser_ud = _filtreret_afgoerelser
 
-        if afgoerelser_ud:
-            # Apple Health-pillar wrapper — lavendel baggrund, indigo accent
+        # 'Relevante referencer' er IKKE en selvstændig top-level sektion
+        # i den låste 14-struktur. Den er en under-blok som indsættes lige
+        # efter sektion 6 (Kort juridisk vurdering) — der hvor præcedens
+        # juridisk hører hjemme. Vi pakker derfor rendering-koden ind i en
+        # callback der køres af render_analyse_som_pillars via
+        # inject_after_titel-mekanismen.
+        def _render_relevante_referencer_blok():
+            """Renderer relevante tidligere afgørelser som under-blok
+            efter 'Kort juridisk vurdering'. Bruges som callback fra
+            render_analyse_som_pillars. Læser afgoerelser_ud og
+            _filtreret_match_info via closure."""
+            if not afgoerelser_ud:
+                return
+
+            # Lille intro-blok med samme stil som de øvrige sub-headere
             st.markdown(
-                f'<div class="analyse-pillar"'
-                ' style="--pillar-bg: #EEEAFF; --pillar-accent: #6366F1;">'
-                '<div class="analyse-pillar-accent-dot"></div>'
-                f'<h2 class="analyse-pillar-title">{_pillar_nummer}. Relevante referencer</h2>'
-                '<div class="analyse-pillar-body">'
-                '<p>Disse afgørelser fra Pakkerejse-Ankenævnet minder mest om '
-                'din nuværende sag. juriitech PAX bruger dem aktivt som '
-                'juridisk præcedens i analysen.</p>'
+                '<div style="margin: 18px 0 8px 0; padding-left: 4px;">'
+                '<div style="font-weight: 700; font-size: 1.05rem; '
+                'color: #1F2937;">Relevante referencer</div>'
+                '<div style="color: #6B7280; font-size: 0.88rem; '
+                'margin-top: 4px;">'
+                'Tidligere afgørelser fra Pakkerejse-Ankenævnet som '
+                'juriitech PAX har brugt som juridisk præcedens i '
+                'vurderingen ovenfor.'
                 '</div></div>',
                 unsafe_allow_html=True,
             )
-            _pillar_nummer += 1
+
             from badges import udled_afgoerelsesdato, badge
 
             # Brug den FILTREREDE liste — kun juridisk relevante matches
@@ -2639,23 +2673,33 @@ if st.session_state.get("aktuel_sag"):
                                 f"({sag_ref['kilde_url']})"
                             )
 
-        # Juridisk førstevurdering som Apple-Health-inspirerede pillars.
-        # Vi springer tre sektioner over for at undgå duplikater:
-        #   - resume (vises allerede som strukturelt kort ovenfor)
-        #   - referencer (vises allerede som visuelle kort ovenfor)
-        #   - sandsynlighedsvurdering (vises allerede i dashboardet øverst)
-        # Tilbage er den reelt nye analyse: juridisk argumentation og
-        # konklusion.
+        # ---------- AI-FØRSTEVURDERING SOM PILLARS (sektion 3-8) ----------
+        # Den låste 14-sektions struktur: AI'en producerer præcis 6
+        # sektioner (Klagens kernepunkter, Yderligere klagepunkter, ...)
+        # som her renderes som pillars 3-8 i den globale nummerering.
+        #
+        # Vi skipper IKKE noget længere — alle 6 AI-sektioner skal med:
+        #   - Sandsynlighedsvurdering (sektion 7) renderes også som pillar
+        #     selvom dashboardet øverst viser de samme procenter — det er
+        #     bevidst, for at den låste struktur er komplet
+        #   - Konklusion i én linje (sektion 8) er en NY ægte sektion
+        #
+        # Relevante referencer indsættes som UNDER-blok efter sektion 6
+        # (Kort juridisk vurdering) via inject_after_titel-callbacken,
+        # så juridisk præcedens vises lige der hvor det hører hjemme.
         if st.session_state.auto_vurdering_tekst:
             render_analyse_som_pillars(
                 st.session_state.auto_vurdering_tekst,
-                skip_resume=_har_struktureret_resume,
-                skip_referencer=bool(afgoerelser_ud),
-                skip_sandsynlighed=True,
-                # Konklusion flyttes op som 'Forventet udfald' i sagsresume-
-                # kortet ovenfor — vi undgår at duplikere den her.
-                skip_konklusion=_har_struktureret_resume,
+                skip_resume=False,        # Resume har sin egen sektion 1
+                skip_referencer=False,    # AI har ikke længere referencer
+                skip_sandsynlighed=False, # Skal renderes som sektion 7
+                skip_konklusion=False,    # 'Konklusion i én linje' = sektion 8
                 start_nummer=_pillar_nummer,
+                inject_after_titel={
+                    "Kort juridisk vurdering": (
+                        _render_relevante_referencer_blok
+                    ),
+                },
             )
 
         # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
@@ -2671,7 +2715,7 @@ if st.session_state.get("aktuel_sag"):
         <div class="analyse-pillar"
              style="--pillar-bg: #F0EEFD; --pillar-accent: #6366F1;">
             <div class="analyse-pillar-accent-dot"></div>
-            <h2 class="analyse-pillar-title">Sagsakter til denne sag</h2>
+            <h2 class="analyse-pillar-title">9. Sagsakter til denne sag</h2>
             <div class="analyse-pillar-body">
                 <p>Her kan du uploade yderligere filer om sagen, såsom
                 mailkorrespondancer, tekstbeskeder, bookingdetaljer,
@@ -2823,7 +2867,7 @@ if st.session_state.get("aktuel_sag"):
         <div class="analyse-pillar"
              style="--pillar-bg: #FDE9EE; --pillar-accent: #EC4899;">
             <div class="analyse-pillar-accent-dot"></div>
-            <h2 class="analyse-pillar-title">Anonymisér bilag til Nævnet</h2>
+            <h2 class="analyse-pillar-title">10. Anonymisér bilag til Nævnet</h2>
             <div class="analyse-pillar-body">
                 <p>Vælg de bilag du ønsker at anonymisere — både sagsfiler
                 og sagsakter du selv har uploadet. juriitech PAX producerer
@@ -3134,270 +3178,297 @@ if st.session_state.get("aktuel_sag"):
                 for r in fejlede:
                     st.markdown(f"- **{r['filnavn']}:** {r['bemaerkning']}")
 
-    # ============================================================
-    # BILAG-HÅNDTERING (vælg hvilke bilag der skal med + beskrivelser)
-    # ============================================================
-    # Lever inde i samme overordnede sektion som anonymisering, fordi
-    # filerne er identiske — men UI'et lever UDENFOR formen så toggles
-    # og tekstfelter reagerer øjeblikkeligt (ikke batched bag submit).
-    #
-    # Rækkefølgen er Nævnets konvention:
-    #   - Selve svarbrevet er ALTID første bilag (typisk Bilag A)
-    #   - Bogstaverne er KONTINUERLIGE på tværs af høringer:
-    #     1. høring starter ved A; 2. høring starter ved næste ledige
-    #     bogstav efter 1. høring osv. Brugeren angiver start-bogstav
-    #     manuelt (de ved selv hvor de er kommet til).
+
+# ---------- 11. BILAG TIL SVARBREVET — STANDALONE SEKTION ----------
+# Tidligere var dette en under-sub-sektion inde i anonymiseringspillaren,
+# men efter strukturlåsningen til 14 sektioner skal den have sin egen
+# top-level pillar (sektion 11). Den lever inde i samme outer-if som de
+# øvrige sektioner og bruger samme _anon_kandidater liste der blev
+# bygget i anonymiseringssektionen ovenfor.
+#
+# Rækkefølgen er Nævnets konvention:
+#   - Selve svarbrevet er ALTID første bilag (typisk Bilag A)
+#   - Bogstaverne er KONTINUERLIGE på tværs af høringer:
+#     1. høring starter ved A; 2. høring starter ved næste ledige
+#     bogstav efter 1. høring osv. Brugeren angiver start-bogstav
+#     manuelt (de ved selv hvor de er kommet til).
+if st.session_state.get("aktuel_sag"):
+    # Apple Health-pillar header — orange/peach-pastel matchende svarbrev-
+    # generationssektionen, så de to bilag-relaterede sektioner visuelt
+    # signalerer at de hører sammen.
+    st.markdown(
+        """
+        <div class="analyse-pillar"
+             style="--pillar-bg: #FDEFD7; --pillar-accent: #F59E0B;">
+            <div class="analyse-pillar-accent-dot"></div>
+            <h2 class="analyse-pillar-title">11. Bilag til svarbrevet</h2>
+            <div class="analyse-pillar-body">
+                <p>Vælg hvilke bilag der skal medsendes svarbrevet til
+                Nævnet. Selve svarbrevet er altid første bilag.
+                Beskrivelserne er auto-foreslået af PAX — ret dem hvis de
+                skal være anderledes.</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Re-derive _anon_kandidater her (defensivt — i tilfælde af at
+    # anonymiseringssektionen ovenfor af en eller anden grund ikke nåede
+    # at definere det, fx hvis state blev nulstillet midt i en render).
+    _bilag_sag_filer = (st.session_state.aktuel_sag or {}).get("filer") or []
+    _bilag_sagsakter_filer = (
+        st.session_state.get("sagsakter_filer") or []
+    )
+    _anon_kandidater = [
+        {**f, "_kilde": "sag"} for f in _bilag_sag_filer
+    ] + [
+        {**f, "_kilde": "sagsakt"} for f in _bilag_sagsakter_filer
+    ]
+
     if _anon_kandidater:
-        # Wrap HELE bilag-sektionen i en bordered container så den står
-        # tydeligt for sig selv visuelt (kollega-feedback).
-        with st.container(border=True):
-            st.markdown("### Bilag til svarbrevet")
-            st.caption(
-                "Vælg hvilke bilag der skal medsendes svarbrevet til Nævnet. "
-                "Selve svarbrevet er altid første bilag."
-            )
 
-            # ---------- STATE-NØGLER (scopet til sag-signatur) ----------
-            # Beregnes inline her — selve svarbrev-sektionen længere nede
-            # bruger den samme formel, så de to sektioner deler ikke
-            # nøgle-namespace utilsigtet.
-            _bilag_aktiv_sag_id = (
-                st.session_state.get("aktiv_gemt_sag_id") or "ny_sag"
-            )
-            _bilag_sag_sig = (
-                st.session_state.get("sidste_sagsfil_signatur") or ()
-            )
-            _bilag_signatur = f"{_bilag_aktiv_sag_id}_{hash(_bilag_sag_sig)}"
-            _bilag_inkl_key = f"bilag_inkluder_{_bilag_signatur}"
-            _bilag_overskrift_key = f"bilag_overskrift_{_bilag_signatur}"
-            _bilag_raekkefolge_key = f"bilag_raekkefolge_{_bilag_signatur}"
-            _bilag_startbogstav_key = f"bilag_startbogstav_{_bilag_signatur}"
-            _bilag_overskrift_cache_key = (
-                f"bilag_overskrift_cache_{_bilag_signatur}"
-            )
+        # ---------- STATE-NØGLER (scopet til sag-signatur) ----------
+        # Beregnes inline her — selve svarbrev-sektionen længere nede
+        # bruger den samme formel, så de to sektioner deler ikke
+        # nøgle-namespace utilsigtet.
+        _bilag_aktiv_sag_id = (
+            st.session_state.get("aktiv_gemt_sag_id") or "ny_sag"
+        )
+        _bilag_sag_sig = (
+            st.session_state.get("sidste_sagsfil_signatur") or ()
+        )
+        _bilag_signatur = f"{_bilag_aktiv_sag_id}_{hash(_bilag_sag_sig)}"
+        _bilag_inkl_key = f"bilag_inkluder_{_bilag_signatur}"
+        _bilag_overskrift_key = f"bilag_overskrift_{_bilag_signatur}"
+        _bilag_raekkefolge_key = f"bilag_raekkefolge_{_bilag_signatur}"
+        _bilag_startbogstav_key = f"bilag_startbogstav_{_bilag_signatur}"
+        _bilag_overskrift_cache_key = (
+            f"bilag_overskrift_cache_{_bilag_signatur}"
+        )
 
-            # Initialiser state defaults én gang pr. sag
-            if _bilag_inkl_key not in st.session_state:
-                # Default ON for SAGSAKTER (bruger-uploadet) der IKKE er
-                # vejledning/høringsbrev. Default OFF for sag-filer (klagers
-                # materialer skal sjældent med som forsvarsbilag).
-                _default_inkl = {}
-                for f in _anon_kandidater:
-                    fn = f.get("filnavn") or ""
-                    kilde = f.get("_kilde")
-                    rolle = (f.get("rolle") or "").lower()
-                    if kilde == "sagsakt" and rolle not in ("vejledning", "høring"):
-                        _default_inkl[fn] = True
-                    else:
-                        _default_inkl[fn] = False
-                st.session_state[_bilag_inkl_key] = _default_inkl
-
-            if _bilag_raekkefolge_key not in st.session_state:
-                # Default-rækkefølge = sagsakter først (i upload-rækkefølge),
-                # derefter sag-filer (i sag-rækkefølge)
-                _orden = []
-                for f in _anon_kandidater:
-                    if f.get("_kilde") == "sagsakt":
-                        _orden.append(f.get("filnavn"))
-                for f in _anon_kandidater:
-                    if f.get("_kilde") != "sagsakt":
-                        _orden.append(f.get("filnavn"))
-                st.session_state[_bilag_raekkefolge_key] = _orden
-
-            if _bilag_startbogstav_key not in st.session_state:
-                # Default start-bogstav følger høringssvar-nummeret KUN for
-                # 1. høring (= A). For 2./3. høring må brugeren selv skrive
-                # det rigtige bogstav, fordi det afhænger af hvor mange
-                # bilag de tidligere høringer havde — info vi ikke kender
-                # før login + sagshistorik er på plads.
-                st.session_state[_bilag_startbogstav_key] = "A"
-
-            # ---------- AUTO-UDFYLD OVERSKRIFTER (lazy, cached) ----------
-            # Kun filer DER ER MARKERET som bilag får auto-foreslået
-            # overskrift (ellers spilder vi tokens). Når brugeren toggler
-            # en ny fil ON tager vi en ny runde.
-            _filer_med_inkl = [
-                f for f in _anon_kandidater
-                if st.session_state[_bilag_inkl_key].get(f.get("filnavn"))
-            ]
-            # Liste af filnavne der STADIG mangler en cached overskrift
-            _cache = st.session_state.get(_bilag_overskrift_cache_key, {})
-            _mangler_overskrift = [
-                f for f in _filer_med_inkl
-                if (f.get("filnavn") or "") not in _cache
-            ]
-
-            if _mangler_overskrift:
-                with st.spinner(
-                    f"Foreslår overskrifter til {len(_mangler_overskrift)} bilag…"
-                ):
-                    try:
-                        _nye = udled_bilag_overskrifter(_mangler_overskrift)
-                    except Exception as _e:
-                        print(
-                            f"DEBUG: udled_bilag_overskrifter UI-kald fejlede: {_e}"
-                        )
-                        _nye = {
-                            (f.get("filnavn") or ""): (f.get("filnavn") or "")
-                            .rsplit(".", 1)[0]
-                            .replace("_", " ")
-                            for f in _mangler_overskrift
-                        }
-                _cache.update(_nye)
-                st.session_state[_bilag_overskrift_cache_key] = _cache
-
-            # Sørg for at hver inkluderet fil har en aktuel overskrift-værdi
-            # (initial = cache, brugeren kan derefter overskrive)
-            if _bilag_overskrift_key not in st.session_state:
-                st.session_state[_bilag_overskrift_key] = {}
-            for f in _filer_med_inkl:
+        # Initialiser state defaults én gang pr. sag
+        if _bilag_inkl_key not in st.session_state:
+            # Default ON for SAGSAKTER (bruger-uploadet) der IKKE er
+            # vejledning/høringsbrev. Default OFF for sag-filer (klagers
+            # materialer skal sjældent med som forsvarsbilag).
+            _default_inkl = {}
+            for f in _anon_kandidater:
                 fn = f.get("filnavn") or ""
-                if fn not in st.session_state[_bilag_overskrift_key]:
-                    st.session_state[_bilag_overskrift_key][fn] = (
-                        _cache.get(fn) or ""
-                    )
-
-            # ---------- UI: START-BOGSTAV ----------
-            _kol_sb, _kol_hjelp = st.columns([1, 4])
-            with _kol_sb:
-                st.text_input(
-                    "Start-bogstav",
-                    key=_bilag_startbogstav_key,
-                    max_chars=2,
-                    help=(
-                        "Bilagene navngives kontinuerligt på tværs af "
-                        "høringer. Ved 1. høring er det A. Ved 2./3. høring "
-                        "skal det være næste ledige bogstav efter forrige "
-                        "hørings sidste bilag."
-                    ),
-                )
-            with _kol_hjelp:
-                _sb_aktuel = (
-                    st.session_state.get(_bilag_startbogstav_key) or "A"
-                ).strip().upper()[:1] or "A"
-                st.markdown(
-                    f"<div style='padding-top: 28px; color: #6B7280; "
-                    f"font-size: 0.88rem;'>Selve svarbrevet bliver "
-                    f"<strong>Bilag {_sb_aktuel}</strong>.</div>",
-                    unsafe_allow_html=True,
-                )
-
-            # ---------- UI: PER-FIL CONTROLS ----------
-            # Beregn løbende bogstav for hver inkluderet fil i den valgte
-            # rækkefølge — dem viser vi som badge på hver række.
-            _start_idx = ord(_sb_aktuel) - ord("A")
-            _bogstav_per_filnavn = {}
-            _filnavne_i_orden = [
-                fn for fn in st.session_state[_bilag_raekkefolge_key]
-                if st.session_state[_bilag_inkl_key].get(fn)
-            ]
-            # Bilag #1 er svarbrevet selv → tildelte bilag starter ved +1
-            for _i, fn in enumerate(_filnavne_i_orden):
-                _b_idx = _start_idx + 1 + _i
-                if 0 <= _b_idx < 26:
-                    _bogstav_per_filnavn[fn] = chr(ord("A") + _b_idx)
+                kilde = f.get("_kilde")
+                rolle = (f.get("rolle") or "").lower()
+                if kilde == "sagsakt" and rolle not in ("vejledning", "høring"):
+                    _default_inkl[fn] = True
                 else:
-                    _bogstav_per_filnavn[fn] = "?"
+                    _default_inkl[fn] = False
+            st.session_state[_bilag_inkl_key] = _default_inkl
 
-            # Lille hint-tekst lige over rækkerne så brugeren ved at
-            # de auto-foreslåede titler kan rettes manuelt
+        if _bilag_raekkefolge_key not in st.session_state:
+            # Default-rækkefølge = sagsakter først (i upload-rækkefølge),
+            # derefter sag-filer (i sag-rækkefølge)
+            _orden = []
+            for f in _anon_kandidater:
+                if f.get("_kilde") == "sagsakt":
+                    _orden.append(f.get("filnavn"))
+            for f in _anon_kandidater:
+                if f.get("_kilde") != "sagsakt":
+                    _orden.append(f.get("filnavn"))
+            st.session_state[_bilag_raekkefolge_key] = _orden
+
+        if _bilag_startbogstav_key not in st.session_state:
+            # Default start-bogstav følger høringssvar-nummeret KUN for
+            # 1. høring (= A). For 2./3. høring må brugeren selv skrive
+            # det rigtige bogstav, fordi det afhænger af hvor mange
+            # bilag de tidligere høringer havde — info vi ikke kender
+            # før login + sagshistorik er på plads.
+            st.session_state[_bilag_startbogstav_key] = "A"
+
+        # ---------- AUTO-UDFYLD OVERSKRIFTER (lazy, cached) ----------
+        # Kun filer DER ER MARKERET som bilag får auto-foreslået
+        # overskrift (ellers spilder vi tokens). Når brugeren toggler
+        # en ny fil ON tager vi en ny runde.
+        _filer_med_inkl = [
+            f for f in _anon_kandidater
+            if st.session_state[_bilag_inkl_key].get(f.get("filnavn"))
+        ]
+        # Liste af filnavne der STADIG mangler en cached overskrift
+        _cache = st.session_state.get(_bilag_overskrift_cache_key, {})
+        _mangler_overskrift = [
+            f for f in _filer_med_inkl
+            if (f.get("filnavn") or "") not in _cache
+        ]
+
+        if _mangler_overskrift:
+            with st.spinner(
+                f"Foreslår overskrifter til {len(_mangler_overskrift)} bilag…"
+            ):
+                try:
+                    _nye = udled_bilag_overskrifter(_mangler_overskrift)
+                except Exception as _e:
+                    print(
+                        f"DEBUG: udled_bilag_overskrifter UI-kald fejlede: {_e}"
+                    )
+                    _nye = {
+                        (f.get("filnavn") or ""): (f.get("filnavn") or "")
+                        .rsplit(".", 1)[0]
+                        .replace("_", " ")
+                        for f in _mangler_overskrift
+                    }
+            _cache.update(_nye)
+            st.session_state[_bilag_overskrift_cache_key] = _cache
+
+        # Sørg for at hver inkluderet fil har en aktuel overskrift-værdi
+        # (initial = cache, brugeren kan derefter overskrive)
+        if _bilag_overskrift_key not in st.session_state:
+            st.session_state[_bilag_overskrift_key] = {}
+        for f in _filer_med_inkl:
+            fn = f.get("filnavn") or ""
+            if fn not in st.session_state[_bilag_overskrift_key]:
+                st.session_state[_bilag_overskrift_key][fn] = (
+                    _cache.get(fn) or ""
+                )
+
+        # ---------- UI: START-BOGSTAV ----------
+        _kol_sb, _kol_hjelp = st.columns([1, 4])
+        with _kol_sb:
+            st.text_input(
+                "Start-bogstav",
+                key=_bilag_startbogstav_key,
+                max_chars=2,
+                help=(
+                    "Bilagene navngives kontinuerligt på tværs af "
+                    "høringer. Ved 1. høring er det A. Ved 2./3. høring "
+                    "skal det være næste ledige bogstav efter forrige "
+                    "hørings sidste bilag."
+                ),
+            )
+        with _kol_hjelp:
+            _sb_aktuel = (
+                st.session_state.get(_bilag_startbogstav_key) or "A"
+            ).strip().upper()[:1] or "A"
             st.markdown(
-                "<div style='color:#6B7280; font-size:0.78rem; "
-                "font-style:italic; margin: 14px 0 4px 0; "
-                "padding-left: 2px;'>"
-                "Klik i feltet for at redigere den foreslåede titel."
-                "</div>",
+                f"<div style='padding-top: 28px; color: #6B7280; "
+                f"font-size: 0.88rem;'>Selve svarbrevet bliver "
+                f"<strong>Bilag {_sb_aktuel}</strong>.</div>",
                 unsafe_allow_html=True,
             )
 
-            # Render rækkerne i den aktuelle rækkefølge — først dem der er
-            # MED som bilag (med up/down-pile), derefter dem der er fra-
-            # valgt (kun toggle-knap).
-            _orden_aktuel = list(st.session_state[_bilag_raekkefolge_key])
-            _filnavn_til_fil = {
-                (f.get("filnavn") or ""): f for f in _anon_kandidater
-            }
-            for _idx_orden, fn in enumerate(_orden_aktuel):
-                fil = _filnavn_til_fil.get(fn)
-                if not fil:
-                    continue
-                er_med = bool(st.session_state[_bilag_inkl_key].get(fn))
+        # ---------- UI: PER-FIL CONTROLS ----------
+        # Beregn løbende bogstav for hver inkluderet fil i den valgte
+        # rækkefølge — dem viser vi som badge på hver række.
+        _start_idx = ord(_sb_aktuel) - ord("A")
+        _bogstav_per_filnavn = {}
+        _filnavne_i_orden = [
+            fn for fn in st.session_state[_bilag_raekkefolge_key]
+            if st.session_state[_bilag_inkl_key].get(fn)
+        ]
+        # Bilag #1 er svarbrevet selv → tildelte bilag starter ved +1
+        for _i, fn in enumerate(_filnavne_i_orden):
+            _b_idx = _start_idx + 1 + _i
+            if 0 <= _b_idx < 26:
+                _bogstav_per_filnavn[fn] = chr(ord("A") + _b_idx)
+            else:
+                _bogstav_per_filnavn[fn] = "?"
 
-                (
-                    _kol_inkl, _kol_bogstav, _kol_overskrift,
-                    _kol_op, _kol_ned,
-                ) = st.columns([2.0, 0.9, 5.5, 0.5, 0.5])
+        # Lille hint-tekst lige over rækkerne så brugeren ved at
+        # de auto-foreslåede titler kan rettes manuelt
+        st.markdown(
+            "<div style='color:#6B7280; font-size:0.78rem; "
+            "font-style:italic; margin: 14px 0 4px 0; "
+            "padding-left: 2px;'>"
+            "Klik i feltet for at redigere den foreslåede titel."
+            "</div>",
+            unsafe_allow_html=True,
+        )
 
-                # KRITISK: widget-keys er bundet til FILNAVNET (ikke index).
-                    # Når en bruger flytter et bilag op/ned, beholder hver
-                    # widget sin egen state — Streamlit re-mounter dem ikke
-                    # på en ny position. Det fjerner den "to-titel-flicker"-
-                    # effekt der tidligere viste den gamle og nye titel
-                    # samtidig under et øjeblik.
-                with _kol_inkl:
-                    # Toggle: medtag denne fil som bilag?
-                    _cb_key = f"bilag_cb_{_bilag_signatur}_{fn}"
-                    if _cb_key not in st.session_state:
-                        st.session_state[_cb_key] = er_med
-                    _ny_vaerdi = st.checkbox(fn, key=_cb_key)
-                    if _ny_vaerdi != er_med:
-                        st.session_state[_bilag_inkl_key][fn] = _ny_vaerdi
+        # Render rækkerne i den aktuelle rækkefølge — først dem der er
+        # MED som bilag (med up/down-pile), derefter dem der er fra-
+        # valgt (kun toggle-knap).
+        _orden_aktuel = list(st.session_state[_bilag_raekkefolge_key])
+        _filnavn_til_fil = {
+            (f.get("filnavn") or ""): f for f in _anon_kandidater
+        }
+        for _idx_orden, fn in enumerate(_orden_aktuel):
+            fil = _filnavn_til_fil.get(fn)
+            if not fil:
+                continue
+            er_med = bool(st.session_state[_bilag_inkl_key].get(fn))
+
+            (
+                _kol_inkl, _kol_bogstav, _kol_overskrift,
+                _kol_op, _kol_ned,
+            ) = st.columns([2.0, 0.9, 5.5, 0.5, 0.5])
+
+            # KRITISK: widget-keys er bundet til FILNAVNET (ikke index).
+                # Når en bruger flytter et bilag op/ned, beholder hver
+                # widget sin egen state — Streamlit re-mounter dem ikke
+                # på en ny position. Det fjerner den "to-titel-flicker"-
+                # effekt der tidligere viste den gamle og nye titel
+                # samtidig under et øjeblik.
+            with _kol_inkl:
+                # Toggle: medtag denne fil som bilag?
+                _cb_key = f"bilag_cb_{_bilag_signatur}_{fn}"
+                if _cb_key not in st.session_state:
+                    st.session_state[_cb_key] = er_med
+                _ny_vaerdi = st.checkbox(fn, key=_cb_key)
+                if _ny_vaerdi != er_med:
+                    st.session_state[_bilag_inkl_key][fn] = _ny_vaerdi
+                    st.rerun()
+
+            with _kol_bogstav:
+                if er_med:
+                    bogstav = _bogstav_per_filnavn.get(fn, "?")
+                    st.markdown(
+                        f"<div style='padding-top: 6px; font-weight: 700; "
+                        f"color: #92400E;'>Bilag {bogstav}</div>",
+                        unsafe_allow_html=True,
+                    )
+
+            with _kol_overskrift:
+                if er_med:
+                    _tekst_key = f"bilag_tekst_{_bilag_signatur}_{fn}"
+                    # Initial-værdi sættes KUN hvis widget-state ikke
+                    # findes endnu — derefter har brugerens redigeringer
+                    # forrang (Streamlit-konvention).
+                    if _tekst_key not in st.session_state:
+                        st.session_state[_tekst_key] = (
+                            st.session_state[_bilag_overskrift_key].get(
+                                fn, ""
+                            )
+                        )
+                    _ny_tekst = st.text_input(
+                        "Beskrivelse",
+                        key=_tekst_key,
+                        label_visibility="collapsed",
+                        placeholder="Bilag-beskrivelse…",
+                    )
+                    st.session_state[_bilag_overskrift_key][fn] = _ny_tekst
+
+            with _kol_op:
+                if er_med and _idx_orden > 0:
+                    if st.button(
+                        "↑",
+                        key=f"bilag_op_{_bilag_signatur}_{fn}",
+                        help="Flyt op",
+                    ):
+                        _o = st.session_state[_bilag_raekkefolge_key]
+                        _o[_idx_orden - 1], _o[_idx_orden] = (
+                            _o[_idx_orden], _o[_idx_orden - 1]
+                        )
                         st.rerun()
 
-                with _kol_bogstav:
-                    if er_med:
-                        bogstav = _bogstav_per_filnavn.get(fn, "?")
-                        st.markdown(
-                            f"<div style='padding-top: 6px; font-weight: 700; "
-                            f"color: #92400E;'>Bilag {bogstav}</div>",
-                            unsafe_allow_html=True,
+            with _kol_ned:
+                if er_med and _idx_orden < len(_orden_aktuel) - 1:
+                    if st.button(
+                        "↓",
+                        key=f"bilag_ned_{_bilag_signatur}_{fn}",
+                        help="Flyt ned",
+                    ):
+                        _o = st.session_state[_bilag_raekkefolge_key]
+                        _o[_idx_orden], _o[_idx_orden + 1] = (
+                            _o[_idx_orden + 1], _o[_idx_orden]
                         )
-
-                with _kol_overskrift:
-                    if er_med:
-                        _tekst_key = f"bilag_tekst_{_bilag_signatur}_{fn}"
-                        # Initial-værdi sættes KUN hvis widget-state ikke
-                        # findes endnu — derefter har brugerens redigeringer
-                        # forrang (Streamlit-konvention).
-                        if _tekst_key not in st.session_state:
-                            st.session_state[_tekst_key] = (
-                                st.session_state[_bilag_overskrift_key].get(
-                                    fn, ""
-                                )
-                            )
-                        _ny_tekst = st.text_input(
-                            "Beskrivelse",
-                            key=_tekst_key,
-                            label_visibility="collapsed",
-                            placeholder="Bilag-beskrivelse…",
-                        )
-                        st.session_state[_bilag_overskrift_key][fn] = _ny_tekst
-
-                with _kol_op:
-                    if er_med and _idx_orden > 0:
-                        if st.button(
-                            "↑",
-                            key=f"bilag_op_{_bilag_signatur}_{fn}",
-                            help="Flyt op",
-                        ):
-                            _o = st.session_state[_bilag_raekkefolge_key]
-                            _o[_idx_orden - 1], _o[_idx_orden] = (
-                                _o[_idx_orden], _o[_idx_orden - 1]
-                            )
-                            st.rerun()
-
-                with _kol_ned:
-                    if er_med and _idx_orden < len(_orden_aktuel) - 1:
-                        if st.button(
-                            "↓",
-                            key=f"bilag_ned_{_bilag_signatur}_{fn}",
-                            help="Flyt ned",
-                        ):
-                            _o = st.session_state[_bilag_raekkefolge_key]
-                            _o[_idx_orden], _o[_idx_orden + 1] = (
-                                _o[_idx_orden + 1], _o[_idx_orden]
-                            )
-                            st.rerun()
+                        st.rerun()
 
 
 # ---------- AUTO-TJEKLISTE MOD HØRINGSBREV ----------
@@ -3408,7 +3479,7 @@ if st.session_state.get("aktuel_sag"):
         <div class="analyse-pillar"
              style="--pillar-bg: #E5F0FD; --pillar-accent: #007AFF;">
             <div class="analyse-pillar-accent-dot"></div>
-            <h2 class="analyse-pillar-title">Tjekliste mod høringsbrev</h2>
+            <h2 class="analyse-pillar-title">12. Tjekliste mod høringsbrev</h2>
             <div class="analyse-pillar-body">
                 <p>Læser Ankenævnets høringsbrev og sammenholder med de
                 uploadede bilag. Viser hvilke af Nævnets ønskede punkter
@@ -3473,7 +3544,7 @@ if st.session_state.get("aktuel_sag"):
         <div class="analyse-pillar"
              style="--pillar-bg: #FDEFD7; --pillar-accent: #F59E0B;">
             <div class="analyse-pillar-accent-dot"></div>
-            <h2 class="analyse-pillar-title">Generer svarbrev til Nævnet</h2>
+            <h2 class="analyse-pillar-title">13. Generer svarbrev til Nævnet</h2>
             <div class="analyse-pillar-body">
                 <p>Lav et kompakt udkast til svarbrev fra TUI til
                 Pakkerejseankenævnet. Brevet holdes til max 1-2 A4-sider
@@ -3851,7 +3922,7 @@ if st.session_state.get("aktuel_sag"):
         <div class="analyse-pillar"
              style="--pillar-bg: #E7F5DD; --pillar-accent: #76D672;">
             <div class="analyse-pillar-accent-dot"></div>
-            <h2 class="analyse-pillar-title">Gem din sagsbehandling</h2>
+            <h2 class="analyse-pillar-title">14. Gem din sagsbehandling</h2>
             <div class="analyse-pillar-body">
                 <p>Gem alt det du har lavet indtil videre. Du kan genoptage
                 sagen præcis hvor du slap — under menupunktet
