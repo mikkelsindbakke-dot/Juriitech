@@ -474,16 +474,18 @@ st.markdown(
         line-height: 1.55;
     }
 
-    /* ========== TIDSFORHOLD-TIDSLINJE — vist i den gule tidsforhold-pillar ========== */
+    /* ========== TIDSFORHOLD-TIDSLINJE — vist i den gule tidsforhold-pillar
+       Layout: dato i venstre kolonne (130px), lodret linje, dot, tekst i højre.
+       Begivenheder efter hjemkomst dæmpes visuelt så fokus er på destinationen. */
     .tf-tidslinje {
         position: relative;
-        padding-left: 8px;
+        padding-left: 0;
         margin-top: 12px;
     }
     .tf-tidslinje::before {
         content: '';
         position: absolute;
-        left: 13px;
+        left: 152px;
         top: 12px;
         bottom: 12px;
         width: 2px;
@@ -492,17 +494,71 @@ st.markdown(
     }
     .tf-tidslinje-item {
         position: relative;
+        display: flex;
+        align-items: flex-start;
+        gap: 0;
         margin-bottom: 14px;
-        padding-left: 32px;
-        min-height: 24px;
+        min-height: 28px;
     }
     .tf-tidslinje-item:last-child {
         margin-bottom: 0;
     }
+    .tf-tidslinje-dato-kolonne {
+        flex: 0 0 130px;
+        width: 130px;
+        max-width: 130px;
+        text-align: right;
+        padding-right: 22px;
+        padding-top: 10px;
+        box-sizing: border-box;
+    }
+    .tf-tidslinje-dato {
+        display: block;
+        font-weight: 700;
+        color: #92400E !important;
+        font-size: 0.92rem;
+        line-height: 1.25;
+        white-space: nowrap;
+    }
+    .tf-tidslinje-dato.efter-hjemkomst {
+        color: #9CA3AF !important;
+        font-weight: 600;
+        font-size: 0.85rem;
+    }
+    .tf-tidslinje-tid {
+        display: block;
+        font-weight: 600;
+        color: #B45309 !important;
+        font-size: 0.78rem;
+        line-height: 1.2;
+        margin-top: 2px;
+    }
+    .tf-tidslinje-fase {
+        display: block;
+        font-size: 0.7rem;
+        font-weight: 600;
+        color: #B45309 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        margin-top: 3px;
+        opacity: 0.78;
+    }
+    .tf-tidslinje-fase.efter-hjemkomst {
+        color: #9CA3AF !important;
+        opacity: 0.65;
+    }
+    .tf-tidslinje-dato-ukendt {
+        display: block;
+        font-style: italic;
+        font-weight: 500;
+        color: #9CA3AF !important;
+        font-size: 0.8rem;
+        line-height: 1.25;
+    }
     .tf-tidslinje-dot {
         position: absolute;
-        left: 6px;
-        top: 6px;
+        left: 145px;
+        top: 12px;
         width: 14px;
         height: 14px;
         border-radius: 50%;
@@ -510,6 +566,8 @@ st.markdown(
         z-index: 1;
     }
     .tf-tidslinje-tekst {
+        flex: 1 1 auto;
+        margin-left: 30px;
         background: rgba(255, 255, 255, 0.55);
         padding: 10px 14px;
         border-radius: 10px;
@@ -521,6 +579,29 @@ st.markdown(
     .tf-tidslinje-tekst strong {
         color: #92400E !important;
         font-weight: 700;
+    }
+    .tf-tidslinje-tekst.efter-hjemkomst {
+        background: rgba(255, 255, 255, 0.35);
+        border: 1px dashed rgba(146, 64, 14, 0.12);
+        color: #6B7280 !important;
+        font-size: 0.88rem !important;
+        opacity: 0.72;
+    }
+    .tf-tidslinje-tekst.efter-hjemkomst strong {
+        color: #6B7280 !important;
+        font-weight: 600;
+    }
+    @media (max-width: 640px) {
+        .tf-tidslinje::before { left: 88px; }
+        .tf-tidslinje-dot { left: 81px; }
+        .tf-tidslinje-dato-kolonne {
+            flex: 0 0 70px;
+            width: 70px;
+            max-width: 70px;
+            padding-right: 14px;
+        }
+        .tf-tidslinje-dato { font-size: 0.82rem; }
+        .tf-tidslinje-tekst { margin-left: 26px; font-size: 0.9rem !important; }
     }
 
     /* Kildehenvisninger — fremhævet i accent-farve på hvid pille */
@@ -1816,7 +1897,42 @@ if st.session_state.get("aktuel_sag"):
                         "**Afvisning af klagen:** Z%\n\n"
                         "Selv hvis sagen er ufuldstændigt oplyst, estimér de tre "
                         "procenter baseret på hvad du KAN udlede. Angiv eventuelt "
-                        "'Lavt grundlag' hvis et estimat er særligt usikkert."
+                        "'Lavt grundlag' hvis et estimat er særligt usikkert.\n\n"
+                        "═══════════════════════════════════════════════════\n"
+                        "OVERSKRIFTER ER FASTLÅSTE — INGEN OMSKRIVNING\n"
+                        "═══════════════════════════════════════════════════\n"
+                        "Du SKAL bruge PRÆCIS disse 5 overskrifter, i denne "
+                        "rækkefølge, ord-for-ord (kun nummer + titel "
+                        "som vist — ingen omskrivninger, ingen synonymer, "
+                        "ingen tilføjede ord):\n\n"
+                        "  1. **Kort resume af sagen**\n"
+                        "  2. **Klagens kernepunkter**\n"
+                        "  3. **Rejseselskabets stillingtagen indtil nu**\n"
+                        "  4. **Kort juridisk vurdering**\n"
+                        "  5. **Sandsynlighedsvurdering**\n\n"
+                        "FORBUDTE alternativer (eksempler — opfind ALDRIG "
+                        "egne titler):\n"
+                        "  ✗ 'Sagsfremstilling' (skal være 'Kort resume af sagen')\n"
+                        "  ✗ 'Resumé' eller 'Resumé af klagen' (skal være "
+                        "'Kort resume af sagen')\n"
+                        "  ✗ 'Klagepunkter' eller 'Klagers påstande' "
+                        "(skal være 'Klagens kernepunkter')\n"
+                        "  ✗ 'TUI's håndtering' eller 'Rejseselskabets "
+                        "håndtering' (skal være 'Rejseselskabets "
+                        "stillingtagen indtil nu')\n"
+                        "  ✗ 'Juridisk analyse' eller 'Juridisk vurdering' "
+                        "uden 'Kort' (skal være 'Kort juridisk vurdering')\n"
+                        "  ✗ 'Konklusion', 'Vurdering', 'Anbefaling' "
+                        "(skal være 'Sandsynlighedsvurdering')\n"
+                        "  ✗ Ekstra sektioner som 'Anbefalinger', "
+                        "'Næste skridt', 'Bemærkninger', 'Kildehenvisninger' "
+                        "som top-level — disse må KUN optræde som "
+                        "underpunkter eller bullets inde i en af de 5 "
+                        "fastlåste sektioner.\n\n"
+                        "Hvis du fristes til at omdøbe en overskrift fordi "
+                        "den 'passer bedre' til sagen — LAD VÆRE. "
+                        "Skabelonen er fast. Indholdet tilpasses sagen — "
+                        "overskrifterne gør ikke."
                     ),
                     sager=[],
                     sag=st.session_state.aktuel_sag,
@@ -2009,10 +2125,12 @@ if st.session_state.get("aktuel_sag"):
         # passerer det til hver render-funktion.
         _pillar_nummer = 1
 
-        # ---------- RESUME AF SAGEN — FØRSTE sektion efter dashboardet ----------
-        # Apple Health-pillar-stilen med emne + struktureret grid (klagepunkter,
-        # klagers krav, TUI's håndtering). Vises før de relevante afgørelser
-        # så juristen først får overblik, derefter præcedens.
+        # ---------- RESUME AF SAGEN — ALTID sektion 1 efter dashboardet ----------
+        # KRITISK: Resume SKAL altid vises som sektion 1. Hvis det
+        # strukturerede resume af en eller anden grund mangler (fx fordi
+        # AI-kaldet fejlede), viser vi en fallback-pillar med et kort
+        # uddrag fra førstevurderingen — så juristen aldrig oplever en
+        # tom plads hvor sektion 1 burde være.
         _har_struktureret_resume = bool(st.session_state.get("sagsresume"))
         if _har_struktureret_resume:
             render_sagsresume(
@@ -2021,95 +2139,345 @@ if st.session_state.get("aktuel_sag"):
                 bg="#FDE9EE",
                 nummer=_pillar_nummer,
             )
-            _pillar_nummer += 1
+        else:
+            # Fallback: ekstrahér første afsnit fra førstevurderingen
+            # som simpelt resume så pillaren altid er der.
+            import html as _html_res
+            _vurd_tekst = (
+                st.session_state.get("auto_vurdering_tekst") or ""
+            )
+            # Find første "indholds"-paragraf (skip overskrifter)
+            _resume_fallback = ""
+            for _para in _vurd_tekst.split("\n\n"):
+                _stripped = _para.strip()
+                if (
+                    _stripped
+                    and not _stripped.startswith(("#", "*", "-", "1.", "2."))
+                    and len(_stripped) > 80
+                ):
+                    _resume_fallback = _stripped[:600]
+                    if len(_stripped) > 600:
+                        _resume_fallback += "…"
+                    break
+            if not _resume_fallback:
+                _resume_fallback = (
+                    "Et struktureret resume af sagen kunne ikke "
+                    "udledes automatisk. Kig i førstevurderingen "
+                    "nedenfor for sagens detaljer."
+                )
+            st.markdown(
+                f'<div class="analyse-pillar"'
+                ' style="--pillar-bg: #FDE9EE; '
+                '--pillar-accent: #00D4C2;">'
+                '<div class="analyse-pillar-accent-dot"></div>'
+                f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
+                'Resume af sagen</h2>'
+                '<div class="analyse-pillar-body">'
+                f'<p>{_html_res.escape(_resume_fallback)}</p>'
+                '</div></div>',
+                unsafe_allow_html=True,
+            )
+        _pillar_nummer += 1
 
-        # ---------- TIDSFORHOLD — KRITISK FORSVARSARGUMENT ----------
-        # Pakkerejse-Ankenævnet vægter rettidig reklamation MEGET HØJT.
-        # Hvis vi har detekteret en problematisk forsinkelse mellem
-        # konstatering af mangler og kontakt til TUI, fremhæves det her
-        # som en gul/orange advarsels-pillar SÅ JURISTEN STRAKS SER DET.
-        # Vises KUN hvis der er en faktisk forsinkelse — undgår noise.
+        # ---------- TIDSFORHOLD — ALTID sektion 2 (rettidig reklamation) ----------
+        # Pakkerejse-Ankenævnet vægter rettidig reklamation MEGET HØJT,
+        # så denne sektion vises ALTID som sektion 2 — uanset om vi har
+        # detekteret en problematisk forsinkelse eller ej. Indholdet
+        # tilpasses status: tidslinje hvis observationer findes, gul
+        # advarsel hvis problematisk forsinkelse, eller neutral 'ingen
+        # bekymringer'-besked hvis tidsforhold er rene.
         _tf = st.session_state.get("tidsforhold")
-        if (
+
+        import html as _html_tf
+        import re as _re_tf
+
+        # Beslut tilstand for tidsforholds-pillaren
+        _tf_begivenheder = (_tf or {}).get("begivenheder") or []
+        _tf_har_observationer = bool(
+            _tf and (
+                _tf.get("konkrete_observationer")
+                or _tf_begivenheder
+            )
+        )
+        _tf_problematisk = bool(
             _tf
             and _tf.get("har_problematisk_forsinkelse")
             and not _tf.get("kunne_ikke_udledes")
-        ):
-            import html as _html_tf
-            import re as _re_tf
-            _tf_vurdering = _html_tf.escape(
-                _tf.get("samlet_vurdering") or ""
-            )
+        )
+        _tf_kunne_ikke = bool(_tf and _tf.get("kunne_ikke_udledes"))
 
-            # Konvertér konkrete_observationer til en visuel tidslinje
-            # med farvekodede dots: grøn (rettidig), rød (for sen),
-            # grå (neutral). Bruger eksisterende data — ingen nye AI-kald.
-            _tf_observationer_html = ""
-            if _tf.get("konkrete_observationer"):
-                _tf_observationer_html = (
-                    '<div class="tf-tidslinje">'
-                )
-                for _obs in _tf["konkrete_observationer"]:
-                    _obs_lower = _obs.lower()
-                    # Detekter sentiment baseret på nøgleord
-                    if any(w in _obs_lower for w in (
-                        "for sen", "forsinket", "efter hjemkomst",
-                        "ikke rettidig", "for sent",
-                    )):
-                        _dot_color = "#DC2626"  # rød
-                        _dot_glow = "rgba(220, 38, 38, 0.25)"
-                    elif any(w in _obs_lower for w in (
-                        "rettidig", "samme dag", "umiddelbart",
-                    )):
-                        _dot_color = "#16A34A"  # grøn
-                        _dot_glow = "rgba(22, 163, 74, 0.25)"
-                    else:
-                        _dot_color = "#6B7280"  # grå
-                        _dot_glow = "rgba(107, 114, 128, 0.2)"
-
-                    # Forsøg at fremhæve datoer i teksten — find danske
-                    # date-patterns og wrap dem i <strong>
-                    _obs_safe = _html_tf.escape(_obs)
-                    _date_pattern = _re_tf.compile(
-                        r'(\d{1,2}\.?\s*(?:januar|februar|marts|april|'
-                        r'maj|juni|juli|august|september|oktober|'
-                        r'november|december)(?:\s+\d{4})?)',
-                        _re_tf.IGNORECASE,
-                    )
-                    _obs_safe = _date_pattern.sub(
-                        r'<strong>\1</strong>', _obs_safe
-                    )
-
-                    _tf_observationer_html += (
-                        '<div class="tf-tidslinje-item">'
-                        f'<div class="tf-tidslinje-dot" '
-                        f'style="background: {_dot_color}; '
-                        f'box-shadow: 0 0 0 4px {_dot_glow};"></div>'
-                        '<div class="tf-tidslinje-tekst">'
-                        f'{_obs_safe}'
-                        '</div>'
-                        '</div>'
-                    )
-                _tf_observationer_html += '</div>'
-            st.markdown(
-                f'<div class="analyse-pillar"'
-                ' style="--pillar-bg: #FEF3C7; '
-                '--pillar-accent: #D97706;">'
-                '<div class="analyse-pillar-accent-dot"></div>'
-                f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
-                'Tidsforhold og rettidig reklamation</h2>'
-                '<div class="analyse-pillar-body">'
+        # Vælg farvepalet baseret på alvorlighed
+        if _tf_problematisk:
+            _tf_bg = "#FEF3C7"      # gul (advarsel)
+            _tf_accent = "#D97706"  # orange
+            _tf_intro_html = (
                 '<p style="font-weight: 600; color: #92400E;">'
                 'Pakkerejse-Ankenævnet vægter rettidig reklamation '
                 'højt. juriitech PAX har identificeret følgende '
                 'relevante tidsforhold der bør indgå som '
                 'forsvarsargument:</p>'
-                f'<p>{_tf_vurdering}</p>'
-                f'{_tf_observationer_html}'
-                '</div></div>',
-                unsafe_allow_html=True,
             )
-            _pillar_nummer += 1
+        elif _tf_har_observationer:
+            _tf_bg = "#E5F0FD"      # lyseblå (informativt)
+            _tf_accent = "#007AFF"  # blå
+            _tf_intro_html = (
+                '<p style="font-weight: 500; color: #1E40AF;">'
+                'Pakkerejse-Ankenævnet vægter rettidig reklamation højt. '
+                'Følgende tidsforhold er identificeret i sagen:</p>'
+            )
+        else:
+            _tf_bg = "#F3F4F6"      # grå (intet at se her)
+            _tf_accent = "#9CA3AF"  # grå
+            _tf_intro_html = ""
+
+        # Byg observationer som tidslinje (hvis nogen).
+        #
+        # Ny layout (efter feedback fra Mikkels kollega): datoen står i
+        # en venstre-kolonne (130px) inden selve teksten, så man hurtigt
+        # kan scanne hvad der er sket hvornår. Begivenheder EFTER
+        # hjemkomst dæmpes visuelt (lavere opacity, gråtoner) fordi
+        # tidsforløbet PÅ DESTINATIONEN er det vigtigste juridisk —
+        # alt efter "afgang"-typen er sekundært men må gerne være med.
+        #
+        # Hvis vi har struktureret 'begivenheder'-array fra
+        # udled_tidsforhold bruges det som primær kilde. Ellers falder vi
+        # tilbage til parsing af 'konkrete_observationer' (fri tekst).
+        _tf_observationer_html = ""
+
+        # Hjælpefunktion: marker datoer/tidspunkter med <strong> i fri tekst
+        _date_pattern = _re_tf.compile(
+            r'(\d{1,2}\.?\s*(?:januar|februar|marts|april|'
+            r'maj|juni|juli|august|september|oktober|'
+            r'november|december)(?:\s+\d{4})?)',
+            _re_tf.IGNORECASE,
+        )
+
+        if _tf_begivenheder:
+            # ---- STRUKTURERET TIDSLINJE (foretrukken vej) ----
+            # Find index for "afgang" — alt derefter er post-hjemkomst og
+            # vises dæmpet.
+            _afgang_idx = None
+            for _i, _b in enumerate(_tf_begivenheder):
+                if (_b.get("type") or "").strip().lower() == "afgang":
+                    _afgang_idx = _i
+                    break
+
+            _items_html = []
+            for _i, _b in enumerate(_tf_begivenheder):
+                _dato = _html_tf.escape(_b.get("dato") or "")
+                _tidspunkt = _html_tf.escape(_b.get("tidspunkt") or "")
+                _aktoer = _html_tf.escape(_b.get("aktoer") or "")
+                _besk = _html_tf.escape(_b.get("beskrivelse") or "")
+                _bet = (_b.get("betydning") or "neutral").lower()
+                _typ = (_b.get("type") or "").strip().lower()
+
+                # Farve på dot ud fra juridisk betydning for TUI
+                if _bet == "negativ_for_tui":
+                    _dot_color = "#DC2626"
+                    _dot_glow = "rgba(220, 38, 38, 0.25)"
+                elif _bet == "positiv_for_tui":
+                    _dot_color = "#16A34A"
+                    _dot_glow = "rgba(22, 163, 74, 0.25)"
+                else:
+                    _dot_color = "#6B7280"
+                    _dot_glow = "rgba(107, 114, 128, 0.2)"
+
+                # Er denne begivenhed efter hjemkomst?
+                _efter_hjem = (
+                    _afgang_idx is not None and _i > _afgang_idx
+                )
+                _eh_klasse = " efter-hjemkomst" if _efter_hjem else ""
+
+                # Fase-label (lille uppercase tekst over datoen) hjælper
+                # med hurtig orientering — fx "PÅ DESTINATION" eller
+                # "EFTER HJEMKOMST"
+                if _typ == "ankomst":
+                    _fase_label = "Ankomst"
+                elif _typ == "afgang":
+                    _fase_label = "Hjemrejse"
+                elif _efter_hjem:
+                    _fase_label = "Efter hjemkomst"
+                else:
+                    _fase_label = "På destination"
+
+                # Dim posten endnu mere hvis efter hjemkomst (mindre
+                # punktstørrelse på dot)
+                _dot_size_style = (
+                    "width: 11px; height: 11px; top: 14px; "
+                    "opacity: 0.55;"
+                    if _efter_hjem else ""
+                )
+
+                _tid_html = (
+                    f'<span class="tf-tidslinje-tid">{_tidspunkt}</span>'
+                    if _tidspunkt else ""
+                )
+
+                _aktoer_html = (
+                    f'<strong>{_aktoer}:</strong> ' if _aktoer else ""
+                )
+
+                _items_html.append(
+                    '<div class="tf-tidslinje-item">'
+                    '<div class="tf-tidslinje-dato-kolonne">'
+                    f'<span class="tf-tidslinje-dato{_eh_klasse}">'
+                    f'{_dato}</span>'
+                    f'{_tid_html}'
+                    f'<span class="tf-tidslinje-fase{_eh_klasse}">'
+                    f'{_fase_label}</span>'
+                    '</div>'
+                    f'<div class="tf-tidslinje-dot" '
+                    f'style="background: {_dot_color}; '
+                    f'box-shadow: 0 0 0 4px {_dot_glow};'
+                    f'{_dot_size_style}"></div>'
+                    f'<div class="tf-tidslinje-tekst{_eh_klasse}">'
+                    f'{_aktoer_html}{_besk}'
+                    '</div>'
+                    '</div>'
+                )
+
+            _tf_observationer_html = (
+                '<div class="tf-tidslinje">'
+                + "".join(_items_html)
+                + '</div>'
+            )
+
+        elif _tf and _tf.get("konkrete_observationer"):
+            # ---- FALLBACK: parse fri tekst hvis begivenheder mangler ----
+            _items_html = []
+            for _obs in _tf["konkrete_observationer"]:
+                _obs_lower = _obs.lower()
+                if any(w in _obs_lower for w in (
+                    "for sen", "forsinket", "efter hjemkomst",
+                    "ikke rettidig", "for sent",
+                )):
+                    _dot_color = "#DC2626"
+                    _dot_glow = "rgba(220, 38, 38, 0.25)"
+                elif any(w in _obs_lower for w in (
+                    "rettidig", "samme dag", "umiddelbart",
+                )):
+                    _dot_color = "#16A34A"
+                    _dot_glow = "rgba(22, 163, 74, 0.25)"
+                else:
+                    _dot_color = "#6B7280"
+                    _dot_glow = "rgba(107, 114, 128, 0.2)"
+
+                # Forsøg at trække den FØRSTE dato ud i venstre kolonne
+                _obs_safe = _html_tf.escape(_obs)
+                _match = _date_pattern.search(_obs_safe)
+                if _match:
+                    _dato_kolonne = _match.group(1)
+                    # Fjern datoen fra teksten (kun første forekomst) —
+                    # ellers står den dobbelt
+                    _resttekst = (
+                        _obs_safe[:_match.start()]
+                        + _obs_safe[_match.end():]
+                    ).strip(" ,–-")
+                    _resttekst = _date_pattern.sub(
+                        r'<strong>\1</strong>', _resttekst
+                    )
+                else:
+                    _dato_kolonne = ""
+                    _resttekst = _date_pattern.sub(
+                        r'<strong>\1</strong>', _obs_safe
+                    )
+
+                _eh = "efter hjemkomst" in _obs_lower
+                _eh_klasse = " efter-hjemkomst" if _eh else ""
+
+                if _dato_kolonne:
+                    _venstre_html = (
+                        f'<span class="tf-tidslinje-dato{_eh_klasse}">'
+                        f'{_dato_kolonne}</span>'
+                    )
+                else:
+                    _venstre_html = (
+                        '<span class="tf-tidslinje-dato-ukendt">'
+                        'Dato ukendt</span>'
+                    )
+
+                _items_html.append(
+                    '<div class="tf-tidslinje-item">'
+                    '<div class="tf-tidslinje-dato-kolonne">'
+                    f'{_venstre_html}'
+                    '</div>'
+                    f'<div class="tf-tidslinje-dot" '
+                    f'style="background: {_dot_color}; '
+                    f'box-shadow: 0 0 0 4px {_dot_glow};"></div>'
+                    f'<div class="tf-tidslinje-tekst{_eh_klasse}">'
+                    f'{_resttekst}'
+                    '</div>'
+                    '</div>'
+                )
+
+            _tf_observationer_html = (
+                '<div class="tf-tidslinje">'
+                + "".join(_items_html)
+                + '</div>'
+            )
+
+        # Lille "Rejseperiode"-chip øverst, så man hurtigt ser hvilke
+        # datoer destinationen dækker (gør timing-vurderingen lettere).
+        _rejseperiode = (_tf or {}).get("rejseperiode") or ""
+        _rejseperiode_html = ""
+        if _rejseperiode and _tf_har_observationer:
+            _rp_safe = _html_tf.escape(_rejseperiode)
+            _rejseperiode_html = (
+                '<div style="display: inline-flex; align-items: center; '
+                'gap: 8px; padding: 6px 14px; border-radius: 100px; '
+                'background: rgba(255,255,255,0.6); '
+                'border: 1px solid rgba(146,64,14,0.18); '
+                'font-weight: 600; color: #92400E; font-size: 0.88rem; '
+                'margin: 4px 0 12px 0;">'
+                '<span style="opacity:0.7;">Rejseperiode:</span>'
+                f'<span>{_rp_safe}</span>'
+                '</div>'
+            )
+
+        # Vælg body-tekst baseret på tilstand
+        if _tf_problematisk and _tf and _tf.get("samlet_vurdering"):
+            _tf_body = (
+                f'<p>{_html_tf.escape(_tf.get("samlet_vurdering"))}</p>'
+                f'{_rejseperiode_html}'
+                f'{_tf_observationer_html}'
+            )
+        elif _tf_har_observationer:
+            _samlet = _html_tf.escape(_tf.get("samlet_vurdering") or "")
+            _tf_body = (
+                (f'<p>{_samlet}</p>' if _samlet else "")
+                + _rejseperiode_html
+                + _tf_observationer_html
+            )
+        elif _tf_kunne_ikke:
+            _tf_body = (
+                '<p>juriitech PAX kunne ikke udlede konkrete '
+                'tidsforhold (datoer for henvendelser til TUI vs '
+                'konstatering af mangler) ud fra materialet. '
+                'Tilføj evt. mail-korrespondance eller datoer i '
+                'sagsakter for at få et tidslinje-overblik.</p>'
+            )
+        else:
+            _tf_body = (
+                '<p>Der er ikke identificeret problematiske tidsforhold '
+                'i sagen — klagers reklamation virker rettidig på baggrund '
+                'af det tilgængelige materiale. Tjek dog altid manuelt '
+                'om der er datoer der ikke fremgår af bilagene.</p>'
+            )
+
+        st.markdown(
+            f'<div class="analyse-pillar"'
+            f' style="--pillar-bg: {_tf_bg}; '
+            f'--pillar-accent: {_tf_accent};">'
+            '<div class="analyse-pillar-accent-dot"></div>'
+            f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
+            'Tidsforhold og rettidig reklamation</h2>'
+            '<div class="analyse-pillar-body">'
+            f'{_tf_intro_html}'
+            f'{_tf_body}'
+            '</div></div>',
+            unsafe_allow_html=True,
+        )
+        _pillar_nummer += 1
 
         # Visuelle kort for de 3-5 mest relevante tidligere sager.
         # Indrammes i en Apple Health-pillar med overskriften "Relevante
@@ -2119,14 +2487,17 @@ if st.session_state.get("aktuel_sag"):
         afgoerelser_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "afgoerelse"]
         vilkaar_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "vilkaar"]
 
-        # Sorter afgørelser så JURIDISK RELEVANTE matches kommer FØRST,
-        # men vis ALLE matches. Tidligere filtrerede vi svage matches helt
-        # væk, men det betød at sektionen nogle gange slet ikke dukkede
-        # op (hvis AI'en var streng med relevans-vurderingen). Bedre at
-        # vise alt og lade juristen vurdere selv — med tydelig visuel
-        # markering af om matchet er stærkt eller svagt.
+        # FILTRER svage matches HELT VÆK. Brugeren skal ikke spilde tid
+        # på sager der ikke har juridisk relevans for den nye sag.
+        # Hvis AI'en har markeret en match som juridisk_relevant_match=
+        # false (kun overfladiske ligheder som destination, rejsearrangør
+        # eller generisk 'mangel'), inkluderes den IKKE i visningen.
+        # Hvis ingen af top-5 matches er juridisk relevante, vises
+        # 'Relevante referencer'-sektionen slet ikke.
         _match_info_alle = st.session_state.get("match_info") or []
-        _afg_med_info = []
+        _filtreret_afgoerelser = []
+        _filtreret_match_info = []
+        _relevans_per_idx = []
         for _idx, _ag in enumerate(afgoerelser_ud[:5]):
             _info = (
                 _match_info_alle[_idx]
@@ -2134,13 +2505,11 @@ if st.session_state.get("aktuel_sag"):
                 else {}
             )
             _er_relevant = _info.get("juridisk_relevant_match", True)
-            _afg_med_info.append((_ag, _info, _er_relevant))
-
-        # Sortér: relevante matches først, derefter svage
-        _afg_med_info.sort(key=lambda x: (not x[2],))
-        afgoerelser_ud = [item[0] for item in _afg_med_info]
-        _filtreret_match_info = [item[1] for item in _afg_med_info]
-        _relevans_per_idx = [item[2] for item in _afg_med_info]
+            if _er_relevant:
+                _filtreret_afgoerelser.append(_ag)
+                _filtreret_match_info.append(_info)
+                _relevans_per_idx.append(True)
+        afgoerelser_ud = _filtreret_afgoerelser
 
         if afgoerelser_ud:
             # Apple Health-pillar wrapper — lavendel baggrund, indigo accent
@@ -2195,21 +2564,6 @@ if st.session_state.get("aktuel_sag"):
                 else:
                     udfald_badge_html = ""
 
-                # Relevans-badge (juridisk relevant vs svagt match)
-                _er_relevant = (
-                    _relevans_per_idx[i - 1]
-                    if i - 1 < len(_relevans_per_idx)
-                    else True
-                )
-                if _er_relevant:
-                    relevans_badge_html = badge(
-                        "Juridisk relevant match", "purple"
-                    )
-                else:
-                    relevans_badge_html = badge(
-                        "Svagt match — kun overfladiske ligheder", "gray"
-                    )
-
                 # Farve på match-%
                 if sim_pct >= 70:
                     farve = "#059669"
@@ -2233,9 +2587,9 @@ if st.session_state.get("aktuel_sag"):
                         if arrangoer and arrangoer.lower() != "ukendt":
                             meta += f"  ·  {arrangoer}"
                         st.caption(meta)
-                        if udfald_badge_html or relevans_badge_html:
+                        if udfald_badge_html:
                             st.markdown(
-                                udfald_badge_html + " " + relevans_badge_html,
+                                udfald_badge_html,
                                 unsafe_allow_html=True,
                             )
                     with kol_b:
