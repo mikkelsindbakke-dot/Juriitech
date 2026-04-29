@@ -265,6 +265,19 @@ def _split_analyse_i_sektioner(tekst):
         r"[A-ZÆØÅa-zæøå][^\n]*$"    # titel starter med et bogstav
     )
 
+    # YDERLIGERE: ## eller ### TITEL (uden tal-prefix) tæller også som
+    # top-level sektion. AI'en bryder ofte ud af den nummererede struktur
+    # og tilføjer freestyle markdown-headers (fx '## JURIDISK
+    # ARGUMENTATION FOR TUI'S FORSVAR') i bunden af sit svar. Vi vil have
+    # de freestyle-sektioner OPFANGET som separate sektioner i stedet for
+    # at de dumpes ind i den foregående sektions body — så kan force-map-
+    # logikken efterfølgende afvise dem (de matcher ingen låste positioner).
+    is_freestyle_h2_start = re.compile(
+        r"^\s*##{1,3}\s+"           # ## eller ### eller ####
+        r"(?:\*\*)?"                # evt. leading **
+        r"[A-ZÆØÅa-zæøå][^\n]*$"    # titel starter med et bogstav (uden tal-prefix)
+    )
+
     def _parse_titel(s):
         """Ryd titel-linjen op til ren tekst."""
         s = s.strip()
@@ -326,9 +339,20 @@ def _split_analyse_i_sektioner(tekst):
             prev_was_blank = True
             continue
 
-        ser_ud_som_sektion = (
+        # En linje kvalificerer som top-level sektion-start enten via
+        # det nummererede mønster (**N. Titel**) eller via freestyle
+        # markdown-headers (## TITEL / ### TITEL). I begge tilfælde
+        # kræver vi en blank linje før.
+        ser_ud_som_nummereret = (
             bool(is_section_start.match(line))
             and _ligner_aegte_overskrift(line)
+        )
+        ser_ud_som_freestyle_h2 = (
+            bool(is_freestyle_h2_start.match(line))
+            and _ligner_aegte_overskrift(line)
+        )
+        ser_ud_som_sektion = (
+            ser_ud_som_nummereret or ser_ud_som_freestyle_h2
         )
         er_top_level = ser_ud_som_sektion and prev_was_blank
 
@@ -685,6 +709,47 @@ LAASTE_AI_SEKTIONER = [
 ]
 
 
+def _saniter_sektion_body(body, er_konklusion=False):
+    """
+    Renser en sektions body-tekst for AI's freestyle-tilføjelser der
+    ellers ville bløde ind i den rendrede pillar:
+
+      • Afkort ved første '\\n---\\n' (markdown-separator) — alt efter
+        er typisk AI's freestyle ekstra-content
+      • Afkort ved første '\\n## ' eller '\\n### ' (markdown-headers
+        som vores nye section-detection burde have opfanget, men hvis
+        de er INDE i en body fjerner vi dem her)
+      • For Konklusion i én linje (sektion 6): tag KUN første paragraph
+        og afkort til max 300 tegn — sektionen SKAL være én linje, så
+        vi tvinger den.
+
+    Returnerer den rensede body-tekst.
+    """
+    import re as _re
+
+    if not body:
+        return ""
+
+    # Trin 1: afkort ved markdown-separator
+    body = _re.split(r"\n\s*---\s*\n", body, maxsplit=1)[0]
+
+    # Trin 2: afkort ved freestyle h2/h3-header
+    body = _re.split(r"\n\s*##{1,3}\s+\S", body, maxsplit=1)[0]
+
+    body = body.strip()
+
+    # Trin 3: for Konklusion — kun første paragraph + max 300 tegn
+    if er_konklusion:
+        # Første paragraph = alt før første blank linje
+        forste_para = body.split("\n\n", 1)[0].strip()
+        # Yderligere afkort ved første nye linje hvis paragraph er meget lang
+        if len(forste_para) > 300:
+            forste_para = forste_para[:297].rstrip() + "…"
+        body = forste_para
+
+    return body
+
+
 def tving_struktur_til_seks_sektioner(sektioner):
     """
     Tager den rå liste af (titel, body)-tuples som AI'en producerede
@@ -702,9 +767,11 @@ def tving_struktur_til_seks_sektioner(sektioner):
          - Find den AI-sektion hvis titel matcher et af nøgleordene
            OG som ikke allerede er brugt
          - Hvis ingen match: brug en placeholder
+         - Body saniteres for AI's freestyle-tilføjelser (---, ##)
       2. Ekstra AI-sektioner der ikke matchede nogen position bliver
          flettet ind som ekstra bullets i 'Yderligere klagepunkter
-         og detaljer' (position 2) — så vi ikke taber indhold helt.
+         og detaljer' (position 2) — MEN kun hvis de ikke ligner
+         AI-freestyle (argumentation, forsvar osv. droppes helt).
 
     Returnerer: liste af præcis 6 (titel, body)-tuples.
     """
@@ -739,9 +806,17 @@ def tving_struktur_til_seks_sektioner(sektioner):
                         bedste_nogleord_prio = prio
                     break
 
+        # Position 6 er Konklusion i én linje — kræver speciel sanering
+        er_konklusion = (laast_idx == 5)
+
         if bedste_match_idx is not None:
             _ai_titel, ai_body = sektioner[bedste_match_idx]
-            result[laast_idx] = (laast_titel, ai_body or PLACEHOLDER_BODY)
+            renset_body = _saniter_sektion_body(
+                ai_body, er_konklusion=er_konklusion
+            )
+            result[laast_idx] = (
+                laast_titel, renset_body or PLACEHOLDER_BODY
+            )
             used_indices.add(bedste_match_idx)
         else:
             # Ingen AI-sektion matchede denne låste position — sæt
@@ -750,22 +825,39 @@ def tving_struktur_til_seks_sektioner(sektioner):
             result[laast_idx] = (laast_titel, PLACEHOLDER_BODY)
 
     # Trin 2: hvis AI'en producerede EKSTRA sektioner som ikke matchede
-    # nogen låst position, flet dem ind i 'Yderligere klagepunkter og
-    # detaljer' (position 2 / index 1) som ekstra bullets — så vi ikke
-    # taber legitimt indhold (selv om strukturen er forkert).
+    # nogen låst position, FILTRER aggressivt — kun ægte indhold (ikke
+    # AI-freestyle som "JURIDISK ARGUMENTATION FOR TUI'S FORSVAR" eller
+    # "Argument 1") foldes ind i 'Yderligere klagepunkter og detaljer'.
+    # AI-freestyle med disse mønstre droppes helt — vi vil have ren
+    # struktur, ikke duplikeret juridisk vurdering.
+    import re as _re_overflow
+    AI_FREESTYLE_MONSTRE = _re_overflow.compile(
+        r"\b(argument(ation)?|forsvar(spunkt)?|"
+        r"juridisk\s+argumentation|"
+        r"konklusion\s+for\s+tui|forsvarsstrategi|"
+        r"bevisførelse|argument\s*\d+|"
+        r"juridisk\s+forsvar)\b",
+        _re_overflow.IGNORECASE,
+    )
+
+    def _er_ai_freestyle(titel):
+        return bool(AI_FREESTYLE_MONSTRE.search(titel or ""))
+
     overskydende = [
         (sektioner[i][0], sektioner[i][1])
         for i in range(len(sektioner))
         if i not in used_indices
+        and not _er_ai_freestyle(sektioner[i][0])
     ]
     if overskydende:
         yderligere_titel, yderligere_body = result[1]
         ekstra_dele = []
         for ov_titel, ov_body in overskydende:
             stub = ov_titel.strip() if ov_titel else ""
-            if ov_body and ov_body.strip():
+            renset_ov_body = _saniter_sektion_body(ov_body)
+            if renset_ov_body:
                 ekstra_dele.append(
-                    f"- **{stub}:** {ov_body.strip()}"
+                    f"- **{stub}:** {renset_ov_body}"
                 )
             elif stub:
                 ekstra_dele.append(f"- **{stub}**")
