@@ -118,6 +118,32 @@ if "admin" in _query and _ADMIN_KEY and _query.get("admin") == _ADMIN_KEY:
 if "er_admin" not in st.session_state:
     st.session_state.er_admin = False
 
+# ---------- AUTH-TJEK (FØR NAVIGATION) ----------
+# Hvis brugeren ikke er logget ind, viser vi login-siden i stedet for
+# at lade dem se PAX-indholdet. Dette er det centrale sted hvor adgang
+# kontrolleres — alle sider er beskyttet på én gang.
+#
+# IMPLEMENTERING: Vi importerer auth.py som er en NY modul der ikke
+# rør PAX-funktionerne. Hvis Supabase ikke er konfigureret (fx ved
+# lokal udvikling uden secrets), springer vi auth-tjekket over så
+# udvikling stadig kan ske.
+try:
+    from auth import (
+        er_logget_ind,
+        vis_login_side,
+        get_supabase_client,
+        render_logout_i_sidebar,
+    )
+    _supabase_aktiv = get_supabase_client() is not None
+except Exception as _e:
+    print(f"DEBUG: Auth-modul kunne ikke loades: {_e}")
+    _supabase_aktiv = False
+
+# Hvis auth er konfigureret OG brugeren ikke er logget ind → vis login
+if _supabase_aktiv and not er_logget_ind():
+    vis_login_side()
+    st.stop()
+
 # ---------- MULTI-PAGE NAVIGATION ----------
 _pages = [
     st.Page(
@@ -147,6 +173,10 @@ _pages = [
     ),
 ]
 _pg = st.navigation(_pages)
+
+# Vis logout-knap + brugerinfo nederst i sidebaren (kun hvis logget ind)
+if _supabase_aktiv and er_logget_ind():
+    render_logout_i_sidebar()
 
 # ---------- TOP-LEVEL SAFETY NET ----------
 # Wrap _pg.run() i en try/except så ALLE crashes — også uforudsete

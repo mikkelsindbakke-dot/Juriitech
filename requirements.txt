@@ -33,3 +33,7 @@ Authlib>=1.3.2
 
 # Sentry — fejl-monitoring og crash-rapportering
 sentry-sdk>=2.0.0
+
+# Supabase — bruger-auth og database-klient
+# Bruges af auth.py til login/logout/session-management
+supabase>=2.7.0
