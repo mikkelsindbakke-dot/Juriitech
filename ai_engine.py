@@ -1728,6 +1728,80 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
         return []
 
 
+def _repair_truncated_json(svar: str):
+    """Forsøg at lukke trunkeret JSON pænt så vi kan parse det delvise
+    output. Bruges som fallback når AI-svar bliver afkortet midt i et
+    string/array/object pga. max_tokens-grænsen.
+
+    Returnerer dict ved succes, None ved manglende repair.
+    """
+    import json as _json
+
+    if not svar or not svar.strip():
+        return None
+
+    s = svar.strip()
+    # Find sidste 'sikre' position vi kan trimme tilbage til:
+    # - Hvis vi er midt i en string, find sidste " og trim derefter
+    # - Luk åbne arrays/objects baseret på balance
+
+    # Tæl uafsluttede åbne tegn
+    in_string = False
+    escape = False
+    stack = []
+    sidste_sikre_pos = 0
+
+    for i, ch in enumerate(s):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in "[{":
+            stack.append(ch)
+        elif ch in "]}":
+            if stack:
+                stack.pop()
+        # Markér sidste position hvor vi er på top-niveau OG ikke i string
+        if not in_string and ch in ",":
+            sidste_sikre_pos = i
+
+    if not stack and not in_string:
+        # JSON ser komplet ud — prøv at parse
+        try:
+            return _json.loads(s)
+        except Exception:
+            return None
+
+    # Trim tilbage til sidste sikre komma og luk åbne brackets
+    if sidste_sikre_pos > 0:
+        s = s[:sidste_sikre_pos]
+
+    # Hvis vi er midt i en string, fjern eventuel halv string
+    if in_string:
+        # Find sidste " der ikke er inde i en value — nemmest er at
+        # fjerne alt efter sidste komma (allerede gjort) og se hvad sker
+        pass
+
+    # Luk åbne brackets i omvendt rækkefølge
+    while stack:
+        opener = stack.pop()
+        closer = "}" if opener == "{" else "]"
+        s += closer
+
+    try:
+        return _json.loads(s)
+    except Exception as e:
+        print(f"DEBUG: _repair_truncated_json fejlede stadig: {e}")
+        return None
+
+
 def udled_tidsforhold(sag, sagsakter_tekst=""):
     """
     DEDIKERET ekstraktions-funktion: udtrækker tidsforhold mellem
@@ -1772,7 +1846,32 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "kortlægge TIDSFORHOLDET mellem hvornår klager konstaterede "
         "mangler/problemer og hvornår klager kontaktede rejseselskabet "
         "(TUI) om dem.\n\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "KRITISK PRINCIP: KILDE-FORANKRING (ingen gæt — ingen 'ca.')\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "Du må KUN bruge datoer og tidspunkter der EKSPLICIT fremgår af "
+        "materialet. Du må ALDRIG:\n"
+        "  ✗ Bruge 'ca.' eller cirka-datoer\n"
+        "  ✗ Beregne datoer baseret på antagelser ('formentlig dag 2')\n"
+        "  ✗ Slynge en dato ind hvis du ikke har den dokumenteret\n"
+        "  ✗ Antage at noget ikke skete (fx 'INGEN henvendelse') med "
+        "mindre dette EKSPLICIT bekræftes i bilagene\n\n"
+        "Hvis en dato/tidspunkt for en bestemt begivenhed ikke fremgår "
+        "klart af materialet, SKAL du i stedet skrive at det IKKE kan "
+        "verificeres — fx:\n"
+        "  '[Bilag XX viser klage indsendt — eksakt konstateringsdato "
+        "for manglen kan ikke verificeres af materialet og bør tjekkes "
+        "manuelt]'\n"
+        "  'Reklamation indsendt 23. juni 2025 — konstateringsdato for "
+        "den underliggende mangel fremgår ikke klart af bilagene og bør "
+        "verificeres manuelt'\n\n"
+        "Hvor datoer FREMGÅR KLART af bilagene (fx i mail-headers, "
+        "datoer på dokumenter, eksplicitte datostempler), bruger du dem "
+        "med fuld præcision. Henvis ALTID til bilag når du angiver en "
+        "verificeret dato, fx '[Bilag 08]'.\n\n"
+        "═══════════════════════════════════════════════════════════════\n"
         "JURIDISK BAGGRUND:\n"
+        "═══════════════════════════════════════════════════════════════\n"
         "Pakkerejse-Ankenævnet vægter RETTIDIG REKLAMATION ekstremt højt. "
         "Hvis klager:\n"
         "  • Kontaktede TUI samme dag eller umiddelbart efter en mangel "
@@ -1782,17 +1881,21 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "→ POTENTIELT FOR SEN reklamation, fordel for TUI\n"
         "  • Først kontaktede TUI EFTER hjemkomst → ALMINDELIGVIS FOR "
         "SEN reklamation, stærkt forsvarsargument for TUI\n\n"
-        "Det er kritisk vigtigt at finde præcise datoer og udregne "
-        "forsinkelsen i dage, hvor det er muligt.\n\n"
         "INSTRUKTION:\n"
-        "1. Find rejseperioden (udrejse + hjemrejse).\n"
+        "1. Find rejseperioden (udrejse + hjemrejse) — KUN hvis det "
+        "fremgår af bilagene.\n"
         "2. For HVERT klagepunkt der er identificeret i bilagene:\n"
-        "   - Hvornår blev manglen konstateret? (dato eller "
-        "  rejsedag, fx '9. juni 2025' eller 'dag 2 af opholdet')\n"
-        "   - Hvornår kontaktede klager TUI om det? (e-mail-dato, "
-        "  guide-kontakt-dato, telefon-dato)\n"
-        "   - Beregn forsinkelse i dage.\n"
-        "3. Vurdér samlet om reklamationen var rettidig.\n\n"
+        "   - Hvornår blev manglen konstateret? Brug KUN datoer der "
+        "  EKSPLICIT fremgår. Ellers skriv 'konstateringsdato kan "
+        "  ikke verificeres — bør tjekkes manuelt'.\n"
+        "   - Hvornår kontaktede klager TUI om det? Brug KUN dato fra "
+        "  e-mail-headers, dokumentdato eller eksplicit dato i bilag. "
+        "  Ellers skriv 'kontaktdato kan ikke verificeres — bør "
+        "  tjekkes manuelt'.\n"
+        "   - Beregn forsinkelse i dage KUN når BEGGE datoer er "
+        "  verificerede.\n"
+        "3. Vurdér samlet om reklamationen var rettidig — kun baseret "
+        "på verificerede datoer.\n\n"
         "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
         "Hotel-mails, korrespondance og bookings er ofte på engelsk. "
         "Du SKAL skrive ALT output på dansk:\n"
@@ -1844,17 +1947,29 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         '  ]\n'
         "}\n\n"
         "VIGTIGE REGLER:\n"
-        "- har_problematisk_forsinkelse SKAL være TRUE hvis AT LEAST "
-        "ÉN mangel blev reklameret med betydelig forsinkelse (typisk "
-        "3+ dage efter konstatering, eller efter hjemkomst).\n"
+        "- har_problematisk_forsinkelse SKAL være TRUE KUN hvis AT "
+        "LEAST ÉN mangel BEVISLIGT (med verificerede datoer fra "
+        "bilagene) blev reklameret med betydelig forsinkelse.\n"
         "- har_problematisk_forsinkelse SKAL være FALSE hvis alle "
-        "mangler blev rettidigt reklameret eller hvis forsinkelsen "
-        "er ubetydelig.\n"
+        "mangler blev rettidigt reklameret eller hvis du ikke har "
+        "verificerede datoer.\n"
         "- Hvis materialet IKKE indeholder tilstrækkelige datoer til at "
         "udlede dette, sæt kunne_ikke_udledes=true og skriv det ærligt "
         "i samlet_vurdering. OPFIND ALDRIG datoer.\n"
-        "- konkrete_observationer skal kun indeholde punkter hvor "
-        "datoer faktisk fremgår — ikke gæt.\n"
+        "- konkrete_observationer SKAL formuleres ærligt med kilde:\n"
+        "  ✓ KORREKT: 'Reklamation modtaget af TUI 23. juni 2025 [Bilag 13]'\n"
+        "  ✓ KORREKT: 'TUI's svar fremsendt 14. juli 2025 [Bilag 14] — "
+        "dato for klagers oprindelige konstatering af manglen kan ikke "
+        "verificeres af materialet og bør tjekkes manuelt'\n"
+        "  ✗ FORKERT: 'Mangel konstateret ca. 28.-29. maj 2025' "
+        "(brug ALDRIG 'ca.')\n"
+        "  ✗ FORKERT: 'INGEN henvendelse til TUI under rejsen' (brug "
+        "ALDRIG sådanne påstande uden EKSPLICIT bekræftelse i bilag)\n"
+        "  ✗ FORKERT: 'Mangel konstateret dag 2 af opholdet' (gæt "
+        "baseret på rejseperiode)\n"
+        "- Hvis du er i tvivl om en dato, skriv eksplicit at den IKKE "
+        "kan verificeres og BØR TJEKKES MANUELT. Det er ALTID bedre at "
+        "være ærlig om manglende information end at gætte.\n"
         "\n"
         "REGLER FOR begivenheder (TIDSLINJE):\n"
         "- Inkludér ALLE relevante kronologiske begivenheder med dato:\n"
@@ -1883,9 +1998,12 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
     try:
         user_content = _byg_sag_content(sag, indled, slutning)
 
+        # Hævet fra 2000 → 6000 tokens fordi tidsforhold-JSON ofte
+        # indeholder 10-20 begivenheder + observationer + vurdering;
+        # 2000 var for lidt og JSON blev trunkeret midt i en string.
         response = client.messages.create(
             model=MODEL,
-            max_tokens=2000,
+            max_tokens=6000,
             temperature=0,
             system=(
                 "Du er en præcis juridisk research-assistent. Du finder "
@@ -1898,7 +2016,31 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         svar = response.content[0].text.strip()
         svar = _re.sub(r"^```(?:json)?\s*", "", svar)
         svar = _re.sub(r"\s*```$", "", svar).strip()
-        data = _json.loads(svar)
+
+        # Forsøg at parse — hvis det fejler pga. trunkering, prøv en
+        # repair der lukker åbne strings/arrays/objects pænt.
+        try:
+            data = _json.loads(svar)
+        except _json.JSONDecodeError as je:
+            print(
+                f"DEBUG: udled_tidsforhold JSON-parse fejlede ({je}), "
+                "forsøger repair af trunkeret JSON..."
+            )
+            data = _repair_truncated_json(svar) or {}
+            if not data:
+                # Repair fejlede også — returner en delvis dict baseret
+                # på hvad vi i det mindste kan udlede fra tekstuddraget.
+                return {
+                    "rejseperiode": "",
+                    "har_problematisk_forsinkelse": False,
+                    "samlet_vurdering": (
+                        "AI-svaret blev trunkeret før det var færdigt. "
+                        "Prøv evt. at scanne sagen igen."
+                    ),
+                    "konkrete_observationer": [],
+                    "kunne_ikke_udledes": True,
+                    "begivenheder": [],
+                }
 
         # Normalisér begivenheder til konsistent format
         raa_begivenheder = data.get("begivenheder") or []

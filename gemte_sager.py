@@ -107,7 +107,64 @@ st.markdown(
 
 
 def _gendan_state_fra_json(state):
-    """Gendan session state fra gemt JSON-snapshot."""
+    """Gendan session state fra gemt JSON-snapshot.
+
+    KRITISK: Vi RYDDER ALTID alle sag-specifikke state-felter FØRST,
+    inden vi gendanner fra den gemte snapshot. Ellers kan data fra en
+    forrige sag (fx et svarbrev eller anonymisering) lække igennem til
+    den nye sag, fordi vi tidligere kun OVERWROTE felter der eksisterede
+    i snapshot'en. Hvis snapshot'en manglede et felt, beholdt vi det
+    gamle. Det er den bug brugeren oplevede.
+    """
+    # Liste over ALLE sag-specifikke session state-felter
+    SAG_FELTER = (
+        "aktuel_sag",
+        "sagsakter",
+        "sagsakter_filer",
+        "auto_vurdering_tekst",
+        "relevante_sager",
+        "match_info",
+        "sandsynligheder_dict",
+        "sagsresume",
+        "seneste_svar",
+        "seneste_svarbrev",
+        "seneste_tjekliste",
+        "seneste_anonymisering",
+        "chat_historik",
+        "anon_resultater_per_fil",
+        "tidsforhold",
+        "alle_klagepunkter",
+        "_netop_anonymiserede",
+        "sagsakter_opdaterede_vurdering",
+        "sidste_sagsfil_signatur",
+        "auto_vurdering_for_signatur",
+        "sagsakter_signatur",
+        "sidste_klage_filnavn",
+    )
+
+    # 1) RYD ALT sag-relateret først — så ingen data fra en forrige
+    #    sag kan lække igennem
+    for felt in SAG_FELTER:
+        if felt in st.session_state:
+            del st.session_state[felt]
+
+    # 1b) Ryd også alle PER-SAG dynamiske keys (svarbrev-instrukser,
+    #     toggles osv.) — disse oprettes med præfikser baseret på sag-ID
+    for _key in list(st.session_state.keys()):
+        if (
+            _key.startswith("svarbrev_instrukser_")
+            or _key.startswith("ny_instruks_input_")
+            or _key.startswith("tilfoej_btn_")
+            or _key.startswith("fjern_instruks_")
+            or _key.startswith("toggle_kildehenvisninger_")
+            or _key.startswith("anon_valg_")
+            or _key.startswith("anon_visning_")
+            or _key.startswith("anon_docx_")
+            or _key.startswith("anon_pdf_")
+        ):
+            del st.session_state[_key]
+
+    # 2) NU gendanner vi fra snapshot — kun de felter der eksisterer
     for navn in (
         "sagsakter",
         "auto_vurdering_tekst",
@@ -121,6 +178,8 @@ def _gendan_state_fra_json(state):
         "seneste_anonymisering",
         "chat_historik",
         "anon_resultater_per_fil",
+        "tidsforhold",
+        "alle_klagepunkter",
     ):
         if navn in state:
             st.session_state[navn] = state[navn]

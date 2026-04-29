@@ -474,6 +474,55 @@ st.markdown(
         line-height: 1.55;
     }
 
+    /* ========== TIDSFORHOLD-TIDSLINJE — vist i den gule tidsforhold-pillar ========== */
+    .tf-tidslinje {
+        position: relative;
+        padding-left: 8px;
+        margin-top: 12px;
+    }
+    .tf-tidslinje::before {
+        content: '';
+        position: absolute;
+        left: 13px;
+        top: 12px;
+        bottom: 12px;
+        width: 2px;
+        background: rgba(146, 64, 14, 0.18);
+        z-index: 0;
+    }
+    .tf-tidslinje-item {
+        position: relative;
+        margin-bottom: 14px;
+        padding-left: 32px;
+        min-height: 24px;
+    }
+    .tf-tidslinje-item:last-child {
+        margin-bottom: 0;
+    }
+    .tf-tidslinje-dot {
+        position: absolute;
+        left: 6px;
+        top: 6px;
+        width: 14px;
+        height: 14px;
+        border-radius: 50%;
+        border: 3px solid #FEF3C7;
+        z-index: 1;
+    }
+    .tf-tidslinje-tekst {
+        background: rgba(255, 255, 255, 0.55);
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: 1px solid rgba(146, 64, 14, 0.1);
+        color: #1F2937 !important;
+        font-size: 0.95rem !important;
+        line-height: 1.55;
+    }
+    .tf-tidslinje-tekst strong {
+        color: #92400E !important;
+        font-weight: 700;
+    }
+
     /* Kildehenvisninger — fremhævet i accent-farve på hvid pille */
     .analyse-citation {
         display: inline-block;
@@ -1351,10 +1400,16 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
             gemt_nu.append(fil["filnavn"])
 
         if gemt_nu:
-            st.toast(f"{len(gemt_nu)} filer gemt i vidensbanken.")
-        if sprunget_over:
             st.toast(
-                f"{len(sprunget_over)} filer var allerede i databasen."
+                f"{len(gemt_nu)} nye filer tilføjet til vidensbanken."
+            )
+        if sprunget_over:
+            # Vigtig nuance: filerne SCANNES og ANALYSERES — vi springer
+            # bare den dobbelte DB-gem-handling over for at undgå
+            # dubletter i søge-arkivet.
+            st.toast(
+                f"{len(sprunget_over)} filer findes allerede i "
+                "vidensbanken — alle filer indgår dog i analysen."
             )
 
     # Force rerun straks efter scan så hero-sektionen forsvinder og UI'et
@@ -1968,19 +2023,91 @@ if st.session_state.get("aktuel_sag"):
             )
             _pillar_nummer += 1
 
-        # ---------- TIDSLINJE — KRONOLOGISK OVERBLIK ----------
-        # Visuelt overblik over sagens begivenheder med farvede dots
-        # per begivenheds betydning for TUI's forsvarsposition. Vises
-        # kun hvis vi har udledt mindst én begivenhed med dato. Hvis
-        # der også er problematisk forsinkelse, vises en advarsel
-        # øverst i tidslinjen som forsvars-pointer.
+        # ---------- TIDSFORHOLD — KRITISK FORSVARSARGUMENT ----------
+        # Pakkerejse-Ankenævnet vægter rettidig reklamation MEGET HØJT.
+        # Hvis vi har detekteret en problematisk forsinkelse mellem
+        # konstatering af mangler og kontakt til TUI, fremhæves det her
+        # som en gul/orange advarsels-pillar SÅ JURISTEN STRAKS SER DET.
+        # Vises KUN hvis der er en faktisk forsinkelse — undgår noise.
         _tf = st.session_state.get("tidsforhold")
-        if _tf and _tf.get("begivenheder"):
-            render_tidslinje(
-                _tf,
-                accent="#D97706",
-                bg="#FEF3C7",
-                nummer=_pillar_nummer,
+        if (
+            _tf
+            and _tf.get("har_problematisk_forsinkelse")
+            and not _tf.get("kunne_ikke_udledes")
+        ):
+            import html as _html_tf
+            import re as _re_tf
+            _tf_vurdering = _html_tf.escape(
+                _tf.get("samlet_vurdering") or ""
+            )
+
+            # Konvertér konkrete_observationer til en visuel tidslinje
+            # med farvekodede dots: grøn (rettidig), rød (for sen),
+            # grå (neutral). Bruger eksisterende data — ingen nye AI-kald.
+            _tf_observationer_html = ""
+            if _tf.get("konkrete_observationer"):
+                _tf_observationer_html = (
+                    '<div class="tf-tidslinje">'
+                )
+                for _obs in _tf["konkrete_observationer"]:
+                    _obs_lower = _obs.lower()
+                    # Detekter sentiment baseret på nøgleord
+                    if any(w in _obs_lower for w in (
+                        "for sen", "forsinket", "efter hjemkomst",
+                        "ikke rettidig", "for sent",
+                    )):
+                        _dot_color = "#DC2626"  # rød
+                        _dot_glow = "rgba(220, 38, 38, 0.25)"
+                    elif any(w in _obs_lower for w in (
+                        "rettidig", "samme dag", "umiddelbart",
+                    )):
+                        _dot_color = "#16A34A"  # grøn
+                        _dot_glow = "rgba(22, 163, 74, 0.25)"
+                    else:
+                        _dot_color = "#6B7280"  # grå
+                        _dot_glow = "rgba(107, 114, 128, 0.2)"
+
+                    # Forsøg at fremhæve datoer i teksten — find danske
+                    # date-patterns og wrap dem i <strong>
+                    _obs_safe = _html_tf.escape(_obs)
+                    _date_pattern = _re_tf.compile(
+                        r'(\d{1,2}\.?\s*(?:januar|februar|marts|april|'
+                        r'maj|juni|juli|august|september|oktober|'
+                        r'november|december)(?:\s+\d{4})?)',
+                        _re_tf.IGNORECASE,
+                    )
+                    _obs_safe = _date_pattern.sub(
+                        r'<strong>\1</strong>', _obs_safe
+                    )
+
+                    _tf_observationer_html += (
+                        '<div class="tf-tidslinje-item">'
+                        f'<div class="tf-tidslinje-dot" '
+                        f'style="background: {_dot_color}; '
+                        f'box-shadow: 0 0 0 4px {_dot_glow};"></div>'
+                        '<div class="tf-tidslinje-tekst">'
+                        f'{_obs_safe}'
+                        '</div>'
+                        '</div>'
+                    )
+                _tf_observationer_html += '</div>'
+            st.markdown(
+                f'<div class="analyse-pillar"'
+                ' style="--pillar-bg: #FEF3C7; '
+                '--pillar-accent: #D97706;">'
+                '<div class="analyse-pillar-accent-dot"></div>'
+                f'<h2 class="analyse-pillar-title">{_pillar_nummer}. '
+                'Tidsforhold og rettidig reklamation</h2>'
+                '<div class="analyse-pillar-body">'
+                '<p style="font-weight: 600; color: #92400E;">'
+                'Pakkerejse-Ankenævnet vægter rettidig reklamation '
+                'højt. juriitech PAX har identificeret følgende '
+                'relevante tidsforhold der bør indgå som '
+                'forsvarsargument:</p>'
+                f'<p>{_tf_vurdering}</p>'
+                f'{_tf_observationer_html}'
+                '</div></div>',
+                unsafe_allow_html=True,
             )
             _pillar_nummer += 1
 
@@ -1992,27 +2119,28 @@ if st.session_state.get("aktuel_sag"):
         afgoerelser_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "afgoerelse"]
         vilkaar_ud = [r for r in rel if (r.get("dokumenttype") or "").lower() == "vilkaar"]
 
-        # KRITISK: Filtrer afgørelser så kun JURIDISK RELEVANTE matches
-        # vises. AI'en mærker hver match med juridisk_relevant_match —
-        # hvis FALSE er det kun overfladisk lighed (samme destination,
-        # rejsearrangør osv.) der ikke har juridisk værdi for sagen.
-        # Vi viser KUN ægte juridisk relevante matches for at undgå at
-        # vildlede juristen.
+        # Sorter afgørelser så JURIDISK RELEVANTE matches kommer FØRST,
+        # men vis ALLE matches. Tidligere filtrerede vi svage matches helt
+        # væk, men det betød at sektionen nogle gange slet ikke dukkede
+        # op (hvis AI'en var streng med relevans-vurderingen). Bedre at
+        # vise alt og lade juristen vurdere selv — med tydelig visuel
+        # markering af om matchet er stærkt eller svagt.
         _match_info_alle = st.session_state.get("match_info") or []
-        _filtreret_afgoerelser = []
-        _filtreret_match_info = []
+        _afg_med_info = []
         for _idx, _ag in enumerate(afgoerelser_ud[:5]):
             _info = (
                 _match_info_alle[_idx]
                 if _idx < len(_match_info_alle)
                 else {}
             )
-            # Default til True (vis) hvis flag mangler — backward compat
             _er_relevant = _info.get("juridisk_relevant_match", True)
-            if _er_relevant:
-                _filtreret_afgoerelser.append(_ag)
-                _filtreret_match_info.append(_info)
-        afgoerelser_ud = _filtreret_afgoerelser
+            _afg_med_info.append((_ag, _info, _er_relevant))
+
+        # Sortér: relevante matches først, derefter svage
+        _afg_med_info.sort(key=lambda x: (not x[2],))
+        afgoerelser_ud = [item[0] for item in _afg_med_info]
+        _filtreret_match_info = [item[1] for item in _afg_med_info]
+        _relevans_per_idx = [item[2] for item in _afg_med_info]
 
         if afgoerelser_ud:
             # Apple Health-pillar wrapper — lavendel baggrund, indigo accent
@@ -2067,6 +2195,21 @@ if st.session_state.get("aktuel_sag"):
                 else:
                     udfald_badge_html = ""
 
+                # Relevans-badge (juridisk relevant vs svagt match)
+                _er_relevant = (
+                    _relevans_per_idx[i - 1]
+                    if i - 1 < len(_relevans_per_idx)
+                    else True
+                )
+                if _er_relevant:
+                    relevans_badge_html = badge(
+                        "Juridisk relevant match", "purple"
+                    )
+                else:
+                    relevans_badge_html = badge(
+                        "Svagt match — kun overfladiske ligheder", "gray"
+                    )
+
                 # Farve på match-%
                 if sim_pct >= 70:
                     farve = "#059669"
@@ -2090,8 +2233,11 @@ if st.session_state.get("aktuel_sag"):
                         if arrangoer and arrangoer.lower() != "ukendt":
                             meta += f"  ·  {arrangoer}"
                         st.caption(meta)
-                        if udfald_badge_html:
-                            st.markdown(udfald_badge_html, unsafe_allow_html=True)
+                        if udfald_badge_html or relevans_badge_html:
+                            st.markdown(
+                                udfald_badge_html + " " + relevans_badge_html,
+                                unsafe_allow_html=True,
+                            )
                     with kol_b:
                         st.markdown(
                             f"<div style='text-align:right; font-size:1.4rem; "
@@ -2976,6 +3122,16 @@ if st.session_state.get("aktuel_sag"):
                 "seneste_svarbrev": st.session_state.get("seneste_svarbrev"),
                 "seneste_tjekliste": st.session_state.get("seneste_tjekliste"),
                 "seneste_anonymisering": st.session_state.get("seneste_anonymisering"),
+                # Nyere felter — sag-specifik data der ELLERS kunne lække
+                # mellem sager hvis vi ikke gemmer/gendanner dem konsekvent
+                "tidsforhold": st.session_state.get("tidsforhold"),
+                "alle_klagepunkter": st.session_state.get(
+                    "alle_klagepunkter"
+                ) or [],
+                "chat_historik": st.session_state.get("chat_historik") or [],
+                "anon_resultater_per_fil": st.session_state.get(
+                    "anon_resultater_per_fil"
+                ) or {},
             }
 
             # Gem — opdater eksisterende sag hvis vi allerede har et ID
