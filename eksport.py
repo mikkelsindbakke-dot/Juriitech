@@ -18,8 +18,10 @@ from io import BytesIO
 from datetime import datetime
 
 from docx import Document
-from docx.shared import Pt, Cm, RGBColor
+from docx.shared import Pt, Cm, RGBColor, Mm
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
+from docx.oxml import OxmlElement
 
 
 # Regex til at finde markdown-formatering i en linje
@@ -216,14 +218,238 @@ def analyse_til_docx(spoergsmaal, svar, klage_filnavn=None):
     )
 
 
-def svarbrev_til_docx(svarbrev, klage_filnavn=None):
-    """Konverterer et svarbrev til en .docx-fil."""
-    undertitel = f"Vedr. klage: {klage_filnavn}" if klage_filnavn else None
-    return markdown_til_docx_bytes(
-        svarbrev,
-        titel="Udkast til svarbrev — Pakkerejseankenævnet",
-        undertitel=undertitel,
+def _saet_paragraf_under_streg(paragraph):
+    """
+    Tegner en tynd vandret streg UNDER det angivne afsnit. Bruges på
+    'Vedr.'-linjen for at give den den klassiske brevhoved-streg.
+    """
+    p_pr = paragraph._p.get_or_add_pPr()
+    p_borders = OxmlElement("w:pBdr")
+    bottom = OxmlElement("w:bottom")
+    bottom.set(qn("w:val"), "single")
+    bottom.set(qn("w:sz"), "8")        # 1pt streg (8/8)
+    bottom.set(qn("w:space"), "4")     # afstand til tekst
+    bottom.set(qn("w:color"), "000000")
+    p_borders.append(bottom)
+    p_pr.append(p_borders)
+
+
+def _fjern_celle_kant(cell):
+    """Sætter alle 4 kanter på en tabelcelle til 'nil' så cellen er
+    usynlig. Bruges på header-tabellen så modtager + logo ser ud som
+    fritlæggende tekst (ikke som en synlig tabel)."""
+    tc_pr = cell._tc.get_or_add_tcPr()
+    tc_borders = OxmlElement("w:tcBorders")
+    for kant in ("top", "left", "bottom", "right"):
+        b = OxmlElement(f"w:{kant}")
+        b.set(qn("w:val"), "nil")
+        tc_borders.append(b)
+    tc_pr.append(tc_borders)
+
+
+def _byg_svarbrev_header(
+    doc, profil, sagsnummer, klagers_navn, hoeringssvar_nr
+):
+    """
+    Bygger den klassiske brevhoved-opsætning til et svarbrev:
+
+      [PAKKEREJSE-ANKENÆVNET     ]   [logo top højre]
+      [Haldor Topsøes Alle 1, ...]
+      [2800 Kgs. Lyngby          ]
+
+                             By, DD-MM-YYYY
+
+      Vedr.: Sag nr. XXXX – Klagers navn, N. høringssvar
+      ───────────────────────────────────────────────────
+
+    Felter der mangler (fx hvis sagsnummer ikke kunne udledes) springes
+    over uden at crashe. Logoet springes over hvis filen ikke findes.
+    """
+    from selskab_profiler import hent_logo_sti, hent_by
+
+    # ---------- 2-kolonne header: modtager-adresse + logo ----------
+    header_tabel = doc.add_table(rows=1, cols=2)
+    header_tabel.autofit = False
+    # Bredde: ca. 60% adresse, 40% logo (totalt ~16cm = A4 minus margener)
+    venstre_celle = header_tabel.cell(0, 0)
+    hoejre_celle = header_tabel.cell(0, 1)
+    venstre_celle.width = Cm(10)
+    hoejre_celle.width = Cm(6)
+    _fjern_celle_kant(venstre_celle)
+    _fjern_celle_kant(hoejre_celle)
+
+    # Venstre: Pakkerejse-Ankenævnets adresse (samme for alle selskaber)
+    adresse_p = venstre_celle.paragraphs[0]
+    fed_run = adresse_p.add_run("PAKKEREJSE-ANKENÆVNET")
+    fed_run.bold = True
+    fed_run.font.size = Pt(11)
+    venstre_celle.add_paragraph("Haldor Topsøes Alle 1, Bygning 91")
+    venstre_celle.add_paragraph("2800 Kgs. Lyngby")
+
+    # Højre: logo (hvis fil findes — ellers tom celle)
+    logo_p = hoejre_celle.paragraphs[0]
+    logo_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    logo_sti = hent_logo_sti(profil)
+    if logo_sti:
+        try:
+            logo_p.add_run().add_picture(logo_sti, width=Cm(3.5))
+        except Exception as e:
+            # Defensivt: hvis billedet er korrupt eller i ukendt format,
+            # spring det over så svarbrevet stadig kan downloades.
+            print(f"DEBUG: kunne ikke indsætte logo {logo_sti}: {e}")
+
+    # ---------- By + dato (højrejusteret, ca. 2 blanke linjer nede) ----------
+    doc.add_paragraph()  # luft
+    by = hent_by(profil) or ""
+    dato_str = datetime.now().strftime("%d-%m-%Y")
+    by_dato_text = (
+        f"{by}, {dato_str}" if by else dato_str
     )
+    by_dato_p = doc.add_paragraph()
+    by_dato_p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    by_dato_run = by_dato_p.add_run(by_dato_text)
+    by_dato_run.font.size = Pt(11)
+
+    # ---------- "Vedr."-linje med vandret streg under ----------
+    doc.add_paragraph()  # luft før Vedr-linjen
+    vedr_dele = ["Vedr.: "]
+    if sagsnummer:
+        vedr_dele.append(f"Sag nr. {sagsnummer}")
+    if klagers_navn:
+        if sagsnummer:
+            vedr_dele.append(f" – {klagers_navn}")
+        else:
+            vedr_dele.append(klagers_navn)
+    if hoeringssvar_nr:
+        vedr_dele.append(f", {hoeringssvar_nr}. høringssvar")
+
+    vedr_p = doc.add_paragraph()
+    vedr_run = vedr_p.add_run("".join(vedr_dele))
+    vedr_run.bold = True
+    vedr_run.font.size = Pt(11)
+    _saet_paragraf_under_streg(vedr_p)
+
+    # Lidt ekstra luft før selve brødteksten
+    doc.add_paragraph()
+
+
+def svarbrev_til_docx(
+    svarbrev,
+    klage_filnavn=None,
+    sagsnummer="",
+    klagers_navn="",
+    hoeringssvar_nr=1,
+    profil=None,
+):
+    """
+    Konverterer et svarbrev til en .docx-fil med klassisk brev-opsætning:
+    modtager-adresse øverst til venstre, selskabs-logo øverst til højre,
+    by + dato højrejusteret, derefter en 'Vedr.'-linje med vandret streg.
+
+    Selve brødteksten (svarbrevet) er den AI-genererede markdown og
+    formateres med samme inline-parser som de øvrige docx-eksporter.
+
+    Parametre:
+      svarbrev          — den AI-genererede markdown
+      klage_filnavn     — bruges KUN til at navngive download-filen
+                          udadtil; står ikke i selve brevet
+      sagsnummer        — fx "25-109-8024327" (kan være tom)
+      klagers_navn      — fx "Laura Stephanie Uhler" (kan være tom)
+      hoeringssvar_nr   — 1, 2 eller 3
+      profil            — selskabs-profil-dict (fra selskab_profiler).
+                          Hvis None bruges den aktive profil.
+    """
+    # Lazy-import så modulet stadig kan importeres i miljøer hvor
+    # selskab_profiler endnu ikke er på plads (defensivt — bør altid være der)
+    try:
+        from selskab_profiler import hent_aktiv_profil
+        if profil is None:
+            profil = hent_aktiv_profil()
+    except Exception as e:
+        print(f"DEBUG: kunne ikke hente selskabs-profil: {e}")
+        profil = {"navn": "", "by": "", "logo_fil": None}
+
+    doc = Document()
+
+    # Standard-font og margener (samme som markdown_til_docx_bytes så
+    # brødteksten ser ens ud)
+    style = doc.styles["Normal"]
+    style.font.name = "Calibri"
+    style.font.size = Pt(11)
+    for section in doc.sections:
+        section.top_margin = Cm(2.0)
+        section.bottom_margin = Cm(2.5)
+        section.left_margin = Cm(2.5)
+        section.right_margin = Cm(2.5)
+
+    # ---------- BREVHOVED ----------
+    _byg_svarbrev_header(
+        doc=doc,
+        profil=profil,
+        sagsnummer=sagsnummer or "",
+        klagers_navn=klagers_navn or "",
+        hoeringssvar_nr=hoeringssvar_nr,
+    )
+
+    # ---------- BRØDTEKST (svarbrevet) ----------
+    # Genbrug samme markdown-parser som markdown_til_docx_bytes, men
+    # tilføj indholdet til vores eksisterende doc i stedet for at lave
+    # et nyt dokument. Vi inliner parser-loopet her for at undgå at
+    # opfinde et nyt API på markdown_til_docx_bytes.
+    linjer = (svarbrev or "").split("\n")
+    i = 0
+    while i < len(linjer):
+        linje = linjer[i].rstrip()
+
+        if not linje.strip():
+            i += 1
+            continue
+
+        overskrift = _er_overskrift(linje)
+        if overskrift:
+            niveau, tekst = overskrift
+            doc.add_heading(tekst, level=min(niveau, 3))
+            i += 1
+            continue
+
+        fed_overskrift = _er_fed_overskrift(linje)
+        if fed_overskrift:
+            doc.add_heading(fed_overskrift, level=2)
+            i += 1
+            continue
+
+        bullet = _er_bullet(linje)
+        if bullet:
+            _, tekst = bullet
+            p = doc.add_paragraph(style="List Bullet")
+            _tilfoej_formateret_linje(p, tekst)
+            i += 1
+            continue
+
+        # Almindeligt afsnit: saml sammenhængende linjer
+        afsnit_linjer = [linje]
+        j = i + 1
+        while j < len(linjer):
+            n = linjer[j].rstrip()
+            if not n.strip():
+                break
+            if (
+                _er_overskrift(n)
+                or _er_fed_overskrift(n)
+                or _er_bullet(n)
+            ):
+                break
+            afsnit_linjer.append(n)
+            j += 1
+        tekst = " ".join(afsnit_linjer)
+        p = doc.add_paragraph()
+        _tilfoej_formateret_linje(p, tekst)
+        i = j
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
 
 
 # ---------- PDF-EKSPORT (bruges primært til anonymiserede bilag) ----------

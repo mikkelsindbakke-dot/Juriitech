@@ -28,6 +28,7 @@ from ai_engine import (
     udled_sagsresume_strukturelt,
     udled_alle_klagepunkter,
     udled_tidsforhold,
+    udled_sagsmetadata,
 )
 from embeddings import embed_dokument
 from eksport import analyse_til_docx, svarbrev_til_docx
@@ -3312,6 +3313,76 @@ if st.session_state.get("aktuel_sag"):
         ),
     )
 
+    # ---------- BREVHOVED-FELTER (sagsnummer, klagers navn, høringssvar) ----------
+    # Disse felter sættes på selve brevhovedet i den downloadede Word-fil.
+    # Sagsnummer og klagers navn forsøges auto-udtrukket fra sagen via et
+    # lille AI-kald (cached pr. sag-signatur så vi ikke kalder igen ved
+    # hver rerender). Brugeren kan altid rette manuelt før download.
+    _meta_cache_key = f"sagsmetadata_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    if _meta_cache_key not in st.session_state:
+        # Kør lazy auto-udtræk én gang pr. sag-signatur. Fejler stille.
+        with st.spinner("Henter sagsdata til brevhoved…"):
+            try:
+                _meta = udled_sagsmetadata(
+                    sag=st.session_state.aktuel_sag,
+                    sagsakter_tekst=st.session_state.get("sagsakter", "") or "",
+                )
+            except Exception as _meta_e:
+                print(f"DEBUG: udled_sagsmetadata UI-kald fejlede: {_meta_e}")
+                _meta = {"sagsnummer": "", "klagers_navn": ""}
+        st.session_state[_meta_cache_key] = _meta
+
+    _meta_default = st.session_state[_meta_cache_key]
+
+    st.markdown("**Brevhoved**")
+    st.caption(
+        "Disse felter sættes på selve svarbrevet. Sagsnummer og klagers "
+        "navn er forsøgt udtrukket automatisk — ret dem hvis de ikke "
+        "passer."
+    )
+
+    _sagsnr_key = f"svarbrev_sagsnr_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    _navn_key = f"svarbrev_klager_{_aktiv_sag_id}_{hash(_sag_sig)}"
+
+    # Initial-værdier sættes kun første gang feltet renderes — derefter
+    # styrer Streamlits widget-state værdien (så brugerens redigeringer
+    # bevares ved reruns).
+    if _sagsnr_key not in st.session_state:
+        st.session_state[_sagsnr_key] = _meta_default.get("sagsnummer", "")
+    if _navn_key not in st.session_state:
+        st.session_state[_navn_key] = _meta_default.get("klagers_navn", "")
+
+    _kol_sagsnr, _kol_navn = st.columns(2)
+    with _kol_sagsnr:
+        st.text_input(
+            "Sagsnummer",
+            key=_sagsnr_key,
+            placeholder="fx 25-109-8024327",
+        )
+    with _kol_navn:
+        st.text_input(
+            "Klagers fulde navn",
+            key=_navn_key,
+            placeholder="fx Laura Stephanie Uhler",
+        )
+
+    # Høringssvar-nummer: 1, 2 eller 3 — vises som segmented control så
+    # kun én værdi kan være valgt ad gangen. Default = 1.
+    _hoer_key = f"svarbrev_hoeringssvar_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    if _hoer_key not in st.session_state:
+        st.session_state[_hoer_key] = 1
+    st.segmented_control(
+        "Høringssvar-nummer",
+        options=[1, 2, 3],
+        format_func=lambda n: f"{n}. høringssvar",
+        selection_mode="single",
+        key=_hoer_key,
+        help=(
+            "Hvilken runde høringssvar er dette? Vises i 'Vedr.'-linjen "
+            "øverst på brevet."
+        ),
+    )
+
     if st.button("Generer udkast til svarbrev", type="primary"):
         with thinking(
             "juriitech PAX udarbejder svarbrevet til Nævnet",
@@ -3385,10 +3456,18 @@ if st.session_state.get("aktuel_sag"):
         st.subheader("Udkast til svarbrev")
         st.markdown(st.session_state.seneste_svarbrev["svarbrev"])
 
-        # Download-knap til svarbrevet
+        # Download-knap til svarbrevet — sender brevhoved-felter med så
+        # selve Word-filens header kan bygges (sagsnr, klagers navn,
+        # høringssvar-nummer, plus selskabs-profil til logo + by).
+        _docx_sagsnr = (st.session_state.get(_sagsnr_key) or "").strip()
+        _docx_navn = (st.session_state.get(_navn_key) or "").strip()
+        _docx_hoer = st.session_state.get(_hoer_key) or 1
         svarbrev_docx = svarbrev_til_docx(
             st.session_state.seneste_svarbrev["svarbrev"],
             klage_filnavn=st.session_state.seneste_svarbrev["klage_filnavn"],
+            sagsnummer=_docx_sagsnr,
+            klagers_navn=_docx_navn,
+            hoeringssvar_nr=_docx_hoer,
         )
         sb_filnavn_base = (
             st.session_state.seneste_svarbrev["klage_filnavn"] or "svarbrev"

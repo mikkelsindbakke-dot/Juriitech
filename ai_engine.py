@@ -2109,6 +2109,98 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         return None
 
 
+def udled_sagsmetadata(sag, sagsakter_tekst=""):
+    """
+    Udtrækker metadata til svarbrev-headeren: sagsnummer fra
+    Pakkerejse-Ankenævnet og klagers fulde navn.
+
+    Disse felter står normalt eksplicit i klageskemaet/forsiden af de
+    bilag der er uploadet. Vi bruger et lille AI-kald frem for regex
+    fordi formatet varierer (sagsnummer kan stå som "Sag nr.",
+    "Sagsnr.", "Vores ref.", "Ankenævnets sag" osv.) og fordi navnet
+    skal udtrækkes som det er skrevet i sagen — ikke pseudonymiseret.
+
+    Returnerer:
+      {
+        "sagsnummer": str,    # fx "25-109-8024327" — tom hvis ikke fundet
+        "klagers_navn": str,  # fx "Laura Stephanie Uhler" — tom hvis ikke fundet
+      }
+    """
+    import json as _json
+    import re as _re
+
+    indled = (
+        "Du er en præcis dokument-ekstraktor. Din ENESTE opgave er at "
+        "finde to faktuelle oplysninger i det vedhæftede sagsmateriale:\n"
+        "  1. Pakkerejse-Ankenævnets sagsnummer\n"
+        "  2. Klagers fulde navn (som det fremgår af klageskemaet)\n\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "REGLER:\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "- Brug KUN værdier der EKSPLICIT fremgår af materialet.\n"
+        "- OPFIND ALDRIG et sagsnummer eller et navn.\n"
+        "- Hvis du ikke kan finde værdien, sæt feltet til en TOM streng.\n"
+        "- Sagsnummer-format hos Pakkerejse-Ankenævnet er typisk:\n"
+        "  • '25-1234' eller '25-109-8024327' eller lignende ÅÅ-numerisk-\n"
+        "    mønster. Står ofte tæt på ord som 'Sag nr.', 'Sagsnr.',\n"
+        "    'Vores ref.', 'Ankenævnets sag' eller på forsiden af\n"
+        "    klageskemaet.\n"
+        "- Klagers navn er navnet på den person der HAR INDGIVET klagen\n"
+        "  (ikke rejseselskabets sagsbehandler, ikke advokaten, ikke\n"
+        "  evt. medrejsende). Skriv det FULDE navn som det fremgår.\n"
+        "- Hvis klagen er indgivet af et par (fx ægtefæller), brug den\n"
+        "  først nævnte klager — det er den der står som primær.\n\n"
+        "FILER FRA SAGEN FØLGER NEDENFOR:\n"
+    )
+
+    sagsakter_block = ""
+    if sagsakter_tekst and sagsakter_tekst.strip():
+        # Kun de første 4000 tegn af sagsakterne — sagsnummer/navn står
+        # næsten altid i toppen af klageskemaet.
+        sagsakter_block = (
+            "\n\nSUPPLERENDE SAGSAKTER:\n"
+            f"{sagsakter_tekst[:4000]}"
+        )
+
+    slutning = (
+        sagsakter_block +
+        "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
+        "ingen markdown, ingen kodeblok:\n"
+        "{\n"
+        '  "sagsnummer": "fx 25-109-8024327 — eller tom streng",\n'
+        '  "klagers_navn": "fx Laura Stephanie Uhler — eller tom streng"\n'
+        "}\n"
+    )
+
+    try:
+        user_content = _byg_sag_content(sag, indled, slutning)
+
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=400,  # JSON er ekstremt lille
+            temperature=0,
+            system=(
+                "Du er en præcis dokument-ekstraktor. Du finder kun "
+                "værdier der EKSPLICIT fremgår — du opfinder aldrig data."
+            ),
+            messages=[{"role": "user", "content": user_content}],
+        )
+
+        svar = response.content[0].text.strip()
+        svar = _re.sub(r"^```(?:json)?\s*", "", svar)
+        svar = _re.sub(r"\s*```$", "", svar).strip()
+
+        data = _json.loads(svar)
+
+        return {
+            "sagsnummer": str(data.get("sagsnummer") or "").strip(),
+            "klagers_navn": str(data.get("klagers_navn") or "").strip(),
+        }
+    except Exception as e:
+        print(f"DEBUG: udled_sagsmetadata fejlede: {e}")
+        return {"sagsnummer": "", "klagers_navn": ""}
+
+
 def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
     """
     Udtrækker et struktureret resume af sagen baseret på den allerede
