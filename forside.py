@@ -3147,239 +3147,256 @@ if st.session_state.get("aktuel_sag"):
     #     bogstav efter 1. høring osv. Brugeren angiver start-bogstav
     #     manuelt (de ved selv hvor de er kommet til).
     if _anon_kandidater:
-        st.markdown("---")
-        st.markdown("### Bilag til svarbrevet")
-        st.caption(
-            "Vælg hvilke bilag der skal medsendes svarbrevet til Nævnet. "
-            "Selve svarbrevet er altid første bilag. Beskrivelserne "
-            "er auto-foreslået af PAX — ret dem hvis de skal være "
-            "anderledes."
-        )
+        # Wrap HELE bilag-sektionen i en bordered container så den står
+        # tydeligt for sig selv visuelt (kollega-feedback).
+        with st.container(border=True):
+            st.markdown("### Bilag til svarbrevet")
+            st.caption(
+                "Vælg hvilke bilag der skal medsendes svarbrevet til Nævnet. "
+                "Selve svarbrevet er altid første bilag."
+            )
 
-        # ---------- STATE-NØGLER (scopet til sag-signatur) ----------
-        # Beregnes inline her — selve svarbrev-sektionen længere nede
-        # bruger den samme formel, så de to sektioner deler ikke
-        # nøgle-namespace utilsigtet.
-        _bilag_aktiv_sag_id = (
-            st.session_state.get("aktiv_gemt_sag_id") or "ny_sag"
-        )
-        _bilag_sag_sig = (
-            st.session_state.get("sidste_sagsfil_signatur") or ()
-        )
-        _bilag_signatur = f"{_bilag_aktiv_sag_id}_{hash(_bilag_sag_sig)}"
-        _bilag_inkl_key = f"bilag_inkluder_{_bilag_signatur}"
-        _bilag_overskrift_key = f"bilag_overskrift_{_bilag_signatur}"
-        _bilag_raekkefolge_key = f"bilag_raekkefolge_{_bilag_signatur}"
-        _bilag_startbogstav_key = f"bilag_startbogstav_{_bilag_signatur}"
-        _bilag_overskrift_cache_key = (
-            f"bilag_overskrift_cache_{_bilag_signatur}"
-        )
+            # ---------- STATE-NØGLER (scopet til sag-signatur) ----------
+            # Beregnes inline her — selve svarbrev-sektionen længere nede
+            # bruger den samme formel, så de to sektioner deler ikke
+            # nøgle-namespace utilsigtet.
+            _bilag_aktiv_sag_id = (
+                st.session_state.get("aktiv_gemt_sag_id") or "ny_sag"
+            )
+            _bilag_sag_sig = (
+                st.session_state.get("sidste_sagsfil_signatur") or ()
+            )
+            _bilag_signatur = f"{_bilag_aktiv_sag_id}_{hash(_bilag_sag_sig)}"
+            _bilag_inkl_key = f"bilag_inkluder_{_bilag_signatur}"
+            _bilag_overskrift_key = f"bilag_overskrift_{_bilag_signatur}"
+            _bilag_raekkefolge_key = f"bilag_raekkefolge_{_bilag_signatur}"
+            _bilag_startbogstav_key = f"bilag_startbogstav_{_bilag_signatur}"
+            _bilag_overskrift_cache_key = (
+                f"bilag_overskrift_cache_{_bilag_signatur}"
+            )
 
-        # Initialiser state defaults én gang pr. sag
-        if _bilag_inkl_key not in st.session_state:
-            # Default ON for SAGSAKTER (bruger-uploadet) der IKKE er
-            # vejledning/høringsbrev. Default OFF for sag-filer (klagers
-            # materialer skal sjældent med som forsvarsbilag).
-            _default_inkl = {}
-            for f in _anon_kandidater:
+            # Initialiser state defaults én gang pr. sag
+            if _bilag_inkl_key not in st.session_state:
+                # Default ON for SAGSAKTER (bruger-uploadet) der IKKE er
+                # vejledning/høringsbrev. Default OFF for sag-filer (klagers
+                # materialer skal sjældent med som forsvarsbilag).
+                _default_inkl = {}
+                for f in _anon_kandidater:
+                    fn = f.get("filnavn") or ""
+                    kilde = f.get("_kilde")
+                    rolle = (f.get("rolle") or "").lower()
+                    if kilde == "sagsakt" and rolle not in ("vejledning", "høring"):
+                        _default_inkl[fn] = True
+                    else:
+                        _default_inkl[fn] = False
+                st.session_state[_bilag_inkl_key] = _default_inkl
+
+            if _bilag_raekkefolge_key not in st.session_state:
+                # Default-rækkefølge = sagsakter først (i upload-rækkefølge),
+                # derefter sag-filer (i sag-rækkefølge)
+                _orden = []
+                for f in _anon_kandidater:
+                    if f.get("_kilde") == "sagsakt":
+                        _orden.append(f.get("filnavn"))
+                for f in _anon_kandidater:
+                    if f.get("_kilde") != "sagsakt":
+                        _orden.append(f.get("filnavn"))
+                st.session_state[_bilag_raekkefolge_key] = _orden
+
+            if _bilag_startbogstav_key not in st.session_state:
+                # Default start-bogstav følger høringssvar-nummeret KUN for
+                # 1. høring (= A). For 2./3. høring må brugeren selv skrive
+                # det rigtige bogstav, fordi det afhænger af hvor mange
+                # bilag de tidligere høringer havde — info vi ikke kender
+                # før login + sagshistorik er på plads.
+                st.session_state[_bilag_startbogstav_key] = "A"
+
+            # ---------- AUTO-UDFYLD OVERSKRIFTER (lazy, cached) ----------
+            # Kun filer DER ER MARKERET som bilag får auto-foreslået
+            # overskrift (ellers spilder vi tokens). Når brugeren toggler
+            # en ny fil ON tager vi en ny runde.
+            _filer_med_inkl = [
+                f for f in _anon_kandidater
+                if st.session_state[_bilag_inkl_key].get(f.get("filnavn"))
+            ]
+            # Liste af filnavne der STADIG mangler en cached overskrift
+            _cache = st.session_state.get(_bilag_overskrift_cache_key, {})
+            _mangler_overskrift = [
+                f for f in _filer_med_inkl
+                if (f.get("filnavn") or "") not in _cache
+            ]
+
+            if _mangler_overskrift:
+                with st.spinner(
+                    f"Foreslår overskrifter til {len(_mangler_overskrift)} bilag…"
+                ):
+                    try:
+                        _nye = udled_bilag_overskrifter(_mangler_overskrift)
+                    except Exception as _e:
+                        print(
+                            f"DEBUG: udled_bilag_overskrifter UI-kald fejlede: {_e}"
+                        )
+                        _nye = {
+                            (f.get("filnavn") or ""): (f.get("filnavn") or "")
+                            .rsplit(".", 1)[0]
+                            .replace("_", " ")
+                            for f in _mangler_overskrift
+                        }
+                _cache.update(_nye)
+                st.session_state[_bilag_overskrift_cache_key] = _cache
+
+            # Sørg for at hver inkluderet fil har en aktuel overskrift-værdi
+            # (initial = cache, brugeren kan derefter overskrive)
+            if _bilag_overskrift_key not in st.session_state:
+                st.session_state[_bilag_overskrift_key] = {}
+            for f in _filer_med_inkl:
                 fn = f.get("filnavn") or ""
-                kilde = f.get("_kilde")
-                rolle = (f.get("rolle") or "").lower()
-                if kilde == "sagsakt" and rolle not in ("vejledning", "høring"):
-                    _default_inkl[fn] = True
-                else:
-                    _default_inkl[fn] = False
-            st.session_state[_bilag_inkl_key] = _default_inkl
-
-        if _bilag_raekkefolge_key not in st.session_state:
-            # Default-rækkefølge = sagsakter først (i upload-rækkefølge),
-            # derefter sag-filer (i sag-rækkefølge)
-            _orden = []
-            for f in _anon_kandidater:
-                if f.get("_kilde") == "sagsakt":
-                    _orden.append(f.get("filnavn"))
-            for f in _anon_kandidater:
-                if f.get("_kilde") != "sagsakt":
-                    _orden.append(f.get("filnavn"))
-            st.session_state[_bilag_raekkefolge_key] = _orden
-
-        if _bilag_startbogstav_key not in st.session_state:
-            # Default start-bogstav følger høringssvar-nummeret KUN for
-            # 1. høring (= A). For 2./3. høring må brugeren selv skrive
-            # det rigtige bogstav, fordi det afhænger af hvor mange
-            # bilag de tidligere høringer havde — info vi ikke kender
-            # før login + sagshistorik er på plads.
-            st.session_state[_bilag_startbogstav_key] = "A"
-
-        # ---------- AUTO-UDFYLD OVERSKRIFTER (lazy, cached) ----------
-        # Kun filer DER ER MARKERET som bilag får auto-foreslået
-        # overskrift (ellers spilder vi tokens). Når brugeren toggler
-        # en ny fil ON tager vi en ny runde.
-        _filer_med_inkl = [
-            f for f in _anon_kandidater
-            if st.session_state[_bilag_inkl_key].get(f.get("filnavn"))
-        ]
-        # Liste af filnavne der STADIG mangler en cached overskrift
-        _cache = st.session_state.get(_bilag_overskrift_cache_key, {})
-        _mangler_overskrift = [
-            f for f in _filer_med_inkl
-            if (f.get("filnavn") or "") not in _cache
-        ]
-
-        if _mangler_overskrift:
-            with st.spinner(
-                f"Foreslår overskrifter til {len(_mangler_overskrift)} bilag…"
-            ):
-                try:
-                    _nye = udled_bilag_overskrifter(_mangler_overskrift)
-                except Exception as _e:
-                    print(
-                        f"DEBUG: udled_bilag_overskrifter UI-kald fejlede: {_e}"
+                if fn not in st.session_state[_bilag_overskrift_key]:
+                    st.session_state[_bilag_overskrift_key][fn] = (
+                        _cache.get(fn) or ""
                     )
-                    _nye = {
-                        (f.get("filnavn") or ""): (f.get("filnavn") or "")
-                        .rsplit(".", 1)[0]
-                        .replace("_", " ")
-                        for f in _mangler_overskrift
-                    }
-            _cache.update(_nye)
-            st.session_state[_bilag_overskrift_cache_key] = _cache
 
-        # Sørg for at hver inkluderet fil har en aktuel overskrift-værdi
-        # (initial = cache, brugeren kan derefter overskrive)
-        if _bilag_overskrift_key not in st.session_state:
-            st.session_state[_bilag_overskrift_key] = {}
-        for f in _filer_med_inkl:
-            fn = f.get("filnavn") or ""
-            if fn not in st.session_state[_bilag_overskrift_key]:
-                st.session_state[_bilag_overskrift_key][fn] = (
-                    _cache.get(fn) or ""
+            # ---------- UI: START-BOGSTAV ----------
+            _kol_sb, _kol_hjelp = st.columns([1, 4])
+            with _kol_sb:
+                st.text_input(
+                    "Start-bogstav",
+                    key=_bilag_startbogstav_key,
+                    max_chars=2,
+                    help=(
+                        "Bilagene navngives kontinuerligt på tværs af "
+                        "høringer. Ved 1. høring er det A. Ved 2./3. høring "
+                        "skal det være næste ledige bogstav efter forrige "
+                        "hørings sidste bilag."
+                    ),
+                )
+            with _kol_hjelp:
+                _sb_aktuel = (
+                    st.session_state.get(_bilag_startbogstav_key) or "A"
+                ).strip().upper()[:1] or "A"
+                st.markdown(
+                    f"<div style='padding-top: 28px; color: #6B7280; "
+                    f"font-size: 0.88rem;'>Selve svarbrevet bliver "
+                    f"<strong>Bilag {_sb_aktuel}</strong>.</div>",
+                    unsafe_allow_html=True,
                 )
 
-        # ---------- UI: START-BOGSTAV ----------
-        _kol_sb, _kol_hjelp = st.columns([1, 4])
-        with _kol_sb:
-            st.text_input(
-                "Start-bogstav",
-                key=_bilag_startbogstav_key,
-                max_chars=2,
-                help=(
-                    "Bilagene navngives kontinuerligt på tværs af "
-                    "høringer. Ved 1. høring er det A. Ved 2./3. høring "
-                    "skal det være næste ledige bogstav efter forrige "
-                    "hørings sidste bilag."
-                ),
-            )
-        with _kol_hjelp:
-            _sb_aktuel = (
-                st.session_state.get(_bilag_startbogstav_key) or "A"
-            ).strip().upper()[:1] or "A"
+            # ---------- UI: PER-FIL CONTROLS ----------
+            # Beregn løbende bogstav for hver inkluderet fil i den valgte
+            # rækkefølge — dem viser vi som badge på hver række.
+            _start_idx = ord(_sb_aktuel) - ord("A")
+            _bogstav_per_filnavn = {}
+            _filnavne_i_orden = [
+                fn for fn in st.session_state[_bilag_raekkefolge_key]
+                if st.session_state[_bilag_inkl_key].get(fn)
+            ]
+            # Bilag #1 er svarbrevet selv → tildelte bilag starter ved +1
+            for _i, fn in enumerate(_filnavne_i_orden):
+                _b_idx = _start_idx + 1 + _i
+                if 0 <= _b_idx < 26:
+                    _bogstav_per_filnavn[fn] = chr(ord("A") + _b_idx)
+                else:
+                    _bogstav_per_filnavn[fn] = "?"
+
+            # Lille hint-tekst lige over rækkerne så brugeren ved at
+            # de auto-foreslåede titler kan rettes manuelt
             st.markdown(
-                f"<div style='padding-top: 28px; color: #6B7280; "
-                f"font-size: 0.88rem;'>Selve svarbrevet bliver "
-                f"<strong>Bilag {_sb_aktuel}</strong>.</div>",
+                "<div style='color:#6B7280; font-size:0.78rem; "
+                "font-style:italic; margin: 14px 0 4px 0; "
+                "padding-left: 2px;'>"
+                "Klik i feltet for at redigere den foreslåede titel."
+                "</div>",
                 unsafe_allow_html=True,
             )
 
-        # ---------- UI: PER-FIL CONTROLS ----------
-        # Beregn løbende bogstav for hver inkluderet fil i den valgte
-        # rækkefølge — dem viser vi som badge på hver række.
-        _start_idx = ord(_sb_aktuel) - ord("A")
-        _bogstav_per_filnavn = {}
-        _filnavne_i_orden = [
-            fn for fn in st.session_state[_bilag_raekkefolge_key]
-            if st.session_state[_bilag_inkl_key].get(fn)
-        ]
-        # Bilag #1 er svarbrevet selv → tildelte bilag starter ved +1
-        for _i, fn in enumerate(_filnavne_i_orden):
-            _b_idx = _start_idx + 1 + _i
-            if 0 <= _b_idx < 26:
-                _bogstav_per_filnavn[fn] = chr(ord("A") + _b_idx)
-            else:
-                _bogstav_per_filnavn[fn] = "?"
+            # Render rækkerne i den aktuelle rækkefølge — først dem der er
+            # MED som bilag (med up/down-pile), derefter dem der er fra-
+            # valgt (kun toggle-knap).
+            _orden_aktuel = list(st.session_state[_bilag_raekkefolge_key])
+            _filnavn_til_fil = {
+                (f.get("filnavn") or ""): f for f in _anon_kandidater
+            }
+            for _idx_orden, fn in enumerate(_orden_aktuel):
+                fil = _filnavn_til_fil.get(fn)
+                if not fil:
+                    continue
+                er_med = bool(st.session_state[_bilag_inkl_key].get(fn))
 
-        # Render rækkerne i den aktuelle rækkefølge — først dem der er
-        # MED som bilag (med up/down-pile), derefter dem der er fra-
-        # valgt (kun toggle-knap).
-        _orden_aktuel = list(st.session_state[_bilag_raekkefolge_key])
-        _filnavn_til_fil = {
-            (f.get("filnavn") or ""): f for f in _anon_kandidater
-        }
-        for _idx_orden, fn in enumerate(_orden_aktuel):
-            fil = _filnavn_til_fil.get(fn)
-            if not fil:
-                continue
-            er_med = bool(st.session_state[_bilag_inkl_key].get(fn))
+                (
+                    _kol_inkl, _kol_bogstav, _kol_overskrift,
+                    _kol_op, _kol_ned,
+                ) = st.columns([2.0, 0.9, 5.5, 0.5, 0.5])
 
-            (
-                _kol_inkl, _kol_bogstav, _kol_overskrift,
-                _kol_op, _kol_ned,
-            ) = st.columns([2.0, 0.9, 5.5, 0.5, 0.5])
-
-            with _kol_inkl:
-                # Toggle: medtag denne fil som bilag?
-                _ny_vaerdi = st.checkbox(
-                    fn,
-                    value=er_med,
-                    key=f"bilag_cb_{_bilag_signatur}_{_idx_orden}_{fn}",
-                )
-                if _ny_vaerdi != er_med:
-                    st.session_state[_bilag_inkl_key][fn] = _ny_vaerdi
-                    st.rerun()
-
-            with _kol_bogstav:
-                if er_med:
-                    bogstav = _bogstav_per_filnavn.get(fn, "?")
-                    st.markdown(
-                        f"<div style='padding-top: 6px; font-weight: 700; "
-                        f"color: #92400E;'>Bilag {bogstav}</div>",
-                        unsafe_allow_html=True,
-                    )
-
-            with _kol_overskrift:
-                if er_med:
-                    _ny_tekst = st.text_input(
-                        "Beskrivelse",
-                        value=st.session_state[_bilag_overskrift_key].get(
-                            fn, ""
-                        ),
-                        key=(
-                            f"bilag_tekst_{_bilag_signatur}_"
-                            f"{_idx_orden}_{fn}"
-                        ),
-                        label_visibility="collapsed",
-                        placeholder="Bilag-beskrivelse…",
-                    )
-                    st.session_state[_bilag_overskrift_key][fn] = _ny_tekst
-
-            with _kol_op:
-                if er_med and _idx_orden > 0:
-                    if st.button(
-                        "↑",
-                        key=f"bilag_op_{_bilag_signatur}_{_idx_orden}_{fn}",
-                        help="Flyt op",
-                    ):
-                        _o = st.session_state[_bilag_raekkefolge_key]
-                        _o[_idx_orden - 1], _o[_idx_orden] = (
-                            _o[_idx_orden], _o[_idx_orden - 1]
-                        )
+                # KRITISK: widget-keys er bundet til FILNAVNET (ikke index).
+                    # Når en bruger flytter et bilag op/ned, beholder hver
+                    # widget sin egen state — Streamlit re-mounter dem ikke
+                    # på en ny position. Det fjerner den "to-titel-flicker"-
+                    # effekt der tidligere viste den gamle og nye titel
+                    # samtidig under et øjeblik.
+                with _kol_inkl:
+                    # Toggle: medtag denne fil som bilag?
+                    _cb_key = f"bilag_cb_{_bilag_signatur}_{fn}"
+                    if _cb_key not in st.session_state:
+                        st.session_state[_cb_key] = er_med
+                    _ny_vaerdi = st.checkbox(fn, key=_cb_key)
+                    if _ny_vaerdi != er_med:
+                        st.session_state[_bilag_inkl_key][fn] = _ny_vaerdi
                         st.rerun()
 
-            with _kol_ned:
-                if er_med and _idx_orden < len(_orden_aktuel) - 1:
-                    if st.button(
-                        "↓",
-                        key=(
-                            f"bilag_ned_{_bilag_signatur}_"
-                            f"{_idx_orden}_{fn}"
-                        ),
-                        help="Flyt ned",
-                    ):
-                        _o = st.session_state[_bilag_raekkefolge_key]
-                        _o[_idx_orden], _o[_idx_orden + 1] = (
-                            _o[_idx_orden + 1], _o[_idx_orden]
+                with _kol_bogstav:
+                    if er_med:
+                        bogstav = _bogstav_per_filnavn.get(fn, "?")
+                        st.markdown(
+                            f"<div style='padding-top: 6px; font-weight: 700; "
+                            f"color: #92400E;'>Bilag {bogstav}</div>",
+                            unsafe_allow_html=True,
                         )
-                        st.rerun()
+
+                with _kol_overskrift:
+                    if er_med:
+                        _tekst_key = f"bilag_tekst_{_bilag_signatur}_{fn}"
+                        # Initial-værdi sættes KUN hvis widget-state ikke
+                        # findes endnu — derefter har brugerens redigeringer
+                        # forrang (Streamlit-konvention).
+                        if _tekst_key not in st.session_state:
+                            st.session_state[_tekst_key] = (
+                                st.session_state[_bilag_overskrift_key].get(
+                                    fn, ""
+                                )
+                            )
+                        _ny_tekst = st.text_input(
+                            "Beskrivelse",
+                            key=_tekst_key,
+                            label_visibility="collapsed",
+                            placeholder="Bilag-beskrivelse…",
+                        )
+                        st.session_state[_bilag_overskrift_key][fn] = _ny_tekst
+
+                with _kol_op:
+                    if er_med and _idx_orden > 0:
+                        if st.button(
+                            "↑",
+                            key=f"bilag_op_{_bilag_signatur}_{fn}",
+                            help="Flyt op",
+                        ):
+                            _o = st.session_state[_bilag_raekkefolge_key]
+                            _o[_idx_orden - 1], _o[_idx_orden] = (
+                                _o[_idx_orden], _o[_idx_orden - 1]
+                            )
+                            st.rerun()
+
+                with _kol_ned:
+                    if er_med and _idx_orden < len(_orden_aktuel) - 1:
+                        if st.button(
+                            "↓",
+                            key=f"bilag_ned_{_bilag_signatur}_{fn}",
+                            help="Flyt ned",
+                        ):
+                            _o = st.session_state[_bilag_raekkefolge_key]
+                            _o[_idx_orden], _o[_idx_orden + 1] = (
+                                _o[_idx_orden + 1], _o[_idx_orden]
+                            )
+                            st.rerun()
 
 
 # ---------- AUTO-TJEKLISTE MOD HØRINGSBREV ----------

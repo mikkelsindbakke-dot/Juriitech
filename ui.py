@@ -284,6 +284,39 @@ def _split_analyse_i_sektioner(tekst):
     # UNDER-punkter (fx "1. Korrekt værelsestype leveret" inde i
     # "Rejseselskabets stillingtagen"-sektionen) bliver fejltolket som
     # nye top-level sektioner — og dermed forskyder hele pillar-strukturen.
+    #
+    # YDERLIGERE: linjen MÅ IKKE være en lang brødtekst-sætning der
+    # tilfældigvis starter med "N.". Vi stiller derfor tre strenge krav
+    # til ægte top-level overskrifter:
+    #   1) Den indre titel-tekst (uden ## og **) er max ~120 tegn
+    #   2) Indeholder IKKE [Bilag-, [Afgørelse- eller [Sag-citationer
+    #      (de er ALTID brødtekst, aldrig overskrifter)
+    #   3) Indeholder ikke citationstegn ("…") — sætninger med citater
+    #      er brødtekst
+    def _ligner_aegte_overskrift(linje):
+        """Yderligere validering oven på regex-matchet."""
+        # Ryd op ligesom _parse_titel
+        s = linje.strip()
+        s = re.sub(r"^#{1,4}\s+", "", s)
+        s = s.replace("**", "").strip()
+        # Krav 1: maksimal længde
+        if len(s) > 120:
+            return False
+        # Krav 2: ingen kildehenvisninger
+        if re.search(r"\[(Bilag|Afgørelse|Sag|sag)\b", s):
+            return False
+        # Krav 3: ingen citationstegn
+        if '"' in s or '"' in s or '"' in s or '«' in s or '»' in s:
+            return False
+        # Heuristik: efter at have fjernet det indledende "N. "-prefix
+        # (selve sektionsnummeret), hvis den resterende titel indeholder
+        # YDERLIGERE sætnings-skift (punkt + mellemrum + stort bogstav)
+        # er det en brødsætning, ikke en overskrift.
+        s_uden_nr = re.sub(r"^\d+\.\s+", "", s)
+        if re.search(r"\.\s+[A-ZÆØÅ]", s_uden_nr):
+            return False
+        return True
+
     prev_was_blank = True  # behandl start af dokument som "efter blank linje"
     for line in lines:
         line_is_blank = not line.strip()
@@ -293,7 +326,10 @@ def _split_analyse_i_sektioner(tekst):
             prev_was_blank = True
             continue
 
-        ser_ud_som_sektion = bool(is_section_start.match(line))
+        ser_ud_som_sektion = (
+            bool(is_section_start.match(line))
+            and _ligner_aegte_overskrift(line)
+        )
         er_top_level = ser_ud_som_sektion and prev_was_blank
 
         if er_top_level:
