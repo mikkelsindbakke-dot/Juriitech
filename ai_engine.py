@@ -196,6 +196,103 @@ def _trim(tekst):
     return tekst
 
 
+def udtraek_sagen_angaar(tekst, max_chars=2000):
+    """
+    Trækker den juridisk MEST sigende del af en Pakkerejse-Ankenævn-
+    afgørelse ud — typisk titel + 'Klagen angår'/'Sagen angår'-afsnit
+    + de første par paragraffer af nævnets bemærkninger.
+
+    Bruges som FOKUSERET input når vi sammenligner en ny sag med
+    tidligere afgørelser — frem for at sende 5500 rå tegn med
+    procedurel støj (datoer, adresser, sagsbehandler-navne osv.) sender
+    vi de tegn der faktisk fortæller hvad sagen ER om.
+
+    Robust mod variationer i scrapet markdown:
+      - Finder titel-linjer (caps, kort, øverst i dokumentet)
+      - Søger efter 'Klagen angår', 'Sagen angår', 'Klagepunkter',
+        'Hovedspørgsmål' eller lignende anchor-ord
+      - Inkluderer 1-2 paragraffer EFTER hvert anchor
+      - Falder tilbage til de første ~1500 tegn hvis ingen anchor findes
+
+    Returnerer en streng på max ~max_chars tegn — tilstrækkeligt til
+    at AI'en kan vurdere relevans uden at blive overvældet af støj.
+    """
+    import re as _re
+
+    if not tekst:
+        return ""
+
+    tekst = tekst.strip()
+    if len(tekst) <= max_chars:
+        # Allerede kort nok — returnér uændret
+        return tekst
+
+    dele = []
+
+    # ---------- 1. TITEL ----------
+    # De første 5-10 ikke-tomme linjer indeholder typisk titel + sagsnr.
+    # Vi tager de første linjer indtil vi finder en der ligner brødtekst.
+    titel_linjer = []
+    for linje in tekst.split("\n")[:20]:
+        s = linje.strip()
+        if not s:
+            continue
+        # Brødtekst-detektor: hvis linjen er meget lang ELLER slutter med
+        # punktum + lille bogstav, er det sandsynligvis et sætningsfragment
+        if len(s) > 200 or _re.search(r"[a-zæøå]\.\s+[a-zæøå]", s):
+            break
+        titel_linjer.append(s)
+        if len(titel_linjer) >= 5:
+            break
+    if titel_linjer:
+        dele.append("=== TITEL / OVERSKRIFT ===\n" + "\n".join(titel_linjer))
+
+    # ---------- 2. ANCHOR-AFSNIT ----------
+    # Find afsnit der starter med specifikke nøgleord — disse er de
+    # juridisk mest sigende dele af afgørelsen.
+    ANCHORS = [
+        r"Klagen\s+angår",
+        r"Sagen\s+angår",
+        r"Hoved\s*spørgsmål(et)?",
+        r"Klagens?\s+kernepunkt(er)?",
+        r"Klage(?:r|n)?s?\s+påstand",
+        r"Klagepunkt(er)?",
+        r"Nævnets?\s+bemærkninger?\s+og\s+afgørelse",
+        r"Konklusion",
+    ]
+    for anchor in ANCHORS:
+        # Match anchor + alt frem til næste blank linje + max 800 tegn
+        match = _re.search(
+            anchor + r"[:\s]*\n*([\s\S]{1,800}?)(?=\n\s*\n|\Z)",
+            tekst,
+            _re.IGNORECASE,
+        )
+        if match:
+            anchor_navn = _re.search(anchor, match.group(0), _re.IGNORECASE)
+            anchor_safe = (
+                anchor_navn.group(0).strip() if anchor_navn else "Anchor"
+            )
+            indhold = match.group(1).strip()
+            if indhold and len(indhold) > 30:
+                dele.append(
+                    f"=== {anchor_safe.upper()} ===\n{indhold}"
+                )
+
+    # ---------- 3. FALLBACK hvis ingen anchors fundet ----------
+    if len(dele) <= 1:  # kun titel, eller intet
+        # Tag de første ~1200 tegn af brødteksten
+        body_start = "\n".join(tekst.split("\n")[len(titel_linjer):])
+        dele.append("=== UDDRAG ===\n" + body_start[:1200])
+
+    samlet = "\n\n".join(dele)
+
+    # Cap til max_chars
+    if len(samlet) > max_chars:
+        samlet = samlet[:max_chars - 3] + "..."
+
+    return samlet
+
+
 def _byg_vidensbank_tekst(sager):
     """
     Bygger én tekstblok med de udvalgte relevante sager, med tydelig markering
@@ -2495,12 +2592,19 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
             upload_dele.append(f"--- {f.get('filnavn', 'fil')} ---\n{t[:1500]}")
     uploadet_resume = "\n\n".join(upload_dele)[:5000] or "(Ingen tekst udtrukket lokalt)"
 
-    # Byg tekst for hver tidligere afgørelse
+    # Byg tekst for hver tidligere afgørelse — bruger udtraek_sagen_angaar
+    # til at trække titel + 'Klagen angår'-afsnit + nævnets bemærkninger
+    # ud, frem for at sende 5500 rå tegn med procedurel støj. Det giver
+    # AI'en meget renere input når den vurderer relevans.
     sager_tekst = ""
     for i, s in enumerate(relevante_sager, 1):
         filnavn = s.get("filnavn", "ukendt")
-        indhold = (s.get("indhold") or "")[:5500]
-        sager_tekst += f"\n\n=== AFGØRELSE #{i} — filnavn: {filnavn} ===\n{indhold}\n"
+        raw_indhold = s.get("indhold") or ""
+        fokuseret = udtraek_sagen_angaar(raw_indhold, max_chars=2500)
+        sager_tekst += (
+            f"\n\n=== AFGØRELSE #{i} — filnavn: {filnavn} ===\n"
+            f"{fokuseret}\n"
+        )
 
     prompt = (
         "Du får nedenfor en NY KLAGESAG (sagsmateriale fra rejseselskabet) og "
@@ -2534,17 +2638,24 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         "eller anden form for guide-/hotel-kontakt. At nævne det som "
         "match er meningsløst. Kun den SPECIFIKKE NATUR af kontakten "
         "kan være juridisk relevant (se nedenfor).\n\n"
-        "✓ KRÆVEDE (specifikke, juridisk relevante) ligheder — KUN "
-        "DISSE TÆLLER SOM ÆGTE MATCH:\n"
-        "  - SAMME KONKRETE MANGEL-TYPE: 'pool-mangel vs pool-mangel', "
-        "'værelses-standard vs værelses-standard', 'ekstrasenge-mangel "
-        "vs ekstrasenge-mangel', 'manglende tilkøbt udflugt vs "
-        "manglende tilkøbt udflugt', 'støj fra nabolag vs støj fra "
-        "nabolag', 'rengøringsmangel vs rengøringsmangel', 'fejlagtige "
-        "afstandsangivelser i markedsføring vs samme'\n"
+        "✓ KRÆVEDE (juridisk relevante) ligheder — DISSE TÆLLER SOM "
+        "ÆGTE MATCH (én af dem er nok — krav om perfekt overlap er "
+        "for stramt):\n"
+        "  - LIGNENDE KONKRET MANGEL-TYPE: 'pool-mangel vs pool-mangel', "
+        "'støjgener vs støjgener' (uanset om støjen er fra naboer, "
+        "natklubber, byggepladser eller veje — det er samme juridiske "
+        "tema), 'værelses-standard vs værelses-standard', 'ekstrasenge-"
+        "mangel vs ekstrasenge-mangel', 'manglende tilkøbt udflugt vs "
+        "samme', 'rengøringsmangel vs rengøringsmangel', 'fejlagtige "
+        "afstands-/standardangivelser i markedsføring vs samme'\n"
         "  - SAMME JURIDISKE SPØRGSMÅL: rettidig reklamation, "
         "bistandspligt, forholdsmæssigt afslag, illusorisk opgradering, "
         "hotellets pres ved udtjekning osv.\n"
+        "  - SAMME KOMPENSATIONS-PRINCIP: hvordan Nævnet vægter "
+        "forholdsmæssigt afslag i sager om TILSVARENDE genekarakter "
+        "(fx hvor stort afslag for 'utilstrækkelig nattero', "
+        "'manglende rengøring i X dage' osv.) — selv hvis den konkrete "
+        "mangel ikke er identisk\n"
         "  - SAMME SPECIFIKKE GUIDE-/DESTINATIONSSERVICE-PROBLEM (ikke "
         "blot at der var guide-kontakt — det er for bredt). Eksempler "
         "på specifikke, sammenlignelige guide-situationer:\n"
@@ -2576,14 +2687,19 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         "primærkilde til at identificere de konkrete mangler — ikke "
         "kun det generelle resume.\n\n"
         "═══════════════════════════════════════════════════════════════\n"
-        "ÆRLIGHED VED FALSKE MATCH:\n"
+        "BESLUTNINGS-REGEL FOR juridisk_relevant_match:\n"
         "═══════════════════════════════════════════════════════════════\n\n"
-        "Hvis en tidligere afgørelse KUN har overfladiske ligheder med "
-        "den nye sag (fx samme destination, samme rejsearrangør, samme "
-        "type rejsende — men IKKE samme konkrete mangel-type), SKAL du "
-        "sætte juridisk_relevant_match=false. Det er FAR bedre at "
-        "udelukke en false-positive end at vise jurister vildledende "
-        "matches.\n\n"
+        "Sæt juridisk_relevant_match=TRUE hvis afgørelsen har MINIMUM "
+        "ÉN af de KRÆVEDE ligheder ovenfor (lignende mangel-type ELLER "
+        "samme juridiske spørgsmål ELLER samme kompensations-princip "
+        "ELLER samme paragraf-anvendelse). Det skal ikke være perfekt "
+        "match — bare relateret nok til at en jurist kan trække "
+        "argumenter eller præcedens fra den.\n\n"
+        "Sæt juridisk_relevant_match=FALSE KUN hvis afgørelsen "
+        "udelukkende har overfladiske ligheder (samme destination, "
+        "samme rejsearrangør, samme type rejsende) UDEN nogen af de "
+        "krævede juridiske paralleller. Hellere én moderat-relevant "
+        "match end en tom referencer-sektion.\n\n"
         "═══════════════════════════════════════════════════════════════\n"
         "MATERIALE:\n"
         "═══════════════════════════════════════════════════════════════\n\n"
@@ -3064,6 +3180,7 @@ def udled_foerstevurdering_struktureret(
     sagsakter_filer=None,
     klagepunkter_facit="",
     tidsforhold_facit="",
+    klagepunkter_liste=None,
 ):
     """
     Genererer den juridiske førstevurdering som STRUKTURERET JSON via
@@ -3089,14 +3206,36 @@ def udled_foerstevurdering_struktureret(
         sagsakter_tekst = (sagsakter or "").strip()
         filer = sag.get("filer") or []
 
-        # ---------- RAG-RETRIEVAL (præcis samme som spoerg_ai_med_sag) ----------
-        dele = []
-        for fil in filer:
-            if fil.get("type") == "tekst" and fil.get("tekst"):
-                dele.append((fil.get("tekst") or "")[:3000])
-        if sagsakter_tekst:
-            dele.append(sagsakter_tekst[:3000])
-        soge_tekst = "\n\n".join(dele)
+        # ---------- RAG-SØGNING ----------
+        # NY STRATEGI: brug klagepunkter (hvis tilgængelige) som primær
+        # embedding-query frem for raw filtekst. Klagepunkter er allerede
+        # en koncentreret beskrivelse af HVAD sagen handler om — ingen
+        # procedurel støj (datoer, adresser, sagsbehandler-navne osv.).
+        # Det giver MEGET mere fokuserede semantiske matches.
+        #
+        # Falder tilbage til raw filtekst hvis klagepunkter ikke er
+        # ekstraheret endnu (fx ved første kald før udled_alle_klagepunkter
+        # er kørt).
+        if klagepunkter_liste:
+            soge_tekst = "Klagepunkter i sagen:\n" + "\n".join(
+                f"- {kp}" for kp in klagepunkter_liste
+            )
+            print(
+                f"DEBUG: bruger {len(klagepunkter_liste)} klagepunkter "
+                "som RAG-søgequery (fokuseret)"
+            )
+        else:
+            dele = []
+            for fil in filer:
+                if fil.get("type") == "tekst" and fil.get("tekst"):
+                    dele.append((fil.get("tekst") or "")[:3000])
+            if sagsakter_tekst:
+                dele.append(sagsakter_tekst[:3000])
+            soge_tekst = "\n\n".join(dele)
+            print(
+                "DEBUG: bruger raw filtekst som RAG-søgequery "
+                "(fallback — klagepunkter ikke tilgængelige)"
+            )
 
         udeluk_filnavne = {f.get("filnavn") for f in filer}
 

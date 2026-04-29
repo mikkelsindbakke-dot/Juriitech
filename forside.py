@@ -1857,6 +1857,10 @@ if st.session_state.get("aktuel_sag"):
                         ),
                         klagepunkter_facit=klagepunkter_facit,
                         tidsforhold_facit=tidsforhold_facit,
+                        # Brug de verificerede klagepunkter som fokuseret
+                        # RAG-søgequery — det giver MEGET mere relevante
+                        # tidligere-afgørelse-matches end raw filtekst.
+                        klagepunkter_liste=alle_klagepunkter,
                     )
                 )
                 # Konvertér det strukturerede dict til markdown i det
