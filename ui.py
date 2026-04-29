@@ -626,6 +626,164 @@ def render_tidslinje(
     st.markdown(html_out, unsafe_allow_html=True)
 
 
+# ============================================================
+# LÅST STRUKTUR — DE 6 AI-SEKTIONER (sektion 3-8 i page-flowet)
+# ============================================================
+# Denne struktur er ENDELIG. Den må aldrig ændres uden at hele
+# rendering-pipelinen og AI-prompten opdateres synkront. Listen er
+# i præcis den rækkefølge sektionerne SKAL vises på siden.
+#
+# Hvert element er en tuple (titel, nøgleord) hvor:
+#   • titel = den eksakte tekst der ALTID vises som pillar-overskrift
+#     (uanset hvad AI'en kalder sektionen i sit output)
+#   • nøgleord = liste af case-insensitive substrings som tving_struktur
+#     bruger til at finde den AI-sektion der hører hjemme i denne
+#     position. Højere prioritet = først i listen.
+LAASTE_AI_SEKTIONER = [
+    (
+        "Klagens kernepunkter",
+        ["klagens kernepunkter", "kernepunkter", "klagepunkter"],
+    ),
+    (
+        "Yderligere klagepunkter og detaljer",
+        [
+            "yderligere klagepunkter", "yderligere", "sekundær",
+            "andre forhold", "supplerende", "mindre punkter",
+        ],
+    ),
+    (
+        "Rejseselskabets stillingtagen indtil nu",
+        [
+            "rejseselskabets stillingtagen", "stillingtagen",
+            "tui's håndtering", "selskabets håndtering",
+            "rejseselskabets håndtering",
+        ],
+    ),
+    (
+        "Kort juridisk vurdering",
+        [
+            "kort juridisk vurdering", "juridisk vurdering",
+            "juridisk analyse", "juridisk argumentation",
+            "juridiske vurdering",
+        ],
+    ),
+    (
+        "Sandsynlighedsvurdering",
+        [
+            "sandsynlighedsvurdering", "sandsynlighed",
+            "udfaldsvurdering",
+        ],
+    ),
+    (
+        "Konklusion i én linje",
+        [
+            "konklusion i én linje", "konklusion i en linje",
+            "konklusion", "afsluttende vurdering", "anbefaling",
+            "samlet anbefaling",
+        ],
+    ),
+]
+
+
+def tving_struktur_til_seks_sektioner(sektioner):
+    """
+    Tager den rå liste af (titel, body)-tuples som AI'en producerede
+    (efter _split_analyse_i_sektioner) og MAPPER dem til de 6 LÅSTE
+    positioner i LAASTE_AI_SEKTIONER.
+
+    Output GARANTERES at være præcis 6 elementer i præcis den
+    aftalte rækkefølge med præcis de aftalte titler — uanset hvad
+    AI'en gjorde i sit output. AI'en kan opfinde ekstra sektioner,
+    omdøbe sektioner, eller udelade sektioner — vi normaliserer det
+    her i koden så frontend-renderingen altid er konsistent.
+
+    Algoritme:
+      1. For hver låst position (i fast rækkefølge):
+         - Find den AI-sektion hvis titel matcher et af nøgleordene
+           OG som ikke allerede er brugt
+         - Hvis ingen match: brug en placeholder
+      2. Ekstra AI-sektioner der ikke matchede nogen position bliver
+         flettet ind som ekstra bullets i 'Yderligere klagepunkter
+         og detaljer' (position 2) — så vi ikke taber indhold helt.
+
+    Returnerer: liste af præcis 6 (titel, body)-tuples.
+    """
+    if not sektioner:
+        sektioner = []
+
+    PLACEHOLDER_BODY = (
+        "_Indhold kunne ikke udledes af AI-output. Prøv at scanne "
+        "sagen igen — eller kontakt support hvis problemet gentager sig._"
+    )
+
+    result = [None] * len(LAASTE_AI_SEKTIONER)
+    used_indices = set()
+
+    # Trin 1: tildel hver låst position til den bedst matchende AI-sektion
+    for laast_idx, (laast_titel, nogleord_liste) in enumerate(
+        LAASTE_AI_SEKTIONER
+    ):
+        bedste_match_idx = None
+        bedste_nogleord_prio = float("inf")
+
+        for ai_idx, (ai_titel, _ai_body) in enumerate(sektioner):
+            if ai_idx in used_indices:
+                continue
+            ai_titel_lower = (ai_titel or "").lower()
+
+            # Find det første nøgleord (højeste prioritet) som matcher
+            for prio, nogle in enumerate(nogleord_liste):
+                if nogle.lower() in ai_titel_lower:
+                    if prio < bedste_nogleord_prio:
+                        bedste_match_idx = ai_idx
+                        bedste_nogleord_prio = prio
+                    break
+
+        if bedste_match_idx is not None:
+            _ai_titel, ai_body = sektioner[bedste_match_idx]
+            result[laast_idx] = (laast_titel, ai_body or PLACEHOLDER_BODY)
+            used_indices.add(bedste_match_idx)
+        else:
+            # Ingen AI-sektion matchede denne låste position — sæt
+            # placeholder så strukturen er komplet og pillaren stadig
+            # vises på siden (juristen bemærker manglen).
+            result[laast_idx] = (laast_titel, PLACEHOLDER_BODY)
+
+    # Trin 2: hvis AI'en producerede EKSTRA sektioner som ikke matchede
+    # nogen låst position, flet dem ind i 'Yderligere klagepunkter og
+    # detaljer' (position 2 / index 1) som ekstra bullets — så vi ikke
+    # taber legitimt indhold (selv om strukturen er forkert).
+    overskydende = [
+        (sektioner[i][0], sektioner[i][1])
+        for i in range(len(sektioner))
+        if i not in used_indices
+    ]
+    if overskydende:
+        yderligere_titel, yderligere_body = result[1]
+        ekstra_dele = []
+        for ov_titel, ov_body in overskydende:
+            stub = ov_titel.strip() if ov_titel else ""
+            if ov_body and ov_body.strip():
+                ekstra_dele.append(
+                    f"- **{stub}:** {ov_body.strip()}"
+                )
+            elif stub:
+                ekstra_dele.append(f"- **{stub}**")
+        if ekstra_dele:
+            ny_body = (yderligere_body or "").rstrip()
+            if (
+                ny_body and not ny_body.endswith(PLACEHOLDER_BODY.rstrip())
+            ):
+                ny_body = ny_body + "\n\n"
+            elif ny_body == PLACEHOLDER_BODY:
+                # Fjern placeholder-teksten når vi har ægte ekstra-indhold
+                ny_body = ""
+            ny_body += "\n".join(ekstra_dele)
+            result[1] = (yderligere_titel, ny_body)
+
+    return result
+
+
 def render_analyse_som_pillars(
     svar_tekst,
     skip_resume=False,
@@ -662,58 +820,17 @@ def render_analyse_som_pillars(
     if not svar_tekst:
         return
 
-    sektioner = _split_analyse_i_sektioner(svar_tekst)
+    raa_sektioner = _split_analyse_i_sektioner(svar_tekst)
 
-    def _matcher_nogleord(titel, nogleord_liste):
-        t = (titel or "").lower()
-        return any(n in t for n in nogleord_liste)
-
-    filtreret = []
-    for idx, (titel, body) in enumerate(sektioner):
-        # Resume fjernes KUN hvis det er den første sektion (så vi ikke
-        # ved et uheld skjuler en anden sektion der tilfældigvis har
-        # 'resume' i overskriften).
-        if skip_resume and idx == 0 and _matcher_nogleord(titel, (
-            "resume", "resumé", "opsummering", "oversigt",
-        )):
-            continue
-        if skip_referencer and _matcher_nogleord(titel, (
-            "relevante referencer", "referencer", "præcedens",
-        )):
-            continue
-        if skip_sandsynlighed and _matcher_nogleord(titel, (
-            "sandsynlighedsvurdering", "sandsynlighed",
-        )):
-            continue
-        if skip_konklusion and _matcher_nogleord(titel, (
-            "konklusion", "afsluttende vurdering",
-        )):
-            continue
-        filtreret.append((titel, body))
-
-    sektioner = filtreret
-
-    # SAFETY-NET: Hvis AI'en alligevel har lavet >8 top-level sektioner
-    # EFTER skip-filtreringen, er det med stor sandsynlighed en fejl
-    # (klagepunkter splittet ud som egne sektioner). Slå de overskydende
-    # sammen i én "Yderligere klagepunkter"-sektion. Vi sætter grænsen
-    # ved 8 så der er plads til de 6 låste pillars + lidt luft til
-    # legitime ekstra-sektioner. Vigtigt: skip-filtrene har allerede
-    # kørt, så vi merger KUN ægte indholds-sektioner.
-    MAX_SEKTIONER_EFTER_SKIP = 8
-    if len(sektioner) > MAX_SEKTIONER_EFTER_SKIP:
-        beholdt = sektioner[:MAX_SEKTIONER_EFTER_SKIP - 1]
-        overflødige = sektioner[MAX_SEKTIONER_EFTER_SKIP - 1:]
-        sammenfletning = []
-        for titel, body in overflødige:
-            sammenfletning.append(
-                f"- **{titel}**" + (f": {body}" if body else "")
-            )
-        beholdt.append((
-            "Yderligere klagepunkter og detaljer",
-            "\n".join(sammenfletning),
-        ))
-        sektioner = beholdt
+    # ---------- FORCE-MAP TIL DEN LÅSTE 6-SEKTIONS STRUKTUR ----------
+    # Vi STOLER IKKE på at AI'en holder sig til prompt-instruktionerne.
+    # I stedet mapper vi AI'ens output til de 6 låste positioner via
+    # nøgleord-matching. Output garanteret at være præcis 6 sektioner
+    # i den rette rækkefølge med de aftalte titler — uanset hvad AI'en
+    # gjorde. Skip-flagene (skip_resume osv.) er bevaret for backwards
+    # kompatibilitet men har INGEN effekt længere — strukturen er
+    # ufravigelig.
+    sektioner = tving_struktur_til_seks_sektioner(raa_sektioner)
 
     for i, (titel, body) in enumerate(sektioner):
         accent, bg = _PILLAR_PALETTER[i % len(_PILLAR_PALETTER)]
