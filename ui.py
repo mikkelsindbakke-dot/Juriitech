@@ -738,3 +738,166 @@ def render_analyse_som_pillars(
             """,
             unsafe_allow_html=True,
         )
+
+
+def render_svarbrev_forside_preview(
+    sagsnummer="",
+    klagers_navn="",
+    hoeringssvar_nr=1,
+    bilag_liste=None,
+    profil_by="",
+    logo_b64=None,
+):
+    """
+    Renderer en HTML-approksimation af svarbrevets FORSIDE — det vil
+    sige headeren med modtager-adresse, logo, by/dato, Vedr-linje og
+    bilag-liste. Bruges som preview lige over selve brødteksten i
+    svarbrev-sektionen, så brugeren kan se hvordan downloaden kommer
+    til at se ud før de trykker download.
+
+    Layoutet matcher (visuelt — ikke pixel-perfekt) det docx-output som
+    eksport.svarbrev_til_docx producerer:
+      • PAKKEREJSE-ANKENÆVNETs adresse i top-venstre
+      • Selskabs-logo i top-højre (hvis logo_b64 er angivet)
+      • Højrejusteret 'By, DD-MM-YYYY' nedenunder
+      • 'Vedr.: Sag nr. X – Klagernavn, N. høringssvar' med vandret streg
+      • 'Bilag:'-overskrift + 2-kolonne-liste (hvis bilag_liste er udfyldt)
+
+    Parametre:
+      sagsnummer       — fx "25-109-8024327" (kan være tom)
+      klagers_navn     — fx "Laura Stephanie Uhler" (kan være tom)
+      hoeringssvar_nr  — 1, 2 eller 3
+      bilag_liste      — list of dicts {"bogstav": "A", "overskrift": "..."}
+      profil_by        — fx "Frederiksberg"
+      logo_b64         — base64-string (uden 'data:image/png;base64,'-prefix)
+                         eller None hvis intet logo
+    """
+    import html as _html
+    from datetime import datetime as _dt
+
+    # Byg Vedr-linjen ud fra de angivne felter
+    vedr_dele = ["Vedr.: "]
+    if sagsnummer:
+        vedr_dele.append(f"Sag nr. {_html.escape(sagsnummer)}")
+    if klagers_navn:
+        if sagsnummer:
+            vedr_dele.append(f" – {_html.escape(klagers_navn)}")
+        else:
+            vedr_dele.append(_html.escape(klagers_navn))
+    if hoeringssvar_nr:
+        vedr_dele.append(
+            f", {_html.escape(str(hoeringssvar_nr))}. høringssvar"
+        )
+    vedr_html = "".join(vedr_dele)
+
+    # By + dato (samme format som docx-eksporten)
+    by_safe = _html.escape(profil_by or "")
+    dato_str = _dt.now().strftime("%d-%m-%Y")
+    by_dato = (
+        f"{by_safe}, {dato_str}" if by_safe else dato_str
+    )
+
+    # Logo: indlejret som base64-img hvis tilgængeligt, ellers placeholder
+    if logo_b64:
+        logo_html = (
+            f'<img src="data:image/png;base64,{logo_b64}" '
+            'alt="Selskabs-logo" style="max-width: 150px; '
+            'max-height: 70px; height: auto;" />'
+        )
+    else:
+        logo_html = (
+            '<div style="color: #9CA3AF; font-size: 0.78rem; '
+            'font-style: italic; padding: 8px;">'
+            '[Selskabs-logo vises i Word-filen når '
+            'static/logos/-filen er på plads]</div>'
+        )
+
+    # Bilag-liste (kun hvis der er bilag)
+    bilag_html = ""
+    if bilag_liste:
+        rows_html = ""
+        for post in bilag_liste:
+            bogstav = _html.escape(str(post.get("bogstav", "")))
+            overskrift = _html.escape(str(post.get("overskrift", "")))
+            rows_html += (
+                f'<tr>'
+                f'<td style="padding: 4px 16px 4px 0; font-weight: 600; '
+                f'white-space: nowrap; vertical-align: top; '
+                f'color: #1F2937;">Bilag {bogstav}</td>'
+                f'<td style="padding: 4px 0; color: #1F2937;">'
+                f'{overskrift}</td>'
+                f'</tr>'
+            )
+        bilag_html = (
+            '<div style="margin-top: 24px;">'
+            '<div style="font-weight: 700; font-size: 1rem; '
+            'color: #1F2937; margin-bottom: 8px;">Bilag:</div>'
+            '<table style="border-collapse: collapse; width: 100%;">'
+            f'{rows_html}'
+            '</table>'
+            '</div>'
+        )
+
+    # Hele forsiden
+    st.markdown(
+        f"""
+        <div style="
+            background: #FAFAFA;
+            border: 1px solid #E5E7EB;
+            border-radius: 12px;
+            padding: 28px 32px 24px 32px;
+            margin: 8px 0 16px 0;
+            font-family: 'Calibri', -apple-system, BlinkMacSystemFont, sans-serif;
+        ">
+            <div style="
+                display: flex;
+                justify-content: space-between;
+                align-items: flex-start;
+                gap: 24px;
+                margin-bottom: 8px;
+            ">
+                <div style="flex: 1 1 60%; line-height: 1.5;">
+                    <div style="font-weight: 700; font-size: 1.02rem;
+                                color: #111827;">
+                        PAKKEREJSE-ANKENÆVNET
+                    </div>
+                    <div style="color: #1F2937;">
+                        Haldor Topsøes Alle 1, Bygning 91
+                    </div>
+                    <div style="color: #1F2937;">2800 Kgs. Lyngby</div>
+                </div>
+                <div style="flex: 0 0 auto; text-align: right;">
+                    {logo_html}
+                </div>
+            </div>
+            <div style="
+                text-align: right;
+                margin-top: 36px;
+                font-size: 1rem;
+                color: #1F2937;
+            ">{by_dato}</div>
+            <div style="
+                margin-top: 28px;
+                font-weight: 700;
+                font-size: 1rem;
+                color: #111827;
+                padding-bottom: 6px;
+                border-bottom: 1px solid #111827;
+            ">{vedr_html}</div>
+            {bilag_html}
+            <div style="
+                margin-top: 22px;
+                color: #6B7280;
+                font-size: 0.78rem;
+                font-style: italic;
+                text-align: center;
+                border-top: 1px dashed #E5E7EB;
+                padding-top: 12px;
+            ">
+                Forside-preview — sådan vil headeren se ud i den
+                downloadede Word-fil. Brødteksten vises nedenunder.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )

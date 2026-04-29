@@ -39,6 +39,7 @@ from ui import (
     render_analyse_som_pillars,
     render_sagsresume,
     render_tidslinje,
+    render_svarbrev_forside_preview,
     vis_brugerfejl,
 )
 
@@ -3720,16 +3721,15 @@ if st.session_state.get("aktuel_sag"):
     if st.session_state.seneste_svarbrev:
         st.markdown("---")
         st.subheader("Udkast til svarbrev")
-        st.markdown(st.session_state.seneste_svarbrev["svarbrev"])
 
-        # Download-knap til svarbrevet — sender brevhoved-felter med så
-        # selve Word-filens header kan bygges (sagsnr, klagers navn,
-        # høringssvar-nummer, plus selskabs-profil til logo + by).
+        # ---------- HENT BREVHOVED-FELTER ----------
+        # Disse felter bruges BÅDE i forside-preview'en (lige under) og
+        # når brugeren downloader Word-filen længere nede.
         _docx_sagsnr = (st.session_state.get(_sagsnr_key) or "").strip()
         _docx_navn = (st.session_state.get(_navn_key) or "").strip()
         _docx_hoer = st.session_state.get(_hoer_key) or 1
 
-        # ---------- BYG BILAG-LISTE TIL HEADER ----------
+        # ---------- BYG BILAG-LISTE ----------
         # Læser fra de samme state-keys som bilag-håndteringssektionen
         # ovenfor brugte. Hvis brugeren ikke har konfigureret bilag
         # (eller anonymiseringssektionen aldrig blev rendret), ender vi
@@ -3757,12 +3757,20 @@ if st.session_state.get("aktuel_sag"):
             or "A"
         ).strip().upper()[:1] or "A"
 
-        # Selskabs-navn til den første bilag-overskrift (svarbrevet selv)
+        # Selskabs-data: navn + by + logo (alt fra selskab_profiler)
         try:
-            from selskab_profiler import hent_navn as _hent_selskab_navn
+            from selskab_profiler import (
+                hent_navn as _hent_selskab_navn,
+                hent_by as _hent_selskab_by,
+                hent_logo_sti as _hent_logo_sti,
+            )
             _selskab_navn_dl = _hent_selskab_navn() or "TUI"
+            _selskab_by_dl = _hent_selskab_by() or ""
+            _selskab_logo_sti = _hent_logo_sti()
         except Exception:
             _selskab_navn_dl = "TUI"
+            _selskab_by_dl = "Frederiksberg"
+            _selskab_logo_sti = None
 
         _bilag_liste_dl = [
             {
@@ -3785,6 +3793,32 @@ if st.session_state.get("aktuel_sag"):
                 ).strip(),
             })
             _bogstav_idx += 1
+
+        # ---------- FORSIDE-PREVIEW (header + bilag-liste) ----------
+        # Læser logoet ind som base64 så det kan vises inline i preview'en.
+        # Streamlit's egen img-rendering kan ikke pege på file:// stier.
+        _logo_b64 = None
+        if _selskab_logo_sti:
+            try:
+                import base64 as _b64
+                with open(_selskab_logo_sti, "rb") as _f:
+                    _logo_b64 = _b64.b64encode(_f.read()).decode("ascii")
+            except Exception as _logo_err:
+                print(
+                    f"DEBUG: kunne ikke læse logo til preview: {_logo_err}"
+                )
+
+        render_svarbrev_forside_preview(
+            sagsnummer=_docx_sagsnr,
+            klagers_navn=_docx_navn,
+            hoeringssvar_nr=_docx_hoer,
+            bilag_liste=_bilag_liste_dl,
+            profil_by=_selskab_by_dl,
+            logo_b64=_logo_b64,
+        )
+
+        # ---------- BRØDTEKST (selve svarbrevet) ----------
+        st.markdown(st.session_state.seneste_svarbrev["svarbrev"])
 
         svarbrev_docx = svarbrev_til_docx(
             st.session_state.seneste_svarbrev["svarbrev"],
