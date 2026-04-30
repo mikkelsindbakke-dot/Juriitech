@@ -31,5 +31,10 @@ beautifulsoup4>=4.12.0
 # Authlib — OIDC/OAuth til login (Microsoft, Google)
 Authlib>=1.3.2
 
+# Supabase — auth-backend til login + magic-link invitations
+# Bruges af auth.py til email+password login og af Phase B4 admin-side
+# til at invitere nye kunder via magic-link
+supabase>=2.7.0
+
 # Sentry — fejl-monitoring og crash-rapportering
 sentry-sdk>=2.0.0

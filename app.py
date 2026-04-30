@@ -110,13 +110,48 @@ def _sikr_anonymiseringsregler_i_db():
 
 _sikr_anonymiseringsregler_i_db()
 
-# ---------- ADMIN-DETEKTION FRA URL ----------
-# Skal ske FØR st.navigation så admin-mode er sat når siderne køres
+# ═══════════════════════════════════════════════════════════════
+# AUTH-GATE (Phase B2)
+# ═══════════════════════════════════════════════════════════════
+# FØRSTE ting vi gør efter bootstrap-funktionerne er at tjekke om
+# brugeren er logget ind. Hvis ikke, viser vi login-siden og stopper —
+# resten af app'en (forside, arkiv, gemte sager, navigation) renderes
+# slet ikke. Det er den enkleste form for "alt bag login".
+#
+# Backward compat: Hvis SUPABASE_URL/ANON_KEY ikke er sat (lokal dev,
+# eller før secrets er rullet ud), springer vi auth-gate over så vi
+# ikke crasher app'en. Det er bevidst lempeligt for udvikler-flowet.
+import auth as _auth
+
+_auth_konfigureret = bool(
+    os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_ANON_KEY")
+)
+
+if _auth_konfigureret and not _auth.is_logged_in():
+    _auth.render_login_page()
+    st.stop()
+
+# ---------- ADMIN-DETEKTION ----------
+# Phase B2+: er_admin styres nu af brugerens role i users-tabellen.
+# URL-parameter ?admin=KEY bevares som backup for lokale tests
+# (når _auth_konfigureret er False).
 _query = st.query_params
-if "admin" in _query and _ADMIN_KEY and _query.get("admin") == _ADMIN_KEY:
-    st.session_state.er_admin = True
-if "er_admin" not in st.session_state:
-    st.session_state.er_admin = False
+if _auth_konfigureret:
+    # Logged-in user: rolle fra users-tabellen styrer admin-status
+    st.session_state.er_admin = _auth.is_admin()
+else:
+    # Lokal dev uden auth: behold gammel URL-baseret detektion
+    if "admin" in _query and _ADMIN_KEY and _query.get("admin") == _ADMIN_KEY:
+        st.session_state.er_admin = True
+    if "er_admin" not in st.session_state:
+        st.session_state.er_admin = False
+
+# ---------- LOGOUT-KNAP I SIDEBAR ----------
+# Vises kun når auth er aktiv (skjules i lokal dev). Kommer nederst
+# i sidebaren via _auth.render_logout_button(); selve st.navigation
+# placerer side-vælgeren ovenfor.
+if _auth_konfigureret:
+    _auth.render_logout_button(placement="sidebar")
 
 # ---------- MULTI-PAGE NAVIGATION ----------
 _pages = [

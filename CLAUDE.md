@@ -51,7 +51,9 @@ internt hos rejseselskaberne.
 | `eksport.py` | DOCX/PDF-generering af svarbreve |
 | `gemte_sager.py` | Save/load sag-state |
 | `arkiv.py` | Arkiv-side — søgning + visning af gemte analyser |
-| `selskab_profiler.py` | Per-selskab branding (TUI, Apollo osv.) |
+| `selskab_profiler.py` | Per-selskab branding (TUI, Apollo osv.) — læser fra DB |
+| `auth.py` | Supabase Auth wrapper — login/logout/session/render_login_page |
+| `bootstrap_admin.py` | Engangs-script til at oprette første admin-bruger |
 | `scraper.py` | Pakkerejse-Ankenævn afgørelses-scraper |
 | `pakkerejselov_scraper.py` | Lovgivning-scraper |
 | `tui_scraper.py` | TUI-vilkår scraper |
@@ -451,10 +453,40 @@ bug (passede dokumenttype som første %s i stedet for embedding-vector).
 Det betød chunk-pipelinen returnerede [] silently og altid faldt
 tilbage til hele-dokument-RAG. Nu fixet — chunks bruges som intended.
 
-**Phase B2 — Supabase Auth integration (planlagt):**
-Login via Supabase Auth. Custom login-side. Magic-link invitation.
-Session-management i st.session_state. Stadig hardcoded TUI som default
-tenant for alle brugere.
+**Phase B2 — Supabase Auth integration (gennemført, v1.8.0):**
+Login via Supabase Auth (email + password). Custom login-side i auth.py
+med "Glemt adgangskode?"-flow. Session-state-baseret session-håndtering
+(forsvinder ved tab-luk, brugeren logger ind igen — fint for B2).
+Logout-knap i sidebar.
+
+To-system-arkitektur:
+  - Supabase Auth (extern): credentials, JWT, password-reset emails
+  - Vores users-tabel (Neon): tenant_id, role, business metadata
+Bro: supabase_user_id på vores users-row peger på Supabase Auth UUID.
+
+Login-flow:
+  1. Bruger taster email+password → auth.login_with_password()
+  2. Supabase verificerer credentials, returnerer user+session
+  3. _link_supabase_to_db_user() finder vores users-row:
+     a) Først via supabase_user_id (returkunde)
+     b) Hvis None: via email (første-gangs login efter invitation),
+        og opdaterer rækken med UUID for fremtidige logins
+     c) Hvis stadig None: brugeren er ikke inviteret → afvises
+  4. st.session_state.user sættes med tenant_id + role + email + ...
+
+Bootstrap-script: bootstrap_admin.py opretter mikkels admin-row i
+users-tabellen (én gang efter B2 deploy). Mikkels Supabase-konto
+oprettes manuelt via Supabase Dashboard (Add User med Auto confirm).
+
+Defensive fallback: hvis SUPABASE_URL/ANON_KEY ikke er sat, springer
+auth-gate over så lokal udvikling stadig virker. Produktion må have
+secrets sat via 'fly secrets set'.
+
+**Phase B3 — per-request tenant lookup (planlagt):**
+hent_aktiv_tenant_id læser fra st.session_state.user.tenant_id efter
+login. Forskellige brugere ser forskellige tenants automatisk.
+Ingen kode-ændring i auth.py — kun selskab_profiler.py og evt.
+ai_engine.py konstanter.
 
 **Phase B3 — per-request tenant lookup (planlagt):**
 hent_aktiv_tenant_id læser fra st.session_state.user.tenant_id efter
