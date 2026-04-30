@@ -212,7 +212,7 @@ def vis_dashboard(svar_tekst, struktureret_data=None):
     # Farvekodning — pastel-palette matchende videnstank-sidebaren,
     # men med markant mørkere tekst-farve per kort så procenttallet
     # og labels fremstår tydeligt på den lyse pastelbaggrund.
-    #   afvist (godt for TUI)      = mint/grøn   bg, mørk grøn tekst
+    #   afvist (godt for selskabet) = mint/grøn   bg, mørk grøn tekst
     #   delvist medhold            = peach/gul   bg, mørk amber tekst
     #   fuld medhold (dårligt)     = rose/rød    bg, mørk rød tekst
     FARVER = {

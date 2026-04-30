@@ -370,10 +370,42 @@ result = st.session_state[cache_key]
 
 ---
 
+## Multi-tenant arkitektur (Phase A: gennemført, Phase B+C venter)
+
+**Phase A — kode-refaktor (gennemført, v1.4.0–v1.6.0):**
+Alle 152 hardcoded "TUI"-referencer på tværs af ai_engine.py, forside.py,
+ui.py, badges.py, arkiv.py og vurdering.py er erstattet med opslag fra
+`selskab_profiler.py`. For TUI-brugere er adfærden 100% bit-identisk.
+Hvis AKTIV_PROFIL_KEY ændres til "apollo" eller "spies", producerer alle
+prompts og UI-labels selskabs-specifik tekst. Se `MULTI_TENANT_ROADMAP.md`.
+
+Mønstret for nye prompt-funktioner:
+```python
+from selskab_profiler import hent_navn
+def min_prompt_funktion(...):
+    _navn = hent_navn()
+    prompt = f"... {_navn} ..."
+```
+
+Bevidst beholdt som STABILE INTERNE STRINGS (omdøb ikke uden koordineret
+update i ui.py + forside.py):
+  - Enum-værdier i tidsforhold: `positiv_for_tui`, `negativ_for_tui`,
+    `tui_reaktion`, `klage_til_tui` — bruges som dict-keys i farve-rendering
+  - Field-navn i sagsresumé: `tui_handtering` — bruges i UI-rendering
+Suffixet `_tui` er HISTORISK; betydningen er nu generisk.
+
+**Phase B — login + database (planlagt):**
+Tenants-tabel + tenant_id-kolonner + login. Hver bruger autentificerer
+sig og knyttes til en tenant. AKTIV_PROFIL_KEY erstattes med dynamisk
+opslag baseret på loggede brugers tenant_id.
+
+**Phase C — onboard nye selskaber (planlagt):**
+Apollo, Spies osv. som rigtige tenants med egne profiler, scrapere og
+vidensbank-segmenter.
+
 ## Ting vi IKKE har gjort (endnu) — bevidste fravalg
 
 - **Strukturerede metadata-felter** (udfald, beløb, kategori, indklagede selskab) ekstraheret per afgørelse og lagret som kolonner. Ville muliggøre filtre som "find delvist-medhold-sager om manglende standard hvor TUI var indklagede". Stort men værdifuldt — venter på behov.
-- **Login/multi-tenant** — i dag er REJSESELSKAB_NAVN hardcoded til "TUI". Se `MULTI_TENANT_ROADMAP.md`.
 - **Unit-tests** — vi har ingen pt. Kører manuel smoke-test via `python3 -c "..."` og live-test i appen. Hvis projektet vokser, bør vi tilføje pytest.
 - **Eval-suite for RAG-kvalitet** — vi har talt om at bygge en lille liste af 20-30 kendte sager med rette præcedens, så vi kan måle precision@5 efter ændringer. Gør det før den næste store retrieval-ændring.
 - **Fine-tuning af Claude** — bevidst fravalgt. RAG er strukturelt bedre for fakta-recall.

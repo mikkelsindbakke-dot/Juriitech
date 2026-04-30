@@ -540,7 +540,7 @@ def _split_analyse_i_sektioner(tekst):
     # YDERLIGERE: ## eller ### TITEL (uden tal-prefix) tæller også som
     # top-level sektion. AI'en bryder ofte ud af den nummererede struktur
     # og tilføjer freestyle markdown-headers (fx '## JURIDISK
-    # ARGUMENTATION FOR TUI'S FORSVAR') i bunden af sit svar. Vi vil have
+    # ARGUMENTATION FOR REJSESELSKABETS FORSVAR') i bunden af sit svar. Vi vil have
     # de freestyle-sektioner OPFANGET som separate sektioner i stedet for
     # at de dumpes ind i den foregående sektions body — så kan force-map-
     # logikken efterfølgende afvise dem (de matcher ingen låste positioner).
@@ -742,7 +742,7 @@ def render_sagsresume(
     Renderer 'Resume af sagen' som en Apple Health-pillar — samme visuelle
     sprog som de øvrige sektioner (farvet pastel baggrund, accent-prik og
     serif-overskrift), men med et struktureret grid indeni der viser
-    emne, klagepunkter, klagers krav og TUI's håndtering.
+    emne, klagepunkter, klagers krav og rejseselskabets håndtering.
 
     resume_dict forventes at indeholde nøglerne:
         emne, klagepunkter (liste), krav, tui_handtering
@@ -799,7 +799,7 @@ def render_sagsresume(
     # Streamlits markdown-parser linjerne som kodeblokke og renderer
     # </div>-tags som rå tekst.
     #
-    # NOTE: 'TUI's håndtering indtil nu'-cellen er bevidst FJERNET fra
+    # NOTE: 'Rejseselskabets håndtering indtil nu'-cellen er bevidst FJERNET fra
     # Resumé-pillaren. Det indhold hører hjemme i sektion 5
     # (Rejseselskabets stillingtagen indtil nu) — at duplikere det her
     # rodede strukturen sammen og blev fanget som en fejl af brugeren.
@@ -836,7 +836,7 @@ def render_tidslinje(
 ):
     """Renderer en kronologisk tidslinje af sagens begivenheder som
     en Apple Health-pillar med vertikal timeline. Hver begivenhed har
-    en farvet dot (grøn=positiv for TUI, rød=negativ, grå=neutral),
+    en farvet dot (grøn=positiv for rejseselskabet, rød=negativ, grå=neutral),
     dato + evt. tidspunkt, aktør og kort beskrivelse.
 
     Vises kun når tidsforhold-dictet indeholder begivenheder.
@@ -1133,7 +1133,7 @@ def tving_struktur_til_seks_sektioner(sektioner):
 
     # Trin 2: hvis AI'en producerede EKSTRA sektioner som ikke matchede
     # nogen låst position, FILTRER aggressivt — kun ægte indhold (ikke
-    # AI-freestyle som "JURIDISK ARGUMENTATION FOR TUI'S FORSVAR" eller
+    # AI-freestyle som "JURIDISK ARGUMENTATION FOR REJSESELSKABETS FORSVAR" eller
     # "Argument 1") foldes ind i 'Yderligere klagepunkter og detaljer'.
     # AI-freestyle med disse mønstre droppes helt — vi vil have ren
     # struktur, ikke duplikeret juridisk vurdering.

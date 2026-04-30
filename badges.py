@@ -133,7 +133,7 @@ def relevans_badge(similarity):
     return badge(f"{pct}% match", "gray")
 
 
-# ---------- TUI-VILKÅR: tekst-oprydning og titel-udledning ----------
+# ---------- REJSEVILKÅR: tekst-oprydning og titel-udledning ----------
 
 def fix_mojibake(tekst):
     """
@@ -154,9 +154,14 @@ def fix_mojibake(tekst):
 
 
 def pæn_titel_fra_vilkår_filnavn(filnavn):
-    """Udled en pæn læsbar titel fra et TUI-vilkår-filnavn."""
+    """Udled en pæn læsbar titel fra et rejsevilkår-filnavn."""
+    # Lazy import for at undgå circular dependency hvis selskab_profiler
+    # senere skulle få brug for noget herfra
+    from selskab_profiler import hent_navn as _hent_navn
+    fallback_titel = f"{_hent_navn() or 'Rejsearrangørens'} rejsevilkår"
+
     if not filnavn:
-        return "TUI rejsevilkår"
+        return fallback_titel
 
     basis = filnavn.rsplit("/", 1)[-1]
     basis = re.sub(r"\.html?$", "", basis, flags=re.IGNORECASE)
@@ -174,7 +179,7 @@ def pæn_titel_fra_vilkår_filnavn(filnavn):
     if titel and titel[0].islower():
         titel = titel[0].upper() + titel[1:]
 
-    return titel or "TUI rejsevilkår"
+    return titel or fallback_titel
 
 
 def find_mest_relevante_afsnit(tekst, soege_kontekst, max_afsnit=2, min_laengde=80):

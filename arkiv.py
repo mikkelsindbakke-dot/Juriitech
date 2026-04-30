@@ -16,6 +16,7 @@ import streamlit as st
 
 from database import soeg_i_arkiv, find_relevante_sager
 from embeddings import embed_sporgsmaal
+from selskab_profiler import hent_navn as _hent_selskab_navn
 from badges import (
     badge,
     doktype_badge,
@@ -242,7 +243,10 @@ def overholder_udfald_filter(indhold, dokumenttype, udfald_valgt):
     if "Delvist" in udfald_navn:
         return "Delvist medhold" in udfald_valgt
     if "Afvist" in udfald_navn:
-        return "Afvist (TUI vinder)" in udfald_valgt
+        # Sammenligningen er prefix-baseret så den virker for ALLE selskaber
+        # (fx 'Afvist (TUI vinder)', 'Afvist (Apollo vinder)' osv.). Det
+        # er også bagudkompatibelt med gamle session_state-værdier.
+        return any(u.startswith("Afvist") for u in udfald_valgt)
     return False
 
 
@@ -357,12 +361,13 @@ with kol_type:
     )
 
 with kol_udfald:
+    _selskab_navn_til_filter = _hent_selskab_navn() or "rejseselskab"
     udfald_valgt = st.multiselect(
         "Udfald",
         options=[
             "Fuld medhold til klager",
             "Delvist medhold",
-            "Afvist (TUI vinder)",
+            f"Afvist ({_selskab_navn_til_filter} vinder)",
         ],
         default=[],
         placeholder="Vælg udfald...",

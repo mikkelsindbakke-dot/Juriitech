@@ -45,6 +45,10 @@ from ui import (
     render_svarbrev_forside_preview,
     vis_brugerfejl,
 )
+from selskab_profiler import (
+    hent_navn as _hent_selskab_navn,
+    hent_by as _hent_selskab_by,
+)
 
 
 # ---------- OPSÆTNING ----------
@@ -1414,56 +1418,80 @@ with st.sidebar:
 
         st.divider()
 
-        # ---------- AUTOMATISK HENTNING AF TUI-VILKÅR ----------
-        st.subheader("Hent TUI's rejsevilkår")
-        st.caption(
-            "Scrape juridisk indhold fra tui.dk — kun sider om vilkår, regler, "
-            "retningslinjer, procedurer og andre juridisk relevante emner."
+        # ---------- AUTOMATISK HENTNING AF REJSEVILKÅR ----------
+        # Vises kun hvis det aktive selskab har en konfigureret
+        # rejsevilkaar_kilde_url i selskab_profiler. For TUI er den
+        # sat (tui.dk); for Apollo/Spies er den tom indtil deres
+        # respektive scrapere er bygget.
+        from selskab_profiler import (
+            hent_navn as _hent_selskab_navn_scrap,
+            hent_rejsevilkaar_kilde_url as _hent_vilkaar_url,
         )
+        _vilkaar_url = _hent_vilkaar_url()
+        _selskab_navn_scrap = _hent_selskab_navn_scrap() or "rejseselskabet"
+        # Udled domæne fra URL til kortere visning (fx "tui.dk")
+        _vilkaar_domain = ""
+        if _vilkaar_url:
+            try:
+                from urllib.parse import urlparse
+                _vilkaar_domain = urlparse(_vilkaar_url).netloc.replace("www.", "")
+            except Exception:
+                _vilkaar_domain = _vilkaar_url
 
-        tui_max = st.selectbox(
-            "Max antal sider pr. kørsel",
-            options=[20, 40, 80, 150],
-            index=1,
-            help="TUI.dk har ~20-40 relevante juridiske sider — 40 er normalt rigeligt.",
-            key="tui_max",
-        )
+        if _vilkaar_url:
+            st.subheader(f"Hent {_selskab_navn_scrap}s rejsevilkår")
+            st.caption(
+                f"Scrape juridisk indhold fra {_vilkaar_domain} — kun sider om "
+                "vilkår, regler, retningslinjer, procedurer og andre "
+                "juridisk relevante emner."
+            )
 
-        tui_hent_knap = st.button(
-            "Hent juridisk indhold fra tui.dk",
-            type="secondary",
-            key="tui_hent",
-        )
+            tui_max = st.selectbox(
+                "Max antal sider pr. kørsel",
+                options=[20, 40, 80, 150],
+                index=1,
+                help=f"{_vilkaar_domain} har ~20-40 relevante juridiske sider — 40 er normalt rigeligt.",
+                key="tui_max",
+            )
 
-        if tui_hent_knap:
-            from tui_scraper import scrape_tui_vilkaar
+            tui_hent_knap = st.button(
+                f"Hent juridisk indhold fra {_vilkaar_domain}",
+                type="secondary",
+                key="tui_hent",
+            )
 
-            tui_log_placeholder = st.empty()
-            tui_log_linjer = []
+            if tui_hent_knap:
+                # NOTE: scraperen er stadig TUI-specifik (tui_scraper.py).
+                # Når Apollo/Spies onboardes skal hver have sin egen scraper,
+                # og vi router ud fra _selskab_navn_scrap her.
+                from tui_scraper import scrape_tui_vilkaar
 
-            def _tui_progress(msg):
-                tui_log_linjer.append(msg)
-                if len(tui_log_linjer) % 3 == 0 or msg.startswith("=") or msg.startswith("✅"):
-                    tui_log_placeholder.code(
-                        "\n".join(tui_log_linjer[-25:]), language="text"
-                    )
+                tui_log_placeholder = st.empty()
+                tui_log_linjer = []
 
-            with st.spinner("Scraper tui.dk — henter juridisk indhold..."):
-                try:
-                    tui_stats = scrape_tui_vilkaar(
-                        max_sider=int(tui_max),
-                        progress_callback=_tui_progress,
-                    )
-                    tui_log_placeholder.code(
-                        "\n".join(tui_log_linjer[-25:]), language="text"
-                    )
-                    st.success(
-                        f"TUI-scraping færdig. Besøgte: {tui_stats['besogte']}, "
-                        f"gemt: {tui_stats['gemt']}, allerede i db: "
-                        f"{tui_stats['allerede_i_db']}, fejlede: {tui_stats['fejlede']}."
-                    )
-                except Exception as e:
-                    st.error(f"TUI-scraping fejlede: {e}")
+                def _tui_progress(msg):
+                    tui_log_linjer.append(msg)
+                    if len(tui_log_linjer) % 3 == 0 or msg.startswith("=") or msg.startswith("✅"):
+                        tui_log_placeholder.code(
+                            "\n".join(tui_log_linjer[-25:]), language="text"
+                        )
+
+                with st.spinner(f"Scraper {_vilkaar_domain} — henter juridisk indhold..."):
+                    try:
+                        tui_stats = scrape_tui_vilkaar(
+                            max_sider=int(tui_max),
+                            progress_callback=_tui_progress,
+                        )
+                        tui_log_placeholder.code(
+                            "\n".join(tui_log_linjer[-25:]), language="text"
+                        )
+                        st.success(
+                            f"Scraping færdig. Besøgte: {tui_stats['besogte']}, "
+                            f"gemt: {tui_stats['gemt']}, allerede i db: "
+                            f"{tui_stats['allerede_i_db']}, fejlede: {tui_stats['fejlede']}."
+                        )
+                    except Exception as e:
+                        st.error(f"Scraping fejlede: {e}")
 
 
 # ---------- HOVEDSKÆRM ----------
@@ -1979,7 +2007,7 @@ if st.session_state.get("aktuel_sag"):
                 st.session_state.alle_klagepunkter = alle_klagepunkter
 
                 # OG SAMTIDIG: Udtræk tidsforhold mellem konstatering af
-                # mangler og kontakt til TUI. Pakkerejse-Ankenævnet
+                # mangler og kontakt til rejseselskabet. Pakkerejse-Ankenævnet
                 # vægter rettidig reklamation MEGET HØJT — det er ofte
                 # afgørende. Vi udtrækker det som dedikeret strukturet
                 # data så det aldrig overses i analysen eller svarbrevet.
@@ -2041,9 +2069,10 @@ if st.session_state.get("aktuel_sag"):
                         "konkrete_observationer", []
                     ):
                         tidsforhold_facit += f"  • {_obs}\n"
+                    _selskab_navn_tf = _hent_selskab_navn() or "rejseselskabet"
                     tidsforhold_facit += (
                         "\nDette tidsforhold udgør et VIGTIGT forsvars-"
-                        "argument for TUI og SKAL adresseres i analysen "
+                        f"argument for {_selskab_navn_tf} og SKAL adresseres i analysen "
                         "— enten som eget afsnit eller integreret i den "
                         "juridiske vurdering. Brug konkrete datoer.\n\n"
                     )
@@ -2547,7 +2576,7 @@ if st.session_state.get("aktuel_sag"):
                 _bet = (_b.get("betydning") or "neutral").lower()
                 _typ = (_b.get("type") or "").strip().lower()
 
-                # Farve på dot ud fra juridisk betydning for TUI
+                # Farve på dot ud fra juridisk betydning for selskabet
                 if _bet == "negativ_for_tui":
                     _dot_color = "#DC2626"
                     _dot_glow = "rgba(220, 38, 38, 0.25)"
@@ -2725,9 +2754,10 @@ if st.session_state.get("aktuel_sag"):
                 + _tf_observationer_html
             )
         elif _tf_kunne_ikke:
+            _selskab_navn_tf2 = _hent_selskab_navn() or "rejseselskabet"
             _tf_body = (
                 '<p>juriitech PAX kunne ikke udlede konkrete '
-                'tidsforhold (datoer for henvendelser til TUI vs '
+                f'tidsforhold (datoer for henvendelser til {_selskab_navn_tf2} vs '
                 'konstatering af mangler) ud fra materialet. '
                 'Tilføj evt. mail-korrespondance eller datoer i '
                 'sagsakter for at få et tidslinje-overblik.</p>'
@@ -2981,7 +3011,7 @@ if st.session_state.get("aktuel_sag"):
                 },
             )
 
-        # TUI's rejsevilkår vises ikke længere som separat sektion på forsiden
+        # Rejsevilkår vises ikke længere som separat sektion på forsiden
         # (for ikke at rode UI'en). De bliver stadig automatisk brugt af Claude
         # som juridisk kontekst i førstevurderingen — de hentes blot via RAG
         # og indgår i prompten uden at være synlige som visuelle kort.
@@ -3831,7 +3861,7 @@ if st.session_state.get("aktuel_sag"):
                 uploadede bilag. Viser hvilke af Nævnets ønskede punkter
                 der er dækket, og hvad der mangler.</p>
                 <p>Kør den <strong>inden</strong> svarbrevet — så du ved
-                hvad du skal hente fra TUI's systemer først.</p>
+                hvad du skal hente fra rejseselskabets systemer først.</p>
             </div>
         </div>
         """,
@@ -3885,14 +3915,15 @@ if st.session_state.get("aktuel_sag"):
 # ---------- SVARBREV-GENERATOR ----------
 if st.session_state.get("aktuel_sag"):
     # Apple Health-inspireret sektionsintro: peach-pastel med amber accent
+    _selskab_navn_svarbrev = _hent_selskab_navn() or "rejseselskabet"
     st.markdown(
-        """
+        f"""
         <div class="analyse-pillar"
              style="--pillar-bg: #FDEFD7; --pillar-accent: #F59E0B;">
             <div class="analyse-pillar-accent-dot"></div>
             <h2 class="analyse-pillar-title">13. Generer svarbrev til Nævnet</h2>
             <div class="analyse-pillar-body">
-                <p>Lav et kompakt udkast til svarbrev fra TUI til
+                <p>Lav et kompakt udkast til svarbrev fra {_selskab_navn_svarbrev} til
                 Pakkerejseankenævnet. Brevet holdes til max 1-2 A4-sider
                 og er struktureret som en kort indledning efterfulgt af
                 en samlet juridisk vurdering — med præcise henvisninger
@@ -4174,18 +4205,16 @@ if st.session_state.get("aktuel_sag"):
             or "A"
         ).strip().upper()[:1] or "A"
 
-        # Selskabs-data: navn + by + logo (alt fra selskab_profiler)
+        # Selskabs-data: navn + by + logo (alt fra selskab_profiler).
+        # Bruger top-level imports for navn+by; logo har brug for lazy
+        # import (er ikke i top-level set fordi den kun bruges her).
         try:
-            from selskab_profiler import (
-                hent_navn as _hent_selskab_navn,
-                hent_by as _hent_selskab_by,
-                hent_logo_sti as _hent_logo_sti,
-            )
-            _selskab_navn_dl = _hent_selskab_navn() or "TUI"
+            from selskab_profiler import hent_logo_sti as _hent_logo_sti
+            _selskab_navn_dl = _hent_selskab_navn() or "rejseselskabet"
             _selskab_by_dl = _hent_selskab_by() or ""
             _selskab_logo_sti = _hent_logo_sti()
         except Exception:
-            _selskab_navn_dl = "TUI"
+            _selskab_navn_dl = _hent_selskab_navn() or "rejseselskabet"
             _selskab_by_dl = "Frederiksberg"
             _selskab_logo_sti = None
 
