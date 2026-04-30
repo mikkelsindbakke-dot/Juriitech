@@ -11,6 +11,7 @@ from database import (
     find_relevante_chunks,
     soeg_chunks_keyword,
     antal_chunks_total,
+    hent_dokument_indhold,
 )
 
 # Læs API-nøgle fra .env (ikke hardcoded i koden)
@@ -2955,6 +2956,77 @@ def _udled_forventet_udfald_separat(analyse_tekst):
         return None
 
 
+def _regex_find_beloeb(tekst):
+    """
+    Regex-baseret fallback til beløbs-udtræk fra en Pakkerejse-Ankenævn-
+    afgørelse. Bruges når AI'en returnerer 'ukendt' for klagers_krav
+    eller tilkendt_beloeb — typisk fordi det fokuserede uddrag vi
+    sender til AI'en har afkortet de relevante sætninger.
+
+    Scanner HELE afgørelsesteksten for to mønstre:
+      - klagers_krav:     beløb tæt på "klager kræver/krav/påstand"
+      - tilkendt_beloeb:  beløb tæt på "Nævnet tilkender / Indklagede
+                         skal betale / klager tilkendes"
+
+    Returnerer en dict {'klagers_krav': str, 'tilkendt_beloeb': str}
+    hvor manglende felter er tom streng.
+    """
+    import re as _re
+
+    if not tekst:
+        return {"klagers_krav": "", "tilkendt_beloeb": ""}
+
+    # Beløbs-mønster:
+    # - 500 kr.
+    # - 1.234 kr.
+    # - 12.345,67 kr.
+    # - 1 234,56 kr (med thin space)
+    # Vi accepterer både "kr.", "kroner", og "DKK".
+    BELOEB = (
+        r"(\d{1,3}(?:[.\s ]\d{3})*(?:,\d{1,2})?|\d+)"
+        r"\s*(?:kr\.?|kroner|DKK)\b"
+    )
+
+    # ---- KLAGERS KRAV ----
+    # Anchor-ord der typisk kommer FØR klagers krav
+    KRAEV_ANCHORS = (
+        r"(?:klager(?:en)?\s+(?:har\s+)?(?:kræv(?:et|er)|påstå(?:r|et))|"
+        r"klagers?\s+(?:krav|påstand)|"
+        r"krav\s+om|"
+        r"kræver\s+(?:en\s+)?kompensation\s+(?:på|til)|"
+        r"kompensation\s+på\s+i\s+alt|"
+        r"klagen\s+vedrører\s+et\s+beløb\s+på)"
+    )
+    klagers_krav = ""
+    # Tillad op til 100 tegn mellem anchor og beløb (mellemord)
+    pattern = KRAEV_ANCHORS + r"[\s\S]{0,100}?" + BELOEB
+    m = _re.search(pattern, tekst, _re.IGNORECASE)
+    if m:
+        beloeb_raw = m.group(1).strip()
+        klagers_krav = f"{beloeb_raw} kr."
+
+    # ---- TILKENDT BELØB ----
+    TILK_ANCHORS = (
+        r"(?:Nævnet\s+tilkender|"
+        r"klager(?:en)?\s+tilkendes|"
+        r"(?:ind)?klagede\s+skal\s+(?:be)?tale|"
+        r"skal\s+udbetale\s+(?:til\s+)?klager(?:en)?|"
+        r"forholdsmæssigt\s+afslag\s+(?:svarende\s+til|på)|"
+        r"tilkendt\s+(?:en\s+)?godtgørelse\s+(?:på)?)"
+    )
+    tilkendt_beloeb = ""
+    pattern_t = TILK_ANCHORS + r"[\s\S]{0,100}?" + BELOEB
+    m = _re.search(pattern_t, tekst, _re.IGNORECASE)
+    if m:
+        beloeb_raw = m.group(1).strip()
+        tilkendt_beloeb = f"{beloeb_raw} kr."
+
+    return {
+        "klagers_krav": klagers_krav,
+        "tilkendt_beloeb": tilkendt_beloeb,
+    }
+
+
 def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
     """
     Generér struktureret match-metadata for hver retriever-match, til brug i
@@ -3158,7 +3230,7 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
 
         # Sanity-check og normalisering
         resultat = []
-        for item in data:
+        for idx, item in enumerate(data):
             if not isinstance(item, dict):
                 resultat.append({})
                 continue
@@ -3175,12 +3247,48 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
             else:
                 juridisk_relevant = bool(jr_raw)
 
+            klagers_krav = str(item.get("klagers_krav", "")).strip()
+            tilkendt_beloeb = str(item.get("tilkendt_beloeb", "")).strip()
+
+            # Regex-fallback hvis AI'en ikke fandt beløbene (typisk fordi
+            # det fokuserede uddrag har afkortet de relevante sætninger,
+            # eller fordi vi efter chunking kun har én chunk pr. match).
+            # Vi scanner den FULDE afgørelsestekst — slår parent op via
+            # filnavn hvis matchet kun har en chunk-tekst.
+            mangler_krav = klagers_krav.lower() in ("", "ukendt")
+            mangler_tilkendt = tilkendt_beloeb.lower() in ("", "ukendt")
+            if mangler_krav or mangler_tilkendt:
+                try:
+                    if idx < len(relevante_sager):
+                        sag_match = relevante_sager[idx]
+                        # Detektér om dette er en chunk (har chunk_index) —
+                        # i så fald skal vi hente parent-dokumentets fulde
+                        # tekst via filnavn for at have noget at scanne.
+                        er_chunk = (
+                            "chunk_index" in sag_match
+                            and sag_match.get("chunk_index") is not None
+                        )
+                        if er_chunk:
+                            filnavn = sag_match.get("filnavn") or ""
+                            fuld_tekst = hent_dokument_indhold(filnavn) if filnavn else ""
+                        else:
+                            fuld_tekst = sag_match.get("indhold") or ""
+
+                        if fuld_tekst:
+                            fb = _regex_find_beloeb(fuld_tekst)
+                            if mangler_krav and fb["klagers_krav"]:
+                                klagers_krav = fb["klagers_krav"]
+                            if mangler_tilkendt and fb["tilkendt_beloeb"]:
+                                tilkendt_beloeb = fb["tilkendt_beloeb"]
+                except Exception as _re_e:
+                    print(f"DEBUG: regex-fallback for beløb fejlede: {_re_e}")
+
             resultat.append({
                 "sagsnummer": str(item.get("sagsnummer", "")).strip(),
                 "titel": str(item.get("titel", "")).strip(),
                 "rejsearrangoer": str(item.get("rejsearrangoer", "")).strip(),
-                "klagers_krav": str(item.get("klagers_krav", "")).strip(),
-                "tilkendt_beloeb": str(item.get("tilkendt_beloeb", "")).strip(),
+                "klagers_krav": klagers_krav,
+                "tilkendt_beloeb": tilkendt_beloeb,
                 "udfald": str(item.get("udfald", "Ukendt")).strip(),
                 "juridisk_relevant_match": juridisk_relevant,
                 "match_begrundelse": [

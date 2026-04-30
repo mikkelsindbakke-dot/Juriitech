@@ -94,9 +94,17 @@ ekstraktions-kvalitet mærkbart. Vær specifik om hvad der må og ikke må
 findes på.
 
 **AI er ofte for forsigtig på simple ekstraktioner.** Sagsnummer, navne,
-datoer — selv med eksplicitte instruktioner returnerer modellen tit tom
-streng "for en sikkerheds skyld". Backup ALTID med en deterministisk
-regex-fallback (`_regex_find_sagsnummer`-mønstret).
+datoer, BELØB — selv med eksplicitte instruktioner returnerer modellen
+tit tom streng eller "ukendt" "for en sikkerheds skyld". Backup ALTID
+med en deterministisk regex-fallback (`_regex_find_sagsnummer`,
+`_regex_find_beloeb`-mønstret).
+
+**Når du giver AI'en et FOKUSERET uddrag, så husk at regex-fallback
+skal scanne den FULDE tekst.** Vi havde fx beløb der manglede i match-
+kortene fordi `udtraek_sagen_angaar` afkortede til 2500 tegn — og
+beløbet stod ofte EFTER den grænse. Fallbacken slår det fulde dokument
+op via filnavn/dokument_id og scanner hele teksten. Se
+`opsummer_matches_til_visning` for mønstret.
 
 **Brug `temperature=0` for ekstraktion og strukturerede opgaver.** Brug
 højere temperature kun for kreative opgaver (svarbrev-formuleringer hvor

@@ -371,6 +371,33 @@ def hent_sager_af_type(dokumenttype, limit=None):
 
 # ---------- CHUNKS-FUNKTIONER (forbedret RAG) ----------
 
+def hent_dokument_indhold(filnavn):
+    """
+    Henter den FULDE indhold-tekst for et dokument via filnavn.
+    Bruges af regex-fallbacks når vi ellers kun har en chunk og
+    har brug for at scanne hele afgørelsen (fx for at finde beløb
+    der står i sektioner som chunken ikke indeholdt).
+
+    Returnerer indhold som streng, eller tom streng hvis ikke fundet.
+    """
+    if not filnavn:
+        return ""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT indhold FROM mine_dokumenter WHERE filnavn = %s LIMIT 1",
+            (filnavn,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row and row[0] else ""
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente dokument-indhold for {filnavn}: {e}")
+        return ""
+
+
 def hent_dokument_id_fra_filnavn(filnavn):
     """Slår dokument-id op fra filnavn. Bruges af backfill-scriptet."""
     try:
