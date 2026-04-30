@@ -215,6 +215,278 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
         placeholder.empty()
 
 
+@contextmanager
+def thinking_fullpage(
+    titel="juriitech PAX laver en grundig analyse",
+    beskrivelse=(
+        "Kvalitet tager tid. +10 dokumenter analyseres typisk på "
+        "2-3 minutter. +20 dokumenter tager typisk 4-5 min. "
+        "Dette kan variere fra sag til sag afhængig af indhold."
+    ),
+):
+    """
+    Stor centreret loading-view med animeret cirkulær spinner, timer
+    i midten, heading, beskrivelse og en rød 'Ryd sag'-knap der lader
+    brugeren afbryde og vende tilbage til forsiden.
+
+    Ligesom thinking() bruger vi streamlit.components.v1.html til at
+    embede en iframe med JS-drevet timer — det er den eneste pålidelige
+    måde at holde en counter kørende mens Python er blokeret af et
+    AI-kald.
+
+    'Ryd sag'-knappen sender parent-vinduet til samme URL med
+    ?ryd_sag=1, hvilket forside.py opfanger og bruger til at trigge
+    den eksisterende rydnings-logik. Dermed virker knappen pålideligt
+    også selvom AI-kaldet allerede er i gang (det færdiggøres bare
+    i baggrunden — resultatet smides væk når siden renderer empty
+    state).
+    """
+    from streamlit.components.v1 import html as _components_html
+
+    placeholder = st.empty()
+
+    # HTML+CSS+JS-widget — selvstændig i iframen, så styling og JS
+    # ikke arver fra parent-siden.
+    widget_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+  html, body {{
+    margin: 0; padding: 0;
+    background: transparent;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  }}
+  .vuepage {{
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px 24px;
+    min-height: 540px;
+    text-align: center;
+  }}
+  /* Cirkulær spinner-wrapper med roterende ydre arc */
+  .spinner-wrap {{
+    position: relative;
+    width: 168px;
+    height: 168px;
+    margin-bottom: 28px;
+  }}
+  .spinner-svg {{
+    width: 100%; height: 100%;
+    transform: rotate(-90deg);  /* så arc starter øverst */
+  }}
+  .spinner-bg {{
+    stroke: #E5E7EB;
+    stroke-width: 5;
+    fill: none;
+  }}
+  .spinner-fg {{
+    stroke: url(#spinner-gradient);
+    stroke-width: 6;
+    stroke-linecap: round;
+    fill: none;
+    transform-origin: 50% 50%;
+    animation: spin 1.6s cubic-bezier(0.55, 0, 0.45, 1) infinite;
+  }}
+  @keyframes spin {{
+    0%   {{ transform: rotate(0deg); }}
+    100% {{ transform: rotate(360deg); }}
+  }}
+  /* Timer-tekst i midten af cirklen */
+  .timer-center {{
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 1.85rem;
+    font-weight: 600;
+    color: #4F46E5;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }}
+  .titel {{
+    font-family: 'Source Serif 4', Georgia, serif;
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: #111827;
+    line-height: 1.2;
+    margin: 0 0 14px 0;
+    max-width: 600px;
+  }}
+  .beskrivelse {{
+    color: #4B5563;
+    font-size: 0.95rem;
+    line-height: 1.55;
+    max-width: 540px;
+    margin: 0 0 36px 0;
+  }}
+  /* Lille rød Ryd sag-knap */
+  .ryd-knap {{
+    background: white;
+    color: #DC2626;
+    border: 1.5px solid #FCA5A5;
+    border-radius: 10px;
+    padding: 9px 22px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    font-family: inherit;
+  }}
+  .ryd-knap:hover {{
+    background: #FEF2F2;
+    border-color: #DC2626;
+    color: #B91C1C;
+  }}
+  /* Bekræftelses-overlay */
+  .bekraeft-overlay {{
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.55);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+  }}
+  .bekraeft-overlay.aktiv {{
+    display: flex;
+  }}
+  .bekraeft-boks {{
+    background: white;
+    padding: 28px 32px;
+    border-radius: 16px;
+    max-width: 380px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.18);
+    text-align: center;
+  }}
+  .bekraeft-boks h3 {{
+    margin: 0 0 8px 0;
+    font-size: 1.15rem;
+    color: #111827;
+    font-family: 'Source Serif 4', Georgia, serif;
+  }}
+  .bekraeft-boks p {{
+    color: #4B5563;
+    font-size: 0.9rem;
+    margin: 0 0 20px 0;
+    line-height: 1.5;
+  }}
+  .bekraeft-knapper {{
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+  }}
+  .knap-bekraeft, .knap-fortryd {{
+    padding: 9px 20px;
+    border-radius: 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: none;
+    transition: all 0.15s ease;
+    font-family: inherit;
+  }}
+  .knap-bekraeft {{
+    background: #DC2626;
+    color: white;
+  }}
+  .knap-bekraeft:hover {{ background: #B91C1C; }}
+  .knap-fortryd {{
+    background: #F3F4F6;
+    color: #374151;
+  }}
+  .knap-fortryd:hover {{ background: #E5E7EB; }}
+</style>
+</head>
+<body>
+  <div class="vuepage">
+    <div class="spinner-wrap">
+      <svg class="spinner-svg" viewBox="0 0 100 100">
+        <defs>
+          <linearGradient id="spinner-gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#A5B4FC"/>
+            <stop offset="100%" stop-color="#4F46E5"/>
+          </linearGradient>
+        </defs>
+        <circle class="spinner-bg" cx="50" cy="50" r="42"/>
+        <circle class="spinner-fg" cx="50" cy="50" r="42"
+                stroke-dasharray="264" stroke-dashoffset="180"/>
+      </svg>
+      <div class="timer-center" id="timerCenter">0:00</div>
+    </div>
+
+    <h2 class="titel">{titel}</h2>
+    <p class="beskrivelse">{beskrivelse}</p>
+
+    <button class="ryd-knap" onclick="visBekraeftelse()">
+      Ryd sag
+    </button>
+  </div>
+
+  <div class="bekraeft-overlay" id="bekraeftOverlay">
+    <div class="bekraeft-boks">
+      <h3>Er du sikker?</h3>
+      <p>
+        Hvis du rydder sagen nu, går alle uploadede filer og det
+        igangværende analyse-arbejde tabt. Du vender tilbage til
+        forsiden.
+      </p>
+      <div class="bekraeft-knapper">
+        <button class="knap-fortryd" onclick="afvisRyd()">Fortryd</button>
+        <button class="knap-bekraeft" onclick="bekraeftRyd()">Ja, ryd sag</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function() {{
+      // Timer der tæller op fra 0:00
+      var timerEl = document.getElementById("timerCenter");
+      var start = Date.now();
+      setInterval(function() {{
+        var s = Math.floor((Date.now() - start) / 1000);
+        var m = Math.floor(s / 60);
+        var sek = String(s % 60);
+        if (sek.length < 2) sek = "0" + sek;
+        timerEl.textContent = m + ":" + sek;
+      }}, 1000);
+    }})();
+
+    function visBekraeftelse() {{
+      document.getElementById("bekraeftOverlay").classList.add("aktiv");
+    }}
+    function afvisRyd() {{
+      document.getElementById("bekraeftOverlay").classList.remove("aktiv");
+    }}
+    function bekraeftRyd() {{
+      // Naviger parent-vinduet til samme URL med ?ryd_sag=1
+      // Forside.py opfanger parameteren og kører rydnings-logikken.
+      try {{
+        var parentUrl = new URL(window.parent.location.href);
+        parentUrl.searchParams.set("ryd_sag", "1");
+        window.parent.location.href = parentUrl.toString();
+      }} catch (e) {{
+        // Fallback hvis vi af en eller anden grund ikke kan tilgå
+        // parent (sjældent — Streamlit-iframen kører på samme origin)
+        window.location.href = window.location.href + "?ryd_sag=1";
+      }}
+    }}
+  </script>
+</body>
+</html>
+"""
+
+    with placeholder:
+        _components_html(widget_html, height=620)
+
+    try:
+        yield
+    finally:
+        placeholder.empty()
+
+
 # ---------- APPLE-HEALTH-INSPIRERET PILLAR-LAYOUT ----------
 
 # Tildel en accent-farve per sektion (matcher Apple Health's æstetik
