@@ -4174,14 +4174,19 @@ if st.session_state.get("aktuel_sag"):
                 ) or {},
             }
 
-            # Gem — opdater eksisterende sag hvis vi allerede har et ID
+            # Gem — opdater eksisterende sag hvis vi allerede har et ID.
+            # Wrap'es i spinner så brugeren får visuel feedback under
+            # DB-skrivningen til Supabase (kan tage 1-3 sekunder).
             eksisterende_id = st.session_state.get("aktiv_gemt_sag_id")
-            ny_id = gem_sag_state(
-                titel=gem_titel or "Sag uden navn",
-                state_json=_json.dumps(state, default=str, ensure_ascii=False),
-                user_id=None,
-                sag_id=eksisterende_id,
-            )
+            with st.spinner("Gemmer sagen i databasen..."):
+                ny_id = gem_sag_state(
+                    titel=gem_titel or "Sag uden navn",
+                    state_json=_json.dumps(
+                        state, default=str, ensure_ascii=False
+                    ),
+                    user_id=None,
+                    sag_id=eksisterende_id,
+                )
             if ny_id:
                 st.session_state.aktiv_gemt_sag_id = ny_id
                 st.session_state.aktiv_gemt_sag_titel = gem_titel
@@ -4286,5 +4291,6 @@ with st.expander("Mine tidligere analyser og svarbreve", expanded=False):
                     )
                 with kol_b:
                     if st.button("🗑️ Slet", key=f"slet_arkiv_{item['id']}"):
-                        slet_arkiv_entry(item["id"])
+                        with st.spinner("Sletter..."):
+                            slet_arkiv_entry(item["id"])
                         st.rerun()

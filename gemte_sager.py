@@ -373,6 +373,8 @@ else:
                         st.rerun()
                 with kol_slet:
                     if st.button("Slet", key=f"slet_{sag['id']}"):
-                        if slet_gemt_sag(sag["id"]):
+                        with st.spinner("Sletter sag..."):
+                            _slettet = slet_gemt_sag(sag["id"])
+                        if _slettet:
                             st.success("Sag slettet.")
                             st.rerun()
