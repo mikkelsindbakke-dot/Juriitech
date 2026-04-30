@@ -238,6 +238,14 @@ plus klagers oprindelige krav. Stærkeste signal for tilkendt er
 kombinationen "subjekt skal betale X kr. til [Klageren]" — den fanger
 det rigtige beløb selv med flere kandidater i teksten.
 
+**Detekter afvisning eksplicit — vis "Afvist" frem for "ukendt".**
+Når en sag er afvist, er der intet tilkendt beløb, men "ukendt" er
+misvisende — det får brugeren til at tro at vi ikke kunne udtrække
+beløbet. Detekter i stedet kanoniske afvisnings-formuleringer
+("Klagerens krav tages ikke til følge", "Klagen afvises", "Indklagede
+frifindes" osv.) og sæt feltet til "Afvist". Se `_check_klagen_afvist`
+i ai_engine.py.
+
 **ILIKE i Postgres er case-insensitive ud af boksen** — du behøver ikke
 selv at lower'e begge sider. Det er hurtigere og mere læseligt.
 

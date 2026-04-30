@@ -2956,6 +2956,43 @@ def _udled_forventet_udfald_separat(analyse_tekst):
         return None
 
 
+def _check_klagen_afvist(tekst):
+    """
+    Returnerer True hvis afgørelsen tydeligt har afvist klagen — dvs.
+    klager fik intet tilkendt. Bruges af _regex_find_beloeb til at
+    sætte tilkendt_beloeb = 'Afvist' i stedet for tom streng, så
+    UI'et kan vise 'Afvist' frem for det misvisende 'ukendt'.
+
+    Detekterer kanoniske Pakkerejse-Ankenævn afvisnings-formuleringer:
+      - 'Klagerens krav tages ikke til følge'
+      - 'Klagen tages ikke til følge'
+      - 'Klagen afvises'
+      - 'Indklagede frifindes'
+      - 'Nævnet kan ikke give klager(en) medhold'
+      - 'Klager(en) kan ikke gives medhold'
+    """
+    import re as _re
+
+    if not tekst:
+        return False
+
+    AFVIST_PATTERNS = [
+        r"Klager(?:en)?s?\s+krav\s+tages\s+ikke\s+til\s+følge",
+        r"Klagen\s+tages\s+ikke\s+til\s+følge",
+        r"Klagen\s+kan\s+ikke\s+tages\s+til\s+følge",
+        r"Klagen\s+afvises",
+        r"\[?Indklagede\]?\s+frifindes",
+        r"\[?Rejsearrangør(?:en)?\]?\s+frifindes",
+        r"Nævnet\s+kan\s+ikke\s+give\s+klager(?:en)?\s+medhold",
+        r"Klager(?:en)?\s+kan\s+ikke\s+gives\s+medhold",
+        r"Der\s+gives\s+ikke\s+klager(?:en)?\s+medhold",
+    ]
+    for pat in AFVIST_PATTERNS:
+        if _re.search(pat, tekst, _re.IGNORECASE):
+            return True
+    return False
+
+
 def _regex_find_beloeb(tekst):
     """
     Regex-baseret fallback til beløbs-udtræk fra en Pakkerejse-Ankenævn-
@@ -2967,6 +3004,10 @@ def _regex_find_beloeb(tekst):
       - klagers_krav:     beløb tæt på "klager kræver/krav/påstand"
       - tilkendt_beloeb:  beløb tæt på "Nævnet tilkender / Indklagede
                          skal betale / klager tilkendes"
+
+    Hvis sagen er AFVIST (klagers krav ikke taget til følge), sættes
+    tilkendt_beloeb = 'Afvist' så UI'et viser den korrekte status
+    frem for et misvisende 'ukendt'.
 
     Returnerer en dict {'klagers_krav': str, 'tilkendt_beloeb': str}
     hvor manglende felter er tom streng.
@@ -3072,6 +3113,12 @@ def _regex_find_beloeb(tekst):
         if m:
             tilkendt_beloeb = f"{m.group(1).strip()} kr."
             break
+
+    # Hvis vi ikke fandt et tilkendt beløb, så tjek om sagen i stedet
+    # er AFVIST — i så fald er der intet beløb, og 'Afvist' er den
+    # korrekte status. Bedre end at lade UI'et vise 'ukendt'.
+    if not tilkendt_beloeb and _check_klagen_afvist(tekst):
+        tilkendt_beloeb = "Afvist"
 
     return {
         "klagers_krav": klagers_krav,
@@ -3334,6 +3381,18 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
                                 tilkendt_beloeb = fb["tilkendt_beloeb"]
                 except Exception as _re_e:
                     print(f"DEBUG: regex-fallback for beløb fejlede: {_re_e}")
+
+            # Sidste sikkerhedsnet: hvis AI'en KLASSIFICEREDE sagen som
+            # afvist (udfald == 'Afvist') men vi stadig ikke har et
+            # tilkendt-felt, så sæt det til 'Afvist'. Det dækker de
+            # tilfælde hvor regex'en ikke fandt en kanonisk afvisnings-
+            # frase (fx fordi den er formuleret atypisk).
+            udfald_str = str(item.get("udfald", "")).strip().lower()
+            if (
+                tilkendt_beloeb.lower() in ("", "ukendt")
+                and udfald_str == "afvist"
+            ):
+                tilkendt_beloeb = "Afvist"
 
             resultat.append({
                 "sagsnummer": str(item.get("sagsnummer", "")).strip(),
