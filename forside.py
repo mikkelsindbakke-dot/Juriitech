@@ -38,6 +38,7 @@ from eksport import analyse_til_docx, svarbrev_til_docx
 from vurdering import vis_dashboard as vis_udfalds_dashboard
 from ui import (
     thinking,
+    thinking_fullpage,
     render_analyse_som_pillars,
     render_sagsresume,
     render_tidslinje,
@@ -1147,6 +1148,64 @@ if "sagsresume" not in st.session_state:
     st.session_state.sagsresume = None
 
 
+def _udfor_rydning_af_sag():
+    """
+    Udfører fuld rydning af den aktive sag — wipes alle session_state-
+    felter relateret til sagen så brugeren returneres til empty state
+    (ingen sag uploaded).
+
+    Bruges fra TO steder:
+      1. 'Ryd sag'-knappen i den grønne success-bar (efter bekræftelse)
+      2. 'Ryd sag'-knappen i fullpage-loading-viewet (via ?ryd_sag=1
+         query-parameter — se handler nedenunder)
+
+    Funktionen kalder IKKE st.rerun() — den lader caller'en gøre det
+    så hver call site kan kontrollere flowet.
+    """
+    st.session_state.aktuel_sag = None
+    st.session_state.sidste_sagsfil_signatur = None
+    st.session_state.sagsakter = ""
+    st.session_state.sagsakter_filer = []
+    st.session_state.sagsakter_signatur = None
+    st.session_state.sagsakter_opdaterede_vurdering = False
+    st.session_state.auto_vurdering_tekst = None
+    st.session_state.auto_vurdering_for_signatur = None
+    st.session_state.seneste_svar = None
+    st.session_state.seneste_svarbrev = None
+    st.session_state.seneste_tjekliste = None
+    st.session_state.seneste_anonymisering = None
+    st.session_state.relevante_sager = []
+    st.session_state.match_info = []
+    st.session_state.sandsynligheder_dict = None
+    st.session_state.sagsresume = None
+    st.session_state.chat_historik = []
+    st.session_state.anon_resultater_per_fil = {}
+    # Ryd alle sag-specifikke svarbrev-instrukser fra session state
+    for _key in list(st.session_state.keys()):
+        if (
+            _key.startswith("svarbrev_instrukser_")
+            or _key.startswith("ny_instruks_input_")
+            or _key.startswith("tilfoej_btn_")
+            or _key.startswith("fjern_instruks_")
+        ):
+            del st.session_state[_key]
+    if "_ryd_sag_bekraefter" in st.session_state:
+        del st.session_state["_ryd_sag_bekraefter"]
+
+
+# ---------- QUERY-PARAM-HANDLER FOR 'RYD SAG' UNDER LOADING ----------
+# Når brugeren klikker den røde 'Ryd sag'-knap inde i fullpage-loading-
+# viewet, navigeres parent-vinduet til samme URL med ?ryd_sag=1.
+# Vi opfanger parameteren her ved næste page-load og udfører rydningen.
+if st.query_params.get("ryd_sag") == "1":
+    _udfor_rydning_af_sag()
+    try:
+        del st.query_params["ryd_sag"]
+    except KeyError:
+        pass
+    st.rerun()
+
+
 def _auto_gem_klage_i_db(klage_dict):
     """
     Gemmer en uploadet klage i databasen med dokumenttype='klage', hvis den
@@ -1795,39 +1854,10 @@ if st.session_state.get("aktuel_sag"):
                 st.rerun()
 
         if _bekraeft_klik:
-            # Bekræftet — udfør den fulde rydning (inline, original
-            # implementation før d841656-refaktoreringen)
-            st.session_state.aktuel_sag = None
-            st.session_state.sidste_sagsfil_signatur = None
-            st.session_state.sagsakter = ""
-            st.session_state.sagsakter_filer = []
-            st.session_state.sagsakter_signatur = None
-            st.session_state.sagsakter_opdaterede_vurdering = False
-            st.session_state.auto_vurdering_tekst = None
-            st.session_state.auto_vurdering_for_signatur = None
-            st.session_state.seneste_svar = None
-            st.session_state.seneste_svarbrev = None
-            st.session_state.seneste_tjekliste = None
-            st.session_state.seneste_anonymisering = None
-            st.session_state.relevante_sager = []
-            st.session_state.match_info = []
-            st.session_state.sandsynligheder_dict = None
-            st.session_state.sagsresume = None
-            st.session_state.chat_historik = []
-            st.session_state.anon_resultater_per_fil = {}
-            # Ryd alle sag-specifikke svarbrev-instrukser fra session state
-            # så de ikke siver med til en ny sag.
-            for _key in list(st.session_state.keys()):
-                if (
-                    _key.startswith("svarbrev_instrukser_")
-                    or _key.startswith("ny_instruks_input_")
-                    or _key.startswith("tilfoej_btn_")
-                    or _key.startswith("fjern_instruks_")
-                ):
-                    del st.session_state[_key]
-            # Ryd selve bekræftelses-flaget
-            if _ryd_bekraeft_key in st.session_state:
-                del st.session_state[_ryd_bekraeft_key]
+            # Bekræftet — udfør den fulde rydning via den fælles helper
+            # (samme funktion bruges også af query-param-handleren når
+            # 'Ryd sag'-knappen i loading-viewet klikkes).
+            _udfor_rydning_af_sag()
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
@@ -1866,24 +1896,27 @@ if st.session_state.get("aktuel_sag"):
         and st.session_state.auto_vurdering_tekst is not None
     )
     if skal_auto_vurdere:
-        # ---------- LOADING-VIEW ----------
-        # ROLLBACK: thinking_fullpage() blev midlertidigt prøvet i
-        # commit d841656 men afbrød AI-kaldet (analysen returnerede
-        # tomt på få sekunder). Vi er tilbage på den gennemtestede
-        # thinking() med fase-cyklus. thinking_fullpage findes stadig
-        # i ui.py som dormant kode klar til en sikker re-implementering.
-        with thinking(
-            "juriitech PAX laver en grundig første vurdering af sagen",
-            faser=[
-                "Identificerer alle klagepunkter klager rejser...",
-                "Kortlægger tidsforhold mellem mangler og reklamation...",
-                "Læser sagsakterne og høringsbrevet...",
-                "Søger i vidensbanken efter tidligere afgørelser...",
-                "Sammenholder med pakkerejseloven og rejsevilkårene...",
-                "Identificerer de stærkeste forsvarsargumenter...",
-                "Vurderer sandsynligheder for de tre udfald...",
-                "Skriver konklusion og strategi...",
-            ],
+        # ---------- FULLPAGE LOADING-VIEW ----------
+        # Stor centreret cirkel-spinner med timer i midten + heading +
+        # beskrivelse + rød 'Ryd sag'-knap.
+        #
+        # NOTE: Denne blev midlertidigt rullet tilbage i commit 8f3bb5e
+        # da vi mistænkte at iframen afbrød AI-kaldet. EFTER omfattende
+        # debugging viste det sig at de rigtige rod-årsager var:
+        #   1) Anthropic-credits løb tør (ikke kode-relateret)
+        #   2) Regex-bug i udtraek_sagen_angaar (rettet i commit 10757d9)
+        # Vi gen-deployer nu thinking_fullpage med tillid — backup er
+        # taget som git-tag v1.2.0 så vi altid kan rulle tilbage.
+        #
+        # De øvrige 3 thinking()-kald (anonymisering, tjekliste, svarbrev)
+        # bruger STADIG den almindelige fase-cyklus-version.
+        with thinking_fullpage(
+            titel="juriitech PAX laver en grundig analyse",
+            beskrivelse=(
+                "Kvalitet tager tid. +10 dokumenter analyseres typisk på "
+                "2-3 minutter. +20 dokumenter tager typisk 4-5 min. "
+                "Dette kan variere fra sag til sag afhængig af indhold."
+            ),
         ):
             try:
                 # FØRST: Udtræk udtømmende liste over ALLE klagepunkter
