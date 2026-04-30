@@ -250,20 +250,27 @@ def udtraek_sagen_angaar(tekst, max_chars=2000):
     # ---------- 2. ANCHOR-AFSNIT ----------
     # Find afsnit der starter med specifikke nøgleord — disse er de
     # juridisk mest sigende dele af afgørelsen.
+    # NOTE: alle parenteser i anchorerne er NON-CAPTURING (?:...) så de
+    # ikke forskubber group-numrene for vores indhold-group. Tidligere
+    # bug: `Klagepunkt(er)?` lavede en capture-gruppe der endte som
+    # group(1), og vores indhold-group blev forskubbet til group(2) —
+    # det fik koden til at crashe med 'NoneType has no attribute strip'.
     ANCHORS = [
         r"Klagen\s+angår",
         r"Sagen\s+angår",
-        r"Hoved\s*spørgsmål(et)?",
-        r"Klagens?\s+kernepunkt(er)?",
+        r"Hoved\s*spørgsmål(?:et)?",
+        r"Klagens?\s+kernepunkt(?:er)?",
         r"Klage(?:r|n)?s?\s+påstand",
-        r"Klagepunkt(er)?",
+        r"Klagepunkt(?:er)?",
         r"Nævnets?\s+bemærkninger?\s+og\s+afgørelse",
         r"Konklusion",
     ]
     for anchor in ANCHORS:
-        # Match anchor + alt frem til næste blank linje + max 800 tegn
+        # Match anchor + alt frem til næste blank linje + max 800 tegn.
+        # Bruger NAMED group ("indhold") så ingen risiko for at group-
+        # numre konflikter med eventuelle grupper i anchor-mønstrene.
         match = _re.search(
-            anchor + r"[:\s]*\n*([\s\S]{1,800}?)(?=\n\s*\n|\Z)",
+            anchor + r"[:\s]*\n*(?P<indhold>[\s\S]{1,800}?)(?=\n\s*\n|\Z)",
             tekst,
             _re.IGNORECASE,
         )
@@ -272,7 +279,12 @@ def udtraek_sagen_angaar(tekst, max_chars=2000):
             anchor_safe = (
                 anchor_navn.group(0).strip() if anchor_navn else "Anchor"
             )
-            indhold = match.group(1).strip()
+            # Defensiv: hvis indhold-gruppen af en eller anden grund er
+            # None, spring denne anchor over i stedet for at crashe.
+            indhold_raw = match.group("indhold")
+            if indhold_raw is None:
+                continue
+            indhold = indhold_raw.strip()
             if indhold and len(indhold) > 30:
                 dele.append(
                     f"=== {anchor_safe.upper()} ===\n{indhold}"
