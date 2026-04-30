@@ -1148,6 +1148,39 @@ if "sagsresume" not in st.session_state:
     st.session_state.sagsresume = None
 
 
+def _skal_vise_loading_view():
+    """
+    Returnerer True hvis vi er i færd med at køre førstevurderingen
+    (dvs. signaturen for sag+sagsakter ikke matcher den senest
+    færdiggjorte vurdering).
+
+    Bruges til at SKJULE upload-sektionen, 'Vil du tilføje flere'-
+    teksten, 'Sag klar til analyse'-baren og file-expander mens
+    loading-viewet kører — så cirklen + timeren er synlig fra toppen
+    af siden uden scroll.
+
+    Skal computes EARLY (før upload-sektionen rendres) så den kan
+    bruges som conditional guard. Selve thinking_fullpage()-blokken
+    senere i koden bruger samme logik via skal_auto_vurdere.
+    """
+    if not st.session_state.get("aktuel_sag"):
+        return False
+    sag_sig = st.session_state.get("sidste_sagsfil_signatur") or ()
+    sagsakter_tekst = st.session_state.get("sagsakter", "") or ""
+    sagsakter_filer = st.session_state.get("sagsakter_filer", []) or []
+    sagsakter_sig = tuple(
+        (f["filnavn"],
+         len(f.get("bytes") or b""),
+         len(f.get("tekst") or ""))
+        for f in sagsakter_filer
+    )
+    kombineret_sig = (sag_sig, hash(sagsakter_tekst), sagsakter_sig)
+    return (
+        st.session_state.get("auto_vurdering_for_signatur")
+        != kombineret_sig
+    )
+
+
 def _udfor_rydning_af_sag():
     """
     Udfører fuld rydning af den aktive sag — wipes alle session_state-
@@ -1739,21 +1772,29 @@ else:
     # X-klik fjerner kun fra DENNE uploader, ikke fra den scannede sag.
     # Scannede filer styres separat via 'Ryd sag' eller via at uploade
     # flere og klikke 'Opdatér filer'.
-    st.markdown(
-        "<div style='margin-top: 8px; color: #6B7280; font-size: 0.88rem;'>"
-        "Vil du tilføje flere sagsfiler til den aktuelle sag? "
-        "Upload dem her — klik derefter 'Opdatér filer'. For at fjerne "
-        "scannede filer eller starte forfra, brug 'Ryd sag' nedenfor."
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    uploadede_sagsfiler = st.file_uploader(
-        "Tilføj flere sagsfiler",
-        type=["zip", "pdf", "docx", "png", "jpg", "jpeg"],
-        accept_multiple_files=True,
-        key="sag_uploader_active",  # SEPARAT key fra empty state
-        label_visibility="collapsed",
-    )
+    #
+    # SKJULES under loading så cirkel-spinneren med timer er synlig
+    # uden scroll fra toppen af siden.
+    if not _skal_vise_loading_view():
+        st.markdown(
+            "<div style='margin-top: 8px; color: #6B7280; font-size: 0.88rem;'>"
+            "Vil du tilføje flere sagsfiler til den aktuelle sag? "
+            "Upload dem her — klik derefter 'Opdatér filer'. For at fjerne "
+            "scannede filer eller starte forfra, brug 'Ryd sag' nedenfor."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        uploadede_sagsfiler = st.file_uploader(
+            "Tilføj flere sagsfiler",
+            type=["zip", "pdf", "docx", "png", "jpg", "jpeg"],
+            accept_multiple_files=True,
+            key="sag_uploader_active",  # SEPARAT key fra empty state
+            label_visibility="collapsed",
+        )
+    else:
+        # Under loading: ingen uploader vises, men variablen skal
+        # eksistere så downstream-kode (signatur-beregning) ikke crasher.
+        uploadede_sagsfiler = None
 
 # Beregn upload-signatur for at detektere om der er nye/ændrede filer.
 # I empty state bruges denne signatur til at trigge "Scan filer"-knappen.
@@ -1803,72 +1844,77 @@ if st.session_state.get("aktuel_sag"):
     antal_tekst = sum(1 for f in filer if f["type"] == "tekst")
     antal_scannet = sum(1 for f in filer if f["type"] == "pdf_bytes")
 
-    # Lille mellemrum så success-baren aldrig klistrer op mod hero-sektion
-    # eller upload-feltet ovenfor — også hvis Streamlit ikke når at rerunne
-    # før success-baren rendres.
-    st.markdown("<div style='height: 12px'></div>", unsafe_allow_html=True)
+    # SKJUL alt sag-info (success-bar, Ryd sag, file-expander)
+    # under loading så cirkel-spinneren med timer er synlig
+    # uden scroll fra toppen.
+    _viser_loading = _skal_vise_loading_view()
+    if not _viser_loading:
+        # Lille mellemrum så success-baren aldrig klistrer op mod hero-sektion
+        # eller upload-feltet ovenfor — også hvis Streamlit ikke når at rerunne
+        # før success-baren rendres.
+        st.markdown("<div style='height: 12px'></div>", unsafe_allow_html=True)
 
-    kol1, kol2 = st.columns([4, 1])
-    with kol1:
-        st.success(
-            f"Sag klar til analyse: **{len(filer)} filer** "
-            f"({antal_tekst} læst, {antal_scannet} scannede PDF'er)"
-        )
-    with kol2:
-        # ---------- TO-TRINS BEKRÆFTELSE PÅ 'RYD SAG' ----------
-        # Tidligere wipede knappen ALT i et enkelt klik — sag, sagsakter,
-        # vurdering, svarbrev, anon-resultater, alt. En kollega til Mikkel
-        # mistede hele sit arbejde da hun klikkede knappen i et forsøg på
-        # at omdøbe en fil. To-trins-bekræftelsen forhindrer denne
-        # data-tab-bug uden at låse knappen for legitim brug.
-        _ryd_bekraeft_key = "_ryd_sag_bekraefter"
-        if st.session_state.get(_ryd_bekraeft_key):
-            # I bekræftelses-tilstand: vis tydelig advarsel + rød knap
-            st.markdown(
-                "<div style='font-size: 0.78rem; color: #B91C1C; "
-                "font-weight: 600; text-align: center; margin-bottom: 4px;'>"
-                "Sikker? ALT går tabt</div>",
-                unsafe_allow_html=True,
+        kol1, kol2 = st.columns([4, 1])
+        with kol1:
+            st.success(
+                f"Sag klar til analyse: **{len(filer)} filer** "
+                f"({antal_tekst} læst, {antal_scannet} scannede PDF'er)"
             )
-            _kol_ja, _kol_nej = st.columns(2)
-            with _kol_ja:
-                _bekraeft_klik = st.button(
-                    "Ja, ryd",
-                    type="primary",
-                    use_container_width=True,
-                    key="ryd_sag_bekraeft",
+        with kol2:
+            # ---------- TO-TRINS BEKRÆFTELSE PÅ 'RYD SAG' ----------
+            # Tidligere wipede knappen ALT i et enkelt klik — sag, sagsakter,
+            # vurdering, svarbrev, anon-resultater, alt. En kollega til Mikkel
+            # mistede hele sit arbejde da hun klikkede knappen i et forsøg på
+            # at omdøbe en fil. To-trins-bekræftelsen forhindrer denne
+            # data-tab-bug uden at låse knappen for legitim brug.
+            _ryd_bekraeft_key = "_ryd_sag_bekraefter"
+            if st.session_state.get(_ryd_bekraeft_key):
+                # I bekræftelses-tilstand: vis tydelig advarsel + rød knap
+                st.markdown(
+                    "<div style='font-size: 0.78rem; color: #B91C1C; "
+                    "font-weight: 600; text-align: center; margin-bottom: 4px;'>"
+                    "Sikker? ALT går tabt</div>",
+                    unsafe_allow_html=True,
                 )
-            with _kol_nej:
-                if st.button(
-                    "Fortryd",
-                    use_container_width=True,
-                    key="ryd_sag_fortryd",
-                ):
-                    del st.session_state[_ryd_bekraeft_key]
+                _kol_ja, _kol_nej = st.columns(2)
+                with _kol_ja:
+                    _bekraeft_klik = st.button(
+                        "Ja, ryd",
+                        type="primary",
+                        use_container_width=True,
+                        key="ryd_sag_bekraeft",
+                    )
+                with _kol_nej:
+                    if st.button(
+                        "Fortryd",
+                        use_container_width=True,
+                        key="ryd_sag_fortryd",
+                    ):
+                        del st.session_state[_ryd_bekraeft_key]
+                        st.rerun()
+            else:
+                _bekraeft_klik = False
+                if st.button("Ryd sag"):
+                    # Første klik: vis bekræftelse i stedet for at wipe
+                    st.session_state[_ryd_bekraeft_key] = True
                     st.rerun()
-        else:
-            _bekraeft_klik = False
-            if st.button("Ryd sag"):
-                # Første klik: vis bekræftelse i stedet for at wipe
-                st.session_state[_ryd_bekraeft_key] = True
+
+            if _bekraeft_klik:
+                # Bekræftet — udfør den fulde rydning via den fælles helper
+                # (samme funktion bruges også af query-param-handleren når
+                # 'Ryd sag'-knappen i loading-viewet klikkes).
+                _udfor_rydning_af_sag()
                 st.rerun()
 
-        if _bekraeft_klik:
-            # Bekræftet — udfør den fulde rydning via den fælles helper
-            # (samme funktion bruges også af query-param-handleren når
-            # 'Ryd sag'-knappen i loading-viewet klikkes).
-            _udfor_rydning_af_sag()
-            st.rerun()
-
-    # Vis oversigt over filerne i sagen (foldbar)
-    with st.expander(f"Se de {len(filer)} filer i sagen", expanded=False):
-        for i, fil in enumerate(filer, 1):
-            rolle = fil.get("rolle", "ukendt").replace("_", " ")
-            tegn_info = (
-                f" — {len(fil.get('tekst') or '')} tegn læst"
-                if fil["type"] == "tekst" else " — scannet PDF"
-            )
-            st.markdown(f"**{i}. {fil['filnavn']}** · *{rolle}*{tegn_info}")
+        # Vis oversigt over filerne i sagen (foldbar)
+        with st.expander(f"Se de {len(filer)} filer i sagen", expanded=False):
+            for i, fil in enumerate(filer, 1):
+                rolle = fil.get("rolle", "ukendt").replace("_", " ")
+                tegn_info = (
+                    f" — {len(fil.get('tekst') or '')} tegn læst"
+                    if fil["type"] == "tekst" else " — scannet PDF"
+                )
+                st.markdown(f"**{i}. {fil['filnavn']}** · *{rolle}*{tegn_info}")
 
     # ---------- AUTOMATISK FØRSTEVURDERING ----------
     # Beregn kombineret signatur af sag + sagsakter. Hvis den ændrer sig,
