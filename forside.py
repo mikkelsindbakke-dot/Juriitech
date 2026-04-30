@@ -2276,6 +2276,11 @@ if st.session_state.get("aktuel_sag"):
                     klage_filnavn=klage_fn_for_arkiv,
                     spoergsmaal="Automatisk førstevurdering ved upload",
                 )
+                # Tving en ny render, så de skjulte sektioner (upload-felt,
+                # "Sag klar til analyse"-bjælken med Ryd sag-knappen og
+                # filoversigten) kommer tilbage nu, hvor analysen er færdig.
+                # Uden denne rerun forbliver de skjult indtil næste interaktion.
+                st.rerun()
             except Exception as e:
                 vis_brugerfejl(
                     "den automatiske førstevurdering",
