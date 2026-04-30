@@ -1900,19 +1900,24 @@ if st.session_state.get("aktuel_sag"):
         and st.session_state.auto_vurdering_tekst is not None
     )
     if skal_auto_vurdere:
-        # ---------- FULLPAGE LOADING-VIEW ----------
-        # Stor centreret spinner med timer i midten + heading + beskrivelse
-        # + rød 'Ryd sag'-knap. Erstatter den lille thinking()-pillar for
-        # den primære førstevurderings-flow. (De øvrige AI-kald —
-        # anonymisering, tjekliste, svarbrev — bruger stadig den almindelige
-        # thinking() med fase-cyklus.)
-        with thinking_fullpage(
-            titel="juriitech PAX laver en grundig analyse",
-            beskrivelse=(
-                "Kvalitet tager tid. +10 dokumenter analyseres typisk på "
-                "2-3 minutter. +20 dokumenter tager typisk 4-5 min. "
-                "Dette kan variere fra sag til sag afhængig af indhold."
-            ),
+        # ---------- LOADING-VIEW ----------
+        # ROLLBACK: thinking_fullpage() blev midlertidigt prøvet i
+        # commit d841656 men afbrød AI-kaldet (analysen returnerede
+        # tomt på få sekunder). Vi er tilbage på den gennemtestede
+        # thinking() med fase-cyklus. thinking_fullpage findes stadig
+        # i ui.py som dormant kode klar til en sikker re-implementering.
+        with thinking(
+            "juriitech PAX laver en grundig første vurdering af sagen",
+            faser=[
+                "Identificerer alle klagepunkter klager rejser...",
+                "Kortlægger tidsforhold mellem mangler og reklamation...",
+                "Læser sagsakterne og høringsbrevet...",
+                "Søger i vidensbanken efter tidligere afgørelser...",
+                "Sammenholder med pakkerejseloven og rejsevilkårene...",
+                "Identificerer de stærkeste forsvarsargumenter...",
+                "Vurderer sandsynligheder for de tre udfald...",
+                "Skriver konklusion og strategi...",
+            ],
         ):
             try:
                 # FØRST: Udtræk udtømmende liste over ALLE klagepunkter
