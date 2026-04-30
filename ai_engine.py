@@ -2220,6 +2220,75 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         return None
 
 
+def _regex_find_sagsnummer(sag, sagsakter_tekst=""):
+    """
+    Regex-baseret fallback til sagsnummer-udtræk. Scanner al tilgængelig
+    tekst (filtekster, sagsakter-tekst, filnavne) for kendte
+    Pakkerejse-Ankenævn-sagsnummer-mønstre.
+
+    Bruges når AI-kaldet i udled_sagsmetadata returnerer tom streng.
+    Det sikrer at vi fanger åbenlyse tilfælde — fx hvor sagsnummeret
+    står direkte i et filnavn (typisk "25-0123_klage.pdf") eller med
+    et anchor-ord som "Sag nr." i filteksten.
+
+    Returnerer den første rimelige match, eller tom streng hvis intet
+    fundet.
+    """
+    import re as _re
+
+    # 1) Saml al tilgængelig tekst — tekst-filer, sagsakter, og filnavne
+    tekst_dele = []
+    filnavne = []
+    for fil in (sag.get("filer") or []):
+        if fil.get("filnavn"):
+            filnavne.append(fil["filnavn"])
+            tekst_dele.append(fil["filnavn"])
+        if fil.get("tekst"):
+            tekst_dele.append(fil["tekst"])
+    if sagsakter_tekst:
+        tekst_dele.append(sagsakter_tekst)
+
+    samlet = "\n".join(tekst_dele)
+    if not samlet.strip() and not filnavne:
+        return ""
+
+    # Mønstre for sagsnummer:
+    #   NN-NNN-NNNNNNN   fx 25-109-8024327  (det mest specifikke)
+    #   NN-NNNN          fx 25-1234
+    #   NN.NNNN / NN/NNNN  varianter
+    nummer_pattern = r"\d{2}[-./]\d{2,4}(?:[-./]\d{4,8})?"
+
+    # Forsøg 1: Find nummer der står tæt på et anchor-ord
+    # (mest pålideligt — undgår false positives som datoer)
+    anchor_pattern = (
+        r"(?:Sag\s*(?:nr|nummer)?\.?|Sagsnr\.?|Sagsnummer|"
+        r"J\.?\s*nr\.?|Journal\s*nr\.?|Vores\s+ref(?:erence)?\.?|"
+        r"Vores\s+sagsnummer|Ankenævnets\s+sag|Ref\.?)"
+        r"\s*:?\s*(" + nummer_pattern + r")"
+    )
+    m = _re.search(anchor_pattern, samlet, _re.IGNORECASE)
+    if m:
+        return m.group(1).strip()
+
+    # Forsøg 2: Find nummer i filnavne (fx "25-0123_klage.pdf",
+    # "Høringsbrev 25-109-8024327.pdf"). Filnavne er meget pålidelige
+    # fordi Pakkerejse-Ankenævnet ofte bruger sagsnummeret som filnavn.
+    for fn in filnavne:
+        m = _re.search(nummer_pattern, fn)
+        if m:
+            return m.group(0).strip()
+
+    # Forsøg 3: Find første forekomst af det meget specifikke
+    # NN-NNN-NNNNNNN mønster (utvetydigt sagsnummer-format hos
+    # Pakkerejse-Ankenævnet — kan ikke forveksles med datoer eller
+    # telefonnumre)
+    specifik = _re.search(r"\b\d{2}-\d{3}-\d{7}\b", samlet)
+    if specifik:
+        return specifik.group(0).strip()
+
+    return ""
+
+
 def udled_sagsmetadata(sag, sagsakter_tekst=""):
     """
     Udtrækker metadata til svarbrev-headeren: sagsnummer fra
@@ -2329,13 +2398,39 @@ def udled_sagsmetadata(sag, sagsakter_tekst=""):
 
         data = _json.loads(svar)
 
+        sagsnummer = str(data.get("sagsnummer") or "").strip()
+        klagers_navn = str(data.get("klagers_navn") or "").strip()
+
+        # Regex-fallback hvis AI'en ikke fandt et sagsnummer.
+        # Mange klageskemaer/sagsakter indeholder nummeret eksplicit
+        # (i filnavn eller med anchor-ord) — så vi kan tit fange det
+        # selvom AI'en var for forsigtig.
+        if not sagsnummer:
+            try:
+                fallback = _regex_find_sagsnummer(sag, sagsakter_tekst)
+                if fallback:
+                    print(
+                        f"DEBUG: udled_sagsmetadata regex-fallback fandt "
+                        f"sagsnummer: {fallback}"
+                    )
+                    sagsnummer = fallback
+            except Exception as _re_e:
+                print(f"DEBUG: regex-fallback for sagsnummer fejlede: {_re_e}")
+
         return {
-            "sagsnummer": str(data.get("sagsnummer") or "").strip(),
-            "klagers_navn": str(data.get("klagers_navn") or "").strip(),
+            "sagsnummer": sagsnummer,
+            "klagers_navn": klagers_navn,
         }
     except Exception as e:
         print(f"DEBUG: udled_sagsmetadata fejlede: {e}")
-        return {"sagsnummer": "", "klagers_navn": ""}
+        # Selvom AI-kaldet fejlede, prøver vi stadig regex-fallback
+        # på sagsnummeret — så vi i det mindste kan udfylde det felt.
+        sagsnummer_fallback = ""
+        try:
+            sagsnummer_fallback = _regex_find_sagsnummer(sag, sagsakter_tekst)
+        except Exception:
+            pass
+        return {"sagsnummer": sagsnummer_fallback, "klagers_navn": ""}
 
 
 def udled_bilag_overskrifter(filer):
