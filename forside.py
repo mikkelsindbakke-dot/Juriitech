@@ -2196,6 +2196,17 @@ if st.session_state.get("aktuel_sag"):
                     spoergsmaal="Automatisk førstevurdering ved upload",
                 )
             except Exception as e:
+                # MIDLERTIDIG DEBUG: print fejlen til stdout så den fanges
+                # af 'fly logs'. vis_brugerfejl sender kun til Sentry, hvilket
+                # gør det svært at se fejlen ved live-debugging.
+                import traceback as _tb
+                print(
+                    "===== FEJL i førstevurdering-flow ====="
+                    f"\nException type: {type(e).__name__}"
+                    f"\nException: {e}"
+                    f"\nTraceback:\n{_tb.format_exc()}"
+                    "\n======================================="
+                )
                 vis_brugerfejl(
                     "den automatiske førstevurdering",
                     exception=e,
