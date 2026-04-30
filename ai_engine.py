@@ -2111,12 +2111,14 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
     try:
         user_content = _byg_sag_content(sag, indled, slutning)
 
-        # Hævet fra 2000 → 6000 tokens fordi tidsforhold-JSON ofte
-        # indeholder 10-20 begivenheder + observationer + vurdering;
-        # 2000 var for lidt og JSON blev trunkeret midt i en string.
+        # Hævet fra 2000 → 6000 → 10000 tokens. Den seneste justering
+        # skete fordi store sager (35+ klagepunkter, mange begivenheder)
+        # producerede JSON der overskred 6000-grænsen og blev trunkeret
+        # midt i en string. 10000 giver sikker margen op til ~50
+        # begivenheder + lange observationer.
         response = client.messages.create(
             model=MODEL,
-            max_tokens=6000,
+            max_tokens=10000,
             temperature=0,
             system=(
                 "Du er en præcis juridisk research-assistent. Du finder "
@@ -2510,9 +2512,12 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
     )
 
     try:
+        # Hævet fra 800 → 2500 tokens. Store sager med mange klagepunkter
+        # producerer længere resume-JSON og blev trunkeret midt i en
+        # string ved 800-grænsen. 2500 giver sikker margen.
         response = client.messages.create(
             model=MODEL,
-            max_tokens=800,
+            max_tokens=2500,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
