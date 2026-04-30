@@ -3,8 +3,15 @@ import base64
 from dotenv import load_dotenv
 import anthropic
 
-from embeddings import embed_sporgsmaal
-from database import find_relevante_sager, hent_alle_sager, hent_sager_af_type
+from embeddings import embed_sporgsmaal, rerank
+from database import (
+    find_relevante_sager,
+    hent_alle_sager,
+    hent_sager_af_type,
+    find_relevante_chunks,
+    soeg_chunks_keyword,
+    antal_chunks_total,
+)
 
 # Læs API-nøgle fra .env (ikke hardcoded i koden)
 load_dotenv()
@@ -40,7 +47,25 @@ MAX_TOKENS = 16000
 
 # Antal AFGØRELSER vi henter pr. spørgsmål — 5 giver Claude nok juridisk
 # præcedens til at finde de 3-5 mest relevante referencer.
+# (Bruges af det GAMLE hele-dokument-fallback. Det NYE chunk-baserede
+# flow bruger CHUNK_*-konstanterne nedenfor.)
 TOP_K_AFGOERELSER = 5
+
+# ---- NYE KONSTANTER FOR CHUNK-BASERET RAG ----
+# Stage 1 — embedding-baseret recall: vi henter mange kandidat-chunks
+# for at sikre at det rigtige paragraf-stykke er med i feltet.
+TOP_K_CHUNKS_EMBED = 25
+# Stage 1b — keyword-baseret recall: kører i parallel med embeddings
+# og kombineres via Reciprocal Rank Fusion. Fanger eksakte fraser.
+TOP_K_CHUNKS_KEYWORD = 15
+# Stage 2 — efter reranker'en har scoret kandidaterne, beholder vi
+# de bedste 8 chunks. Det er ~3x mere fokuseret kontekst end før
+# (5 hele afgørelser á 15.000 tegn) men koncentreret om det
+# faktisk relevante.
+TOP_K_CHUNKS_FINAL = 8
+# Hvor mange tegn pr. chunk vi sender til Claude (loft pr. chunk).
+# Chunks er typisk 1.500-3.500 tegn fra chunking-pipelinen.
+MAX_CHARS_PR_CHUNK = 4_000
 
 # Antal VILKÅR/regler-passager vi henter pr. spørgsmål. 3 er nok til at
 # dække de relevante kontraktuelle punkter uden at fylde prompten op.
@@ -310,16 +335,34 @@ def _byg_vidensbank_tekst(sager):
     Bygger én tekstblok med de udvalgte relevante sager, med tydelig markering
     af dokumenttype (AFGØRELSE / KLAGE / VILKÅR) så Claude kan skelne.
 
-    'sager' er en liste af dicts: {"filnavn", "indhold", "oprettet_dato",
-    "dokumenttype", "kilde_url" (valgfri), "similarity" (valgfri)}.
+    'sager' er en liste af dicts. Funktionen accepterer to schemas:
+
+      A) HEL-DOKUMENT (gammelt format — bruges til vilkår, lovgivning, og
+         som fallback for afgørelser hvis chunks ikke er backfillet endnu):
+            {"filnavn", "indhold", "oprettet_dato", "dokumenttype",
+             "kilde_url" (valgfri), "similarity" (valgfri)}
+
+      B) CHUNK (nyt format — bruges til afgørelser når chunks-tabellen
+         er fyldt op):
+            {"filnavn", "indhold", "overskrift", "chunk_index",
+             "dokument_id", "oprettet_dato", "dokumenttype",
+             "kilde_url", "similarity" (rerank-score)}
+
+    For chunks viser vi sektion-overskriften ("Nævnets bemærkninger og
+    afgørelse" osv.) i headeren, så Claude ved at den kun ser ét uddrag
+    af et større dokument — og hvilken sektion uddraget kommer fra.
     """
     blokke = []
     for sag in sager:
         filnavn = sag.get("filnavn") or "ukendt_fil"
-        indhold = _trim(sag.get("indhold") or "")
         dato = _format_dato(sag.get("oprettet_dato"))
         doktype = sag.get("dokumenttype") or "afgoerelse"
         kilde = sag.get("kilde_url")
+        sim = sag.get("similarity")
+
+        # Detektér om dette er et chunk eller et helt dokument
+        er_chunk = "chunk_index" in sag and sag.get("chunk_index") is not None
+        overskrift = (sag.get("overskrift") or "").strip() if er_chunk else ""
 
         if doktype == "klage":
             label = "KLAGE (ikke afgjort endnu)"
@@ -328,11 +371,22 @@ def _byg_vidensbank_tekst(sager):
         elif doktype == "lovgivning":
             label = "PAKKEREJSELOVEN"
         else:
-            label = "AFGØRELSE"
+            label = "AFGØRELSE — UDDRAG" if er_chunk else "AFGØRELSE"
 
-        # Vis evt. similarity-score så Claude ved hvor godt denne sag matcher
-        sim = sag.get("similarity")
+        # Trim indhold — chunks har eget loft, hele dokumenter bruger MAX_CHARS_PR_SAG
+        raw_indhold = sag.get("indhold") or ""
+        if er_chunk:
+            if len(raw_indhold) > MAX_CHARS_PR_CHUNK:
+                indhold = raw_indhold[:MAX_CHARS_PR_CHUNK] + "\n[...uddrag forkortet...]"
+            else:
+                indhold = raw_indhold
+        else:
+            indhold = _trim(raw_indhold)
+
+        # Byg header-linje
         header_dele = [f"=== {label}", f"Filnavn: {filnavn}", f"Gemt: {dato}"]
+        if er_chunk and overskrift:
+            header_dele.append(f"Sektion: {overskrift}")
         if sim is not None:
             header_dele.append(f"Relevans: {sim:.2f}")
         if kilde:
@@ -340,7 +394,12 @@ def _byg_vidensbank_tekst(sager):
         header_dele.append("===")
         header = " | ".join(header_dele)
 
-        blokke.append(f"{header}\n{indhold}")
+        # For chunks: medtag sektion-overskriften i selve teksten også,
+        # så Claude ved hvor i afgørelsen vi er
+        if er_chunk and overskrift:
+            blokke.append(f"{header}\n{overskrift}\n\n{indhold}")
+        else:
+            blokke.append(f"{header}\n{indhold}")
     return "\n\n".join(blokke)
 
 
@@ -412,26 +471,197 @@ def _opgave_tekst():
     )
 
 
+def _hent_relevante_chunks_med_rerank(soge_tekst, udeluk_dokument_id=None):
+    """
+    Chunk-baseret RAG-pipeline til AFGØRELSER. Tre trin:
+
+      STAGE 1 — recall (hybrid):
+        a) Embedding-søgning: TOP_K_CHUNKS_EMBED kandidat-chunks via cosine
+        b) Keyword-søgning:   TOP_K_CHUNKS_KEYWORD chunks via ILIKE
+        Kombineres via Reciprocal Rank Fusion (RRF) — chunks der er
+        i top af BEGGE lister får ekstra vægt.
+
+      STAGE 2 — precision (rerank):
+        Voyage rerank-2 cross-encoder scorer hver kandidat mod querien
+        i fuld dybde (i stedet for at sammenligne to vektorer). Vi
+        beholder TOP_K_CHUNKS_FINAL bedste.
+
+      STAGE 3 — output:
+        Returnerer chunk-dicts (samme schema som find_relevante_chunks
+        men med .indhold formattereret som "OVERSKRIFT\n\nINDHOLD" så
+        sektion-konteksten er tydelig for Claude).
+
+    Hvis ingen chunks findes (fx før backfill_chunks.py er kørt),
+    returneres tom liste — kalderen kan så falde tilbage til den
+    gamle hele-dokument-pipeline.
+    """
+    # Kort-circuit hvis chunks-tabellen er tom (fx før backfill)
+    if antal_chunks_total() == 0:
+        return []
+
+    sporgsmaal_emb = embed_sporgsmaal(soge_tekst)
+    if sporgsmaal_emb is None:
+        return []
+
+    # ---- STAGE 1a: embedding-baseret recall ----
+    embed_kandidater = find_relevante_chunks(
+        sporgsmaal_emb,
+        top_k=TOP_K_CHUNKS_EMBED,
+        udeluk_dokument_id=udeluk_dokument_id,
+        dokumenttype="afgoerelse",
+    )
+
+    # ---- STAGE 1b: keyword-baseret recall ----
+    keyword_kandidater = soeg_chunks_keyword(
+        soge_tekst,
+        top_k=TOP_K_CHUNKS_KEYWORD,
+        dokumenttype="afgoerelse",
+    )
+    if udeluk_dokument_id:
+        keyword_kandidater = [
+            c for c in keyword_kandidater
+            if c.get("dokument_id") != udeluk_dokument_id
+        ]
+
+    # ---- STAGE 1c: Reciprocal Rank Fusion ----
+    # RRF er en simpel og overraskende effektiv måde at kombinere
+    # rankings fra forskellige søgestrategier. Hver chunks får
+    # score = sum over kilder af 1/(k + rank_i) hvor k=60 er en
+    # standard-konstant. Den belønner chunks der er højt rangeret
+    # i mindst én liste, og giver bonus hvis de er i begge.
+    RRF_K = 60
+    rrf_scores = {}
+    chunk_lookup = {}
+
+    for rank, chunk in enumerate(embed_kandidater):
+        cid = chunk["chunk_id"]
+        rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (RRF_K + rank)
+        chunk_lookup[cid] = chunk
+
+    for rank, chunk in enumerate(keyword_kandidater):
+        cid = chunk["chunk_id"]
+        rrf_scores[cid] = rrf_scores.get(cid, 0.0) + 1.0 / (RRF_K + rank)
+        if cid not in chunk_lookup:
+            chunk_lookup[cid] = chunk
+
+    if not rrf_scores:
+        return []
+
+    # Sortér efter RRF-score og tag top 30 til reranker'en.
+    # Voyage rerank-2 er hurtig nok til 30 kandidater (<200ms).
+    fusioneret = sorted(
+        rrf_scores.items(), key=lambda x: x[1], reverse=True
+    )[:30]
+    kandidater = [chunk_lookup[cid] for cid, _ in fusioneret]
+
+    # ---- STAGE 2: rerank ----
+    # Byg input til reranker'en: præfix overskriften så reranker
+    # ser sektion-konteksten.
+    rerank_inputs = []
+    for c in kandidater:
+        overskrift = (c.get("overskrift") or "").strip()
+        indhold = (c.get("indhold") or "").strip()
+        if overskrift:
+            rerank_inputs.append(f"{overskrift}\n\n{indhold}")
+        else:
+            rerank_inputs.append(indhold)
+
+    reranket = rerank(soge_tekst, rerank_inputs, top_n=TOP_K_CHUNKS_FINAL)
+
+    # ---- STAGE 3: format output ----
+    # reranket er liste af (input_index, score)-tuples, sorteret efter score
+    resultat = []
+    for input_idx, score in reranket:
+        chunk = dict(kandidater[input_idx])  # kopi så vi ikke muterer
+        chunk["rerank_score"] = score
+        # Overskriv similarity med rerank-score så _byg_vidensbank_tekst
+        # viser den mest meningsfulde score
+        if score is not None:
+            chunk["similarity"] = score
+        resultat.append(chunk)
+
+    return resultat
+
+
+def _hent_relevante_for_foerstevurdering(soge_tekst, udeluk_filnavne=None):
+    """
+    Henter den kombinerede vidensbank til førstevurdering / svarbrev /
+    Q&A-flows der allerede har sagens egne filnavne i hånden.
+
+    Forskellen fra _hent_relevante_eller_fald_tilbage er at denne
+    accepterer en SET af filnavne der skal udelukkes (fx alle filer i
+    den uploadede sag, så Claude ikke citerer sagens egne dokumenter
+    som præcedens).
+
+    Returnerer en kombineret liste:
+      - AFGØRELSER som CHUNKS (via chunk+rerank-pipeline)
+      - VILKÅR som hele dokumenter
+      - PAKKEREJSELOV som hele dokumenter
+
+    Med graceful fallback hvis chunks-tabellen er tom.
+    """
+    udeluk_filnavne = udeluk_filnavne or set()
+
+    sporgsmaal_emb = embed_sporgsmaal(soge_tekst)
+
+    # Vilkår + lovgivning (hele dokumenter — disse chunkes ikke)
+    vilkaar = []
+    lovgivning = []
+    if sporgsmaal_emb is not None:
+        vilkaar = find_relevante_sager(
+            sporgsmaal_emb, top_k=TOP_K_VILKAAR,
+            dokumenttype="vilkaar",
+        )
+        lovgivning = find_relevante_sager(
+            sporgsmaal_emb, top_k=TOP_K_LOVGIVNING,
+            dokumenttype="lovgivning",
+        )
+
+    # Afgørelser via ny chunk+rerank-pipeline
+    afgoerelse_chunks = _hent_relevante_chunks_med_rerank(soge_tekst)
+
+    if afgoerelse_chunks:
+        afgoerelser_resultat = afgoerelse_chunks
+    else:
+        # Fallback: gammel hele-dokument-pipeline
+        afgoerelser_resultat = []
+        if sporgsmaal_emb is not None:
+            afgoerelser_resultat = find_relevante_sager(
+                sporgsmaal_emb, top_k=TOP_K_AFGOERELSER,
+                dokumenttype="afgoerelse",
+            )
+
+    samlet = afgoerelser_resultat + vilkaar + lovgivning
+    if udeluk_filnavne:
+        samlet = [r for r in samlet if r.get("filnavn") not in udeluk_filnavne]
+    return samlet
+
+
 def _hent_relevante_eller_fald_tilbage(soge_tekst, udeluk_filnavn=None):
     """
-    Finder relevante sager via embedding-søgning og kombinerer fire typer:
-      - De TOP_K_AFGOERELSER mest relevante AFGØRELSER (juridisk præcedens)
-      - De TOP_K_VILKAAR mest relevante VILKÅR-passager (kontraktgrundlaget)
-      - De TOP_K_LOVGIVNING mest relevante PAKKEREJSELOV-paragraffer
-      - KLAGER bliver ikke hentet separat (klager er kun kontekst)
+    Finder relevante sager og kombinerer tre typer:
+      - AFGØRELSER (juridisk præcedens) — bruger den NYE chunk+rerank-
+        pipeline når dokument_chunks-tabellen er fyldt op (giver markant
+        højere præcision); falder tilbage til hele-dokument-RAG hvis
+        chunks-tabellen er tom (fx før backfill_chunks.py er kørt).
+      - VILKÅR-passager — kort og statisk, bruger hele-dokument-RAG.
+      - PAKKEREJSELOV-paragraffer — ditto.
 
-    Returnerer en kombineret liste. Hvis Voyage er nede eller ingen
-    embeddings findes, falder vi tilbage til at sende et begrænset udvalg
-    af alle sager, så systemet aldrig står helt stille.
+    Returnerer (liste, kilde-tag) hvor kilde-tag = "rag-chunks" / "rag" /
+    "fallback" — bruges til logging og test-instrumentation.
+
+    Hvis Voyage er nede eller embeddings ikke findes, falder vi tilbage
+    til at sende et begrænset udvalg af alle sager, så systemet aldrig
+    står helt stille.
     """
     sporgsmaal_emb = embed_sporgsmaal(soge_tekst)
+
+    # ---- VILKÅR + LOVGIVNING: bruger stadig hele-dokument-RAG ----
+    # Disse er korte (få sider) og bruges som hele dokumenter i prompten.
+    # Det giver ingen mening at chunke dem.
+    vilkaar = []
+    lovgivning = []
     if sporgsmaal_emb is not None:
-        afgoerelser = find_relevante_sager(
-            sporgsmaal_emb,
-            top_k=TOP_K_AFGOERELSER,
-            udeluk_filnavn=udeluk_filnavn,
-            dokumenttype="afgoerelse",
-        )
         vilkaar = find_relevante_sager(
             sporgsmaal_emb,
             top_k=TOP_K_VILKAAR,
@@ -444,12 +674,40 @@ def _hent_relevante_eller_fald_tilbage(soge_tekst, udeluk_filnavn=None):
             udeluk_filnavn=udeluk_filnavn,
             dokumenttype="lovgivning",
         )
+
+    # ---- AFGØRELSER: prøv chunk-pipelinen først ----
+    udeluk_dok_id = None
+    if udeluk_filnavn:
+        try:
+            from database import hent_dokument_id_fra_filnavn
+            udeluk_dok_id = hent_dokument_id_fra_filnavn(udeluk_filnavn)
+        except Exception as _e:
+            print(f"DEBUG: kunne ikke slå udeluk_dokument_id op: {_e}")
+
+    afgoerelse_chunks = _hent_relevante_chunks_med_rerank(
+        soge_tekst,
+        udeluk_dokument_id=udeluk_dok_id,
+    )
+
+    if afgoerelse_chunks:
+        # Nyt chunk-baseret resultat — kombiner med vilkår/lov
+        kombineret = afgoerelse_chunks + vilkaar + lovgivning
+        return kombineret, "rag-chunks"
+
+    # ---- Fallback A: chunk-pipeline gav intet (fx før backfill) ----
+    # Brug det gamle hele-dokument RAG for afgørelser
+    if sporgsmaal_emb is not None:
+        afgoerelser = find_relevante_sager(
+            sporgsmaal_emb,
+            top_k=TOP_K_AFGOERELSER,
+            udeluk_filnavn=udeluk_filnavn,
+            dokumenttype="afgoerelse",
+        )
         kombineret = afgoerelser + vilkaar + lovgivning
         if kombineret:
             return kombineret, "rag"
 
-    # Fallback: hent et begrænset udvalg fra alle sager. Dette er langsommere
-    # men sikrer at systemet virker selv hvis embeddings fejler.
+    # ---- Fallback B: ingen embeddings overhovedet ----
     print("DEBUG: RAG-søgning gav intet resultat — falder tilbage til alle sager")
     alle = hent_alle_sager()
     if udeluk_filnavn:
@@ -3086,29 +3344,9 @@ def spoerg_ai_med_sag(
         # klagens egne filer som præcedens
         udeluk_filnavne = {f.get("filnavn") for f in filer}
 
-        sporgsmaal_emb = embed_sporgsmaal(soge_tekst)
-        relevante = []
-        if sporgsmaal_emb is not None:
-            afgoerelser = find_relevante_sager(
-                sporgsmaal_emb,
-                top_k=TOP_K_AFGOERELSER,
-                dokumenttype="afgoerelse",
-            )
-            vilkaar = find_relevante_sager(
-                sporgsmaal_emb,
-                top_k=TOP_K_VILKAAR,
-                dokumenttype="vilkaar",
-            )
-            lovgivning = find_relevante_sager(
-                sporgsmaal_emb,
-                top_k=TOP_K_LOVGIVNING,
-                dokumenttype="lovgivning",
-            )
-            # Filtrér sagens egne filer ud
-            relevante = [
-                r for r in (afgoerelser + vilkaar + lovgivning)
-                if r.get("filnavn") not in udeluk_filnavne
-            ]
+        relevante = _hent_relevante_for_foerstevurdering(
+            soge_tekst, udeluk_filnavne=udeluk_filnavne,
+        )
 
         vidensbank = _byg_vidensbank_tekst(relevante) if relevante else (
             "(Ingen tidligere sager fundet i vidensbanken.)"
@@ -3377,25 +3615,11 @@ def udled_foerstevurdering_struktureret(
 
         udeluk_filnavne = {f.get("filnavn") for f in filer}
 
-        sporgsmaal_emb = embed_sporgsmaal(soge_tekst)
-        relevante = []
-        if sporgsmaal_emb is not None:
-            afgoerelser = find_relevante_sager(
-                sporgsmaal_emb, top_k=TOP_K_AFGOERELSER,
-                dokumenttype="afgoerelse",
-            )
-            vilkaar = find_relevante_sager(
-                sporgsmaal_emb, top_k=TOP_K_VILKAAR,
-                dokumenttype="vilkaar",
-            )
-            lovgivning = find_relevante_sager(
-                sporgsmaal_emb, top_k=TOP_K_LOVGIVNING,
-                dokumenttype="lovgivning",
-            )
-            relevante = [
-                r for r in (afgoerelser + vilkaar + lovgivning)
-                if r.get("filnavn") not in udeluk_filnavne
-            ]
+        # Brug ny chunk+rerank-pipeline for afgørelser (mere præcis end
+        # at sammenligne hele dokumenter); vilkår + lov bruger hele dok'er.
+        relevante = _hent_relevante_for_foerstevurdering(
+            soge_tekst, udeluk_filnavne=udeluk_filnavne,
+        )
 
         vidensbank = (
             _byg_vidensbank_tekst(relevante) if relevante
@@ -3668,28 +3892,9 @@ def generer_svarbrev_til_sag(
         soge_tekst = "\n\n".join(dele)
 
         udeluk_filnavne = {f.get("filnavn") for f in filer}
-        sporgsmaal_emb = embed_sporgsmaal(soge_tekst)
-        relevante = []
-        if sporgsmaal_emb is not None:
-            afgoerelser = find_relevante_sager(
-                sporgsmaal_emb,
-                top_k=TOP_K_AFGOERELSER,
-                dokumenttype="afgoerelse",
-            )
-            vilkaar = find_relevante_sager(
-                sporgsmaal_emb,
-                top_k=TOP_K_VILKAAR,
-                dokumenttype="vilkaar",
-            )
-            lovgivning = find_relevante_sager(
-                sporgsmaal_emb,
-                top_k=TOP_K_LOVGIVNING,
-                dokumenttype="lovgivning",
-            )
-            relevante = [
-                r for r in (afgoerelser + vilkaar + lovgivning)
-                if r.get("filnavn") not in udeluk_filnavne
-            ]
+        relevante = _hent_relevante_for_foerstevurdering(
+            soge_tekst, udeluk_filnavne=udeluk_filnavne,
+        )
         vidensbank = _byg_vidensbank_tekst(relevante) if relevante else (
             "(Ingen tidligere sager fundet i vidensbanken.)"
         )

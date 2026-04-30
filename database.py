@@ -79,6 +79,42 @@ def opret_tabeller():
             print(f"DEBUG: HNSW-indeks kunne ikke oprettes (ikke kritisk): {idx_err}")
             conn.rollback()
 
+        # 5b. Chunks-tabel: hver afgørelse splittes i 5-15 paragraf-chunks
+        #     der hver embeddes for sig. Det giver markant bedre RAG-præcision
+        #     end at embedde et helt 30-siders dokument til én vektor.
+        #     dokument_id = FK til mine_dokumenter.id (CASCADE delete så
+        #     chunks ryger med hvis dokumentet slettes).
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS dokument_chunks (
+                id SERIAL PRIMARY KEY,
+                dokument_id INTEGER NOT NULL REFERENCES mine_dokumenter(id)
+                    ON DELETE CASCADE,
+                chunk_index INTEGER NOT NULL,
+                overskrift TEXT,
+                indhold TEXT NOT NULL,
+                embedding vector(1024),
+                oprettet_dato TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (dokument_id, chunk_index)
+            )
+        """)
+
+        # 5c. HNSW-indeks på chunk-embeddings — kritisk for hurtig søgning
+        try:
+            cur.execute("""
+                CREATE INDEX IF NOT EXISTS idx_dokument_chunks_embedding
+                ON dokument_chunks
+                USING hnsw (embedding vector_cosine_ops)
+            """)
+        except Exception as idx_err:
+            print(f"DEBUG: HNSW-indeks for chunks kunne ikke oprettes (ikke kritisk): {idx_err}")
+            conn.rollback()
+
+        # 5d. Indeks til hurtig "find chunks for dokument" og keyword-søgning
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_dokument_chunks_dokument_id
+            ON dokument_chunks (dokument_id)
+        """)
+
         # 6. Arkiv-tabel til gemte analyser og svarbreve. Hver række er én
         #    analyse/ét brev som juristen har fået lavet og vil kunne finde
         #    igen uden at køre AI'en om.
@@ -330,6 +366,274 @@ def hent_sager_af_type(dokumenttype, limit=None):
         ]
     except Exception as e:
         print(f"DEBUG: Kunne ikke hente sager af type {dokumenttype}: {e}")
+        return []
+
+
+# ---------- CHUNKS-FUNKTIONER (forbedret RAG) ----------
+
+def hent_dokument_id_fra_filnavn(filnavn):
+    """Slår dokument-id op fra filnavn. Bruges af backfill-scriptet."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id FROM mine_dokumenter WHERE filnavn = %s LIMIT 1",
+            (filnavn,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return row[0] if row else None
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente dokument-id for {filnavn}: {e}")
+        return None
+
+
+def hent_dokumenter_uden_chunks(dokumenttype="afgoerelse"):
+    """
+    Returnerer alle dokumenter af en given type der ENDNU IKKE har
+    chunks i dokument_chunks-tabellen. Bruges af backfill-scriptet
+    så det er idempotent — kør det igen og igen, kun nye dokumenter
+    bliver chunked.
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT m.id, m.filnavn, m.indhold
+            FROM mine_dokumenter m
+            LEFT JOIN dokument_chunks c ON c.dokument_id = m.id
+            WHERE m.dokumenttype = %s
+              AND c.id IS NULL
+            ORDER BY m.id ASC
+            """,
+            (dokumenttype,),
+        )
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {"id": r[0], "filnavn": r[1], "indhold": r[2]}
+            for r in raekker
+        ]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente dokumenter uden chunks: {e}")
+        return []
+
+
+def gem_chunks_for_dokument(dokument_id, chunks_med_embeddings):
+    """
+    Gemmer (eller erstatter) alle chunks for et dokument.
+    chunks_med_embeddings er en liste af dicts:
+        [{"chunk_index": int, "overskrift": str, "indhold": str,
+          "embedding": list[float] | None}, ...]
+
+    Sletter først eksisterende chunks for dokumentet, så funktionen
+    kan re-køres uden duplikater (fx hvis chunking-strategien ændres).
+    """
+    if not chunks_med_embeddings:
+        return 0
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        # Slet eksisterende chunks så vi kan re-køre uden duplikater
+        cur.execute(
+            "DELETE FROM dokument_chunks WHERE dokument_id = %s",
+            (dokument_id,),
+        )
+        # Indsæt nye chunks
+        antal_indsat = 0
+        for c in chunks_med_embeddings:
+            cur.execute(
+                """
+                INSERT INTO dokument_chunks
+                  (dokument_id, chunk_index, overskrift, indhold, embedding)
+                VALUES (%s, %s, %s, %s, %s)
+                """,
+                (
+                    dokument_id,
+                    c.get("chunk_index", 0),
+                    c.get("overskrift") or "",
+                    c.get("indhold") or "",
+                    c.get("embedding"),
+                ),
+            )
+            antal_indsat += 1
+        conn.commit()
+        cur.close()
+        conn.close()
+        return antal_indsat
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke gemme chunks for dokument {dokument_id}: {e}")
+        return 0
+
+
+def antal_chunks_total():
+    """Returnerer total antal chunks i databasen — bruges af diagnostik."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM dokument_chunks")
+        antal = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return antal
+    except Exception:
+        return 0
+
+
+def find_relevante_chunks(
+    sporgsmaal_embedding,
+    top_k=30,
+    udeluk_dokument_id=None,
+    dokumenttype="afgoerelse",
+):
+    """
+    Chunk-baseret RAG-søgning. Returnerer de top_k mest relevante
+    CHUNKS via cosine similarity, sammen med deres parent-dokument-
+    metadata (filnavn, dato, kilde_url).
+
+    Default top_k=30 fordi vi forventer at reranker'en skærer ned
+    til 5-8 bagefter. Bedre at få mange kandidater til reranker'en.
+
+    udeluk_dokument_id: hvis angivet, springes alle chunks fra det
+                       dokument over (bruges så en klage der er
+                       gemt automatisk ikke citerer sig selv).
+    dokumenttype: filtrerer på parent-dokumentets type. Default
+                  'afgoerelse' fordi chunking kun giver mening for
+                  dem (vilkår + lovgivning er korte og bruges som hele
+                  dokumenter).
+    """
+    if sporgsmaal_embedding is None:
+        return []
+
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        where = [
+            "c.embedding IS NOT NULL",
+            "m.dokumenttype = %s",
+        ]
+        params = [dokumenttype, sporgsmaal_embedding]
+        if udeluk_dokument_id:
+            where.append("c.dokument_id <> %s")
+            params.append(udeluk_dokument_id)
+        params.append(sporgsmaal_embedding)
+        params.append(top_k)
+
+        sql = f"""
+            SELECT
+                c.id AS chunk_id,
+                c.dokument_id,
+                c.chunk_index,
+                c.overskrift,
+                c.indhold,
+                m.filnavn,
+                m.oprettet_dato,
+                m.kilde_url,
+                m.dokumenttype,
+                1 - (c.embedding <=> %s::vector) AS similarity
+            FROM dokument_chunks c
+            JOIN mine_dokumenter m ON m.id = c.dokument_id
+            WHERE {' AND '.join(where)}
+            ORDER BY c.embedding <=> %s::vector ASC
+            LIMIT %s
+        """
+        cur.execute(sql, params)
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return [
+            {
+                "chunk_id": r[0],
+                "dokument_id": r[1],
+                "chunk_index": r[2],
+                "overskrift": r[3] or "",
+                "indhold": r[4] or "",
+                "filnavn": r[5],
+                "oprettet_dato": r[6],
+                "kilde_url": r[7],
+                "dokumenttype": r[8] or "afgoerelse",
+                "similarity": float(r[9]) if r[9] is not None else None,
+            }
+            for r in raekker
+        ]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke finde relevante chunks: {e}")
+        return []
+
+
+def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse"):
+    """
+    Stikord/keyword-søgning på chunks (ILIKE). Bruges til hybrid søgning
+    sammen med find_relevante_chunks: keyword-resultater fanger sager
+    hvor en specifik frase matcher næsten eksakt, men hvor embedding-
+    similarity måske ikke ranglister højt nok.
+
+    Returnerer samme dict-struktur som find_relevante_chunks (uden
+    similarity-feltet — vi kan ikke sammenligne BM25-rank direkte med
+    cosine).
+    """
+    if not stikord or not stikord.strip():
+        return []
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        # Split på mellemrum og kræv at alle ord forekommer i samme chunk
+        ord_liste = [o.strip() for o in stikord.split() if len(o.strip()) > 2]
+        if not ord_liste:
+            return []
+
+        where = ["m.dokumenttype = %s"]
+        params = [dokumenttype]
+        for ord_ in ord_liste:
+            where.append("c.indhold ILIKE %s")
+            params.append(f"%{ord_}%")
+        params.append(top_k)
+
+        sql = f"""
+            SELECT
+                c.id AS chunk_id,
+                c.dokument_id,
+                c.chunk_index,
+                c.overskrift,
+                c.indhold,
+                m.filnavn,
+                m.oprettet_dato,
+                m.kilde_url,
+                m.dokumenttype
+            FROM dokument_chunks c
+            JOIN mine_dokumenter m ON m.id = c.dokument_id
+            WHERE {' AND '.join(where)}
+            ORDER BY m.oprettet_dato DESC
+            LIMIT %s
+        """
+        cur.execute(sql, params)
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        return [
+            {
+                "chunk_id": r[0],
+                "dokument_id": r[1],
+                "chunk_index": r[2],
+                "overskrift": r[3] or "",
+                "indhold": r[4] or "",
+                "filnavn": r[5],
+                "oprettet_dato": r[6],
+                "kilde_url": r[7],
+                "dokumenttype": r[8] or "afgoerelse",
+                "similarity": None,  # ikke comparable med vector-similarity
+            }
+            for r in raekker
+        ]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke keyword-søge chunks: {e}")
         return []
 
 
