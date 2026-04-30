@@ -1508,81 +1508,151 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
 _har_aktiv_sag = bool(st.session_state.get("aktuel_sag"))
 
 if not _har_aktiv_sag:
-    # Side-by-side: hero til venstre, upload-widget til højre.
-    # På smalle skærme stakkes de automatisk af Streamlit.
-    _kol_hero, _kol_upload = st.columns([1, 1], gap="medium")
+    # ---------- POLERET FULL-WIDTH UPLOAD-SEKTION ----------
+    # Tidligere var dette side-by-side hero + uploader. Nu er det én
+    # stor prominent upload-zone à la moderne SaaS-apps — med polerede
+    # dashed borders, hjælpetekst om formater og maks-størrelse, og
+    # 'Scan filer'-knap nedenunder. Funktionaliteten er 1:1 — kun
+    # udseendet er ændret. MP4 er fjernet fra accepterede formater.
 
-    with _kol_hero:
-        st.markdown(
-            """
-            <div style="
-                background: linear-gradient(135deg, #EEEAFF 0%, #F4F1FF 100%);
-                padding: 1.75rem 1.75rem;
-                border-radius: 20px;
-                min-height: 220px;
-                display: flex;
-                flex-direction: column;
-                justify-content: center;
+    # Header øverst — kompakt, professionelt udtryk
+    st.markdown(
+        """
+        <div style="margin: 4px 0 18px 0;">
+            <h1 style="
+                font-family: 'Source Serif 4', Georgia, serif;
+                font-size: 1.85rem;
+                font-weight: 700;
+                line-height: 1.15;
+                letter-spacing: -0.02em;
+                color: #111827;
+                margin: 0 0 8px 0;
             ">
-                <h1 style="
-                    font-family: 'Source Serif 4', Georgia, serif;
-                    font-size: 1.9rem;
-                    font-weight: 700;
-                    line-height: 1.08;
-                    letter-spacing: -0.025em;
-                    color: #1F2937;
-                    margin: 0 0 0.5rem 0;
-                ">
-                    Analysér en sag fra <span style="color: #4F46E5;">Pakkerejse-Ankenævnet</span>
-                </h1>
-                <p style="
-                    font-family: 'Inter', sans-serif;
-                    font-size: 0.95rem;
-                    line-height: 1.45;
-                    color: #4B5563;
-                    margin: 0;
-                    font-weight: 400;
-                ">
-                    Kom i gang ved at uploade sagsfilerne — høringsbrev,
-                    klageskema og eventuelle bilag.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+                Analysér en sag fra <span style="color: #4F46E5;">Pakkerejse-Ankenævnet</span>
+            </h1>
+            <p style="
+                font-family: 'Inter', sans-serif;
+                font-size: 0.96rem;
+                line-height: 1.5;
+                color: #4B5563;
+                margin: 0;
+                max-width: 720px;
+            ">
+                Upload sagsfilerne — høringsbrev, klageskema og eventuelle bilag.
+                Du kan tilføje filer ad flere omgange og klikke
+                <strong>Scan filer</strong> når du er klar til at starte analysen.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    with _kol_upload:
-        uploadede_sagsfiler = st.file_uploader(
-            "Upload sagsfilerne her",
-            type=["zip", "pdf", "docx", "png", "jpg", "jpeg", "mp4"],
-            accept_multiple_files=True,
-            key="sag_uploader",
-            help=(
-                "Understøtter ZIP, PDF, Word, billeder (PNG/JPG) og MP4. "
-                "MP4 læses ikke af juriitech PAX, men sagen analyseres "
-                "fortsat på basis af de øvrige filer. Flere filer kan "
-                "vælges samtidigt."
-            ),
-        )
+    # CSS til at gøre Streamlit's file_uploader stor og prominent.
+    # Vi targeter de officielle data-testid attributter så styling holder
+    # på tværs af Streamlit-opdateringer. KUN visuelt — funktionaliteten
+    # (drag-and-drop, multi-select, browse-knap) er uberørt.
+    st.markdown(
+        """
+        <style>
+        /* Den ydre container omkring file_uploader */
+        [data-testid="stFileUploader"] {
+            margin-bottom: 4px;
+        }
+        /* Selve drop-zonen: stor, dashed border, blød lavendel-tone */
+        [data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"],
+        [data-testid="stFileUploader"] section {
+            min-height: 220px !important;
+            padding: 36px 28px !important;
+            border: 2px dashed #C7D2FE !important;
+            border-radius: 18px !important;
+            background: linear-gradient(180deg, #FAFAFF 0%, #F5F3FF 100%) !important;
+            transition: all 0.18s ease;
+        }
+        /* Hover-tilstand: lidt mørkere kant + skygge */
+        [data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"]:hover,
+        [data-testid="stFileUploader"] section:hover {
+            border-color: #818CF8 !important;
+            background: linear-gradient(180deg, #F5F3FF 0%, #EEEAFF 100%) !important;
+            box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
+        }
+        /* Tekst inde i drop-zonen — gør den lidt større og mere tydelig */
+        [data-testid="stFileUploader"] section span,
+        [data-testid="stFileUploader"] section small {
+            font-size: 0.95rem !important;
+        }
+        /* 'Browse files'-knappen — gør den til primary-stilen */
+        [data-testid="stFileUploader"] section button {
+            background: #4F46E5 !important;
+            color: white !important;
+            border: none !important;
+            font-weight: 600 !important;
+            padding: 8px 20px !important;
+            border-radius: 8px !important;
+            transition: background 0.15s ease;
+        }
+        [data-testid="stFileUploader"] section button:hover {
+            background: #4338CA !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        # Scan-knappen placeres direkte i upload-kolonnen så den sidder
-        # umiddelbart under upload-feltet — flugtende med hero-boksen
-        # til venstre. Knappen vises kun når der er nye/ændrede filer.
-        _aktuel_sig_inline = tuple(sorted(
-            (f.name, f.size) for f in uploadede_sagsfiler or []
-        ))
-        _sidste_sig_inline = st.session_state.get(
-            "sidste_sagsfil_signatur"
+    uploadede_sagsfiler = st.file_uploader(
+        "Upload sagsfilerne her",
+        type=["zip", "pdf", "docx", "png", "jpg", "jpeg"],
+        accept_multiple_files=True,
+        key="sag_uploader",
+        label_visibility="collapsed",
+        help=(
+            "Understøtter ZIP, PDF, Word og billeder (PNG/JPG). "
+            "Flere filer kan vælges samtidigt eller tilføjes ad "
+            "flere omgange før du klikker Scan filer."
+        ),
+    )
+
+    # Hjælpe-bjælke under upload-zonen: formater til venstre, max-størrelse
+    # til højre — ligesom på inspiration-billedet.
+    st.markdown(
+        """
+        <div style="
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 4px 4px 18px 4px;
+            color: #6B7280;
+            font-size: 0.8rem;
+            font-family: 'Inter', sans-serif;
+        ">
+            <span>Understøttede formater: ZIP · PDF · DOCX · PNG · JPG</span>
+            <span>Maks. filstørrelse: 200 MB pr. fil</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # 'Scan filer'-knappen vises kun når der er nye/ændrede filer.
+    # Funktionaliteten er 1:1 fra før — kun visuelt placeret nedenunder
+    # upload-zonen i stedet for ved siden af hero-boksen.
+    _aktuel_sig_inline = tuple(sorted(
+        (f.name, f.size) for f in uploadede_sagsfiler or []
+    ))
+    _sidste_sig_inline = st.session_state.get(
+        "sidste_sagsfil_signatur"
+    )
+    if (
+        uploadede_sagsfiler
+        and _aktuel_sig_inline != _sidste_sig_inline
+    ):
+        _knap_tekst_inline = (
+            "Opdatér filer"
+            if _sidste_sig_inline is not None
+            else "Scan filer"
         )
-        if (
-            uploadede_sagsfiler
-            and _aktuel_sig_inline != _sidste_sig_inline
-        ):
-            _knap_tekst_inline = (
-                "Opdatér filer"
-                if _sidste_sig_inline is not None
-                else "Scan filer"
-            )
+        # Knap placeres centreret i en smallere kolonne så den ikke
+        # strækker sig ud over hele bredden af den store upload-zone
+        _kol_btn1, _kol_btn2, _kol_btn3 = st.columns([1, 2, 1])
+        with _kol_btn2:
             if st.button(
                 _knap_tekst_inline,
                 type="primary",
@@ -1614,7 +1684,7 @@ else:
     )
     uploadede_sagsfiler = st.file_uploader(
         "Tilføj flere sagsfiler",
-        type=["zip", "pdf", "docx", "png", "jpg", "jpeg", "mp4"],
+        type=["zip", "pdf", "docx", "png", "jpg", "jpeg"],
         accept_multiple_files=True,
         key="sag_uploader_active",  # SEPARAT key fra empty state
         label_visibility="collapsed",
