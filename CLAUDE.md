@@ -1,0 +1,343 @@
+# juriitech PAX — Project Notes & Learnings
+
+> **Til fremtidige Claude-sessions:** Læs denne fil før du foreslår større
+> ændringer. Den indeholder den arkitektoniske kontekst + de konkrete
+> learnings vi har bygget op gennem trial-and-error. Hvis du ser et
+> mønster der kan tilføjes, så skriv det ind nederst — denne fil skal
+> vokse løbende.
+
+---
+
+## Hvad projektet er
+
+**juriitech PAX** er en dansk juridisk AI-assistent til rejseselskaber
+(primært TUI) der håndterer klagesager ved **Pakkerejse-Ankenævnet**.
+Brugeren uploader en klagesag (klageskema + bilag + sagsakter), og PAX
+laver en automatisk førstevurdering inkl. præcedens-search i en
+vidensbank af 500+ tidligere afgørelser, og kan generere et
+færdigformateret svarbrev.
+
+Hovedbrugeren er Mikkel (mikkelsindbakke@gmail.com), der bygger og
+maintainer applikationen. Slutbrugerne er jurister/sagsbehandlere
+internt hos rejseselskaberne.
+
+---
+
+## Stack
+
+| Komponent | Teknologi |
+| --- | --- |
+| UI | Streamlit (multi-page) |
+| AI | Anthropic Claude (`claude-sonnet-4-6`) via tool-use |
+| Embeddings | Voyage AI (`voyage-multilingual-2`, 1024 dim) |
+| Reranking | Voyage AI (`rerank-2`) |
+| Database | Neon Postgres + pgvector (HNSW indexes) |
+| Deploy | Fly.io |
+| Fejl-monitoring | Sentry |
+
+---
+
+## Filer og ansvar
+
+| Fil | Rolle |
+| --- | --- |
+| `app.py` | Streamlit entrypoint |
+| `forside.py` | Hovedside — upload, analyse, dashboard |
+| `ai_engine.py` | Alle AI-kald, RAG-orchestrering, prompt-bygning |
+| `database.py` | Postgres I/O — sager, chunks, arkiv, gemte_sager |
+| `embeddings.py` | Voyage wrapper — embed_dokument, embed_sporgsmaal, chunk_tekst, rerank |
+| `processor.py` | Fil-upload — PDF/DOCX/billede-parsing |
+| `ui.py` | Genbrugte UI-komponenter (thinking_fullpage, badges, kort osv.) |
+| `eksport.py` | DOCX/PDF-generering af svarbreve |
+| `gemte_sager.py` | Save/load sag-state |
+| `arkiv.py` | Arkiv-side — søgning + visning af gemte analyser |
+| `selskab_profiler.py` | Per-selskab branding (TUI, Apollo osv.) |
+| `scraper.py` | Pakkerejse-Ankenævn afgørelses-scraper |
+| `pakkerejselov_scraper.py` | Lovgivning-scraper |
+| `tui_scraper.py` | TUI-vilkår scraper |
+| `backfill_embeddings.py` | Engangs-script til hele-dokument-embeddings |
+| `backfill_chunks.py` | Engangs-script til chunk-embeddings (køres ved schema-opgradering) |
+
+---
+
+## Sprog-konventioner
+
+- **All user-facing tekst er på dansk.** Det er en dansk juridisk app for danske jurister.
+- **Variabler, funktioner, kommentarer er typisk på dansk** (`udled_sagsmetadata`, `find_relevante_chunks`, `vis_brugerfejl`). Følg det mønster — undgå at blande engelsk og dansk i nye funktionsnavne.
+- **Filnavne er på dansk** når det giver mening (`forside.py`, `eksport.py`).
+- **DEBUG-prints og loggene må gerne være på engelsk** (de læses primært af udvikleren).
+
+---
+
+## Learnings (kategoriseret)
+
+### AI prompt engineering
+
+**JSON-schema låser struktur.** Den enkelt-mest effektive ændring vi
+har lavet var at skifte fra "bed AI om at følge markdown-overskrifter"
+til "tving JSON-output via tool-use schema" (`udled_foerstevurdering_struktureret`).
+Vi gik fra freestyle 14 sektioner til altid præcis 6.
+
+**Force-mapper efter struktureret output.** Selv med JSON-schema kan
+modellen emittere valid JSON med "kreative" labels. En post-processor
+(`tving_struktur_til_seks_sektioner`) der mapper messy keys til
+kanoniske sektion-navne fungerer som belt-and-suspenders.
+
+**`max_tokens` afkorter tavst.** Tjek altid `stop_reason == "max_tokens"`
+og lav et continuation-kald (`_faerdiggoer_hvis_afkortet`-mønstret) hvor
+det delvise svar sendes tilbage som assistant-turn så modellen fortsætter.
+Uden det får du svar der ender midt i en sætning.
+
+**Eksplicitte anti-hallucinations-regler i system-prompten** ("OPFIND
+ALDRIG et sagsnummer der ikke står i materialet") forbedrer
+ekstraktions-kvalitet mærkbart. Vær specifik om hvad der må og ikke må
+findes på.
+
+**AI er ofte for forsigtig på simple ekstraktioner.** Sagsnummer, navne,
+datoer — selv med eksplicitte instruktioner returnerer modellen tit tom
+streng "for en sikkerheds skyld". Backup ALTID med en deterministisk
+regex-fallback (`_regex_find_sagsnummer`-mønstret).
+
+**Brug `temperature=0` for ekstraktion og strukturerede opgaver.** Brug
+højere temperature kun for kreative opgaver (svarbrev-formuleringer hvor
+variation er ønsket). Vi bruger 0 alle steder vi vil have determinisme.
+
+### RAG-arkitektur
+
+**Én vektor pr. dokument = "find lignende sager". Chunks-pr-paragraf =
+"find lignende argumenter".** Chunk altid for dokumenter længere end et
+par sider. Dette var den enkeltstående største præcisionsforbedring.
+
+**To-trins retrieval er industristandard.** Stage 1: bredt recall via
+embedding + keyword. Stage 2: precision via cross-encoder reranker
+(Voyage rerank-2). Hver alene giver okay resultater; begge sammen
+giver markant bedre.
+
+**Reciprocal Rank Fusion (k=60) er den simpleste måde at kombinere
+heterogene rankings.** Score = sum over kilder af 1/(k + rank). Belønner
+chunks der er højt rangeret i mindst én liste, ekstra belønning hvis i
+begge. Ingen score-normalisering nødvendig.
+
+**Voyage `input_type='document'` vs `input_type='query'`** — brug dem
+korrekt. Embedding for ting der gemmes = `document`. Embedding for
+spørgsmål der søger = `query`. Forskellen er ikke kosmetisk.
+
+**Fine-tune ALDRIG for fakta-recall.** RAG vinder altid for memorerbar
+viden — du kan citere kilden, ny scraping virker øjeblikkeligt, ingen
+risiko for hallucination af ting modellen "har lært".
+
+**HNSW indexes** for pgvector er gratis præcision-til-fart. Tag det
+sekund ved tabel-oprettelse. Kør på cosine-distance med
+`vector_cosine_ops`.
+
+**Chunk-strategi for Pakkerejse-Ankenævn-afgørelser:** Kanoniske
+sektion-overskrifter ("Klagens indhold", "Indklagedes bemærkninger",
+"Nævnets bemærkninger og afgørelse", "Konklusion" osv.) er det
+naturlige split-punkt. Fallback til paragraf-split for OCR-tekst hvor
+formatering er ødelagt. Se `embeddings.chunk_tekst()`.
+
+### Robusthed
+
+**Lazy klient-init for alle eksterne API'er.** Voyage og Anthropic
+klienter må ALDRIG initialiseres ved modul-import — manglende eller
+ugyldig API-nøgle ville crashe hele appen. Init første gang funktionen
+faktisk skal bruges, og returnér None hvis det fejler så kalderne
+graceful kan håndtere det.
+
+**Graceful fallback-kæde i hvert lag.** RAG: chunks → hele-dokument →
+hent_alle_sager. AI-ekstraktion: AI → regex → tom streng. Embedding:
+voyage → keyword-only. Systemet må aldrig gå fuldstændigt mørkt fordi
+ét lag er nede.
+
+**Idempotente schema-migrationer.** Brug `CREATE TABLE IF NOT EXISTS`
+og `ADD COLUMN IF NOT EXISTS` i `opret_tabeller()` der køres ved hver
+app-opstart. Ingen separate migration-scripts at huske — schema er
+selvhealende.
+
+**Bagudkompatible dict-former.** Når vi ændrer et data-format (fx fra
+hele-dokument-dicts til chunk-dicts), så lad detektoren acceptere begge
+former. Det er det der gør at vi kunne deploye chunk-pipelinen FØR
+backfill var kørt — systemet faldt tilbage automatisk.
+
+**Detekter via tilstedeværelse af nøgler, ikke via format-versioning.**
+Eksempel: `er_chunk = "chunk_index" in sag and sag.get("chunk_index") is not None`
+i `_byg_vidensbank_tekst`. Mere robust end at have en `format: "v2"`-felt
+der nogle gange mangler.
+
+### Streamlit-specifikt
+
+**`st.rerun()` efter AI-kald hvis UI er skjult under analysen.** Hvis du
+skjuler sektioner baseret på state der ændres i samme render som
+AI-kaldet kører i, så forbliver de skjult indtil næste user interaction.
+Tving en rerun lige efter AI'en er færdig (vi blev bidt af det med
+upload-sektionen).
+
+**Initialiser widget-state KUN hvis nøglen ikke findes.** `if key not in
+st.session_state: st.session_state[key] = default`. Ellers overskrives
+brugerens redigeringer ved hver rerun. Streamlit's widget-state ER
+sandhed når widget'en først er oprettet.
+
+**Cache dyre AI-kald i session_state pr. signatur.** Beregn et hash af
+inputs (`sag_signatur`), brug det som nøgle. Uden cache kører dyre
+AI-kald igen ved hver rerender — det er både langsomt og dyrt.
+
+**`st.components.v1.html` kører i iframe og kan ikke blokere.** Lange
+AI-kald hører hjemme i Python-tråden, ikke i iframe-konteksten. Brug
+iframes til animation/timer/visualisering, ikke til kald der tager tid.
+
+**Streamlit's segmented_control kan ikke have `index=`** ved
+selection_mode="single" — den bruger session_state-værdien som default.
+
+### Regex-faldgruber
+
+**Capturing groups i ANCHOR-patterns flytter downstream group-numre.**
+Hvis du har `r"Klagepunkt(er)?\s*:(.*)"` så kan `group(1)` være enten
+"er" eller None — og `group(2)` er det du faktisk ville have. Brug
+`(?:...)` for ankre og navngivne grupper `(?P<indhold>...)` for det du
+faktisk vil have ud. Vi spildte timer på denne i `udtraek_sagen_angaar`.
+
+**Test ALTID regex mod false positives.** En sagsnummer-regex skal IKKE
+matche datoen `25-04-2026`. En telefon-regex skal ikke matche en pris.
+Skriv en lille test-suite med kendte negative cases.
+
+**ILIKE i Postgres er case-insensitive ud af boksen** — du behøver ikke
+selv at lower'e begge sider. Det er hurtigere og mere læseligt.
+
+### Debugging & deploy
+
+**`vis_brugerfejl` sender kun til Sentry, ikke stdout.** Det gør
+`fly logs`-debugging frustrerende. Når du diagnosticerer en bug, så
+tilføj midlertidigt et `print(traceback.format_exc())` så du kan se
+fejlen i logs uden at åbne Sentry-dashboardet.
+
+**Tro på loggene, ikke på tidsmæssig korrelation.** Hvis et nyt feature
+shipper og noget andet brækker, så tjek logs FØR du panic-reverter. Vi
+spildte fire reverts på et "nyt feature der brød ting" som i
+virkeligheden var Anthropic-credits løbet tør + en ikke-relateret regex-
+bug. Logs fortæller sandheden, timing er bare korrelation.
+
+**Tag known-good versioner før risikable deploys.** `git tag v1.2.0`.
+Så er revert én kommando: `git reset --hard v1.2.0 && fly deploy`.
+
+**`fly logs --no-tail` til diagnose** når du leder efter en specifik
+fejl. Tail-mode er til real-time debugging.
+
+**Anthropic-credits løber tør tavst.** Symptom: AI returnerer tomt svar
+på sekunder uden fejlmeddelelse i UI. Diagnose: `fly logs` viser
+`'Your credit balance is too low to access the Anthropic API'`. Tjek
+[https://console.anthropic.com/settings/billing](https://console.anthropic.com/settings/billing).
+
+### Brugeroplevelse
+
+**Lange AI-opgaver = fuld-side loading.** Vis tæller + forventet
+varighed + beskrivelse af hvad der sker. Skjul al anden UI så brugeren
+ikke scroller eller får tvivl om om noget er ved at ske. Se
+`thinking_fullpage()` i `ui.py`.
+
+**"Ryd sag" som rød knap, men diskret placeret.** Destructive actions
+skal være visuelt distinkte men ikke fremtrædende — ellers trykkes de
+ved et uheld. Bekræftelses-prompt før irreversible operationer.
+
+**Spinners på alle handlinger der tager mere end 1 sekund.** Gem-knap,
+slet-knap, AI-kald. Uden spinner tror brugeren appen er frosset.
+
+**Auto-udfyld med graceful manual override.** Sagsnummer og klagers navn
+auto-udledes via AI + regex-fallback, men feltet er stadig redigerbart.
+Bedre at have noget brugeren kan rette, end intet at starte fra.
+
+### Database / pgvector
+
+**`register_vector(conn)` på hver forbindelse** — pgvector-typer er ikke
+auto-registreret. Hvis du springer det over, returnerer Postgres
+vektorer som strings.
+
+**`vector(1024)` skal matche embedding-modellens dimension nøjagtigt.**
+Hvis du skifter embedding-model, skal du re-embedde alt eller bruge en
+ny kolonne. Voyage `voyage-multilingual-2` = 1024.
+
+**`<=>` er cosine-distance i pgvector** (0 = identisk, 2 = modsat).
+Sortér ASC for "mest relevante først". Konverter til similarity med
+`1 - distance` hvis du vil vise scoren.
+
+**`ON DELETE CASCADE`** for child-tabeller (chunks → mine_dokumenter).
+Sletter du et dokument, ryger chunks med — ellers ender du med
+forældreløse rækker.
+
+---
+
+## Etablerede mønstre i koden
+
+Disse mønstre bruges flere steder; følg dem når du tilføjer ny funktionalitet:
+
+**Lazy AI-klient init**
+```python
+_client = None
+_client_init_fejlet = False
+
+def _get_client():
+    global _client, _client_init_fejlet
+    if _client is not None: return _client
+    if _client_init_fejlet: return None
+    try:
+        _client = SomeClient(api_key=...)
+        return _client
+    except Exception as e:
+        print(f"DEBUG: ... fejlede: {e}")
+        _client_init_fejlet = True
+        return None
+```
+
+**AI-ekstraktion med regex-fallback**
+```python
+try:
+    data = ai_extract(...)
+    if not data.get("vigtigt_felt"):
+        data["vigtigt_felt"] = regex_fallback(...)
+    return data
+except Exception:
+    return {"vigtigt_felt": regex_fallback(...)}
+```
+
+**Strukturerede AI-svar via tool-use**
+```python
+schema = {
+    "type": "object",
+    "properties": {...},
+    "required": [...]
+}
+response = client.messages.create(
+    tools=[{"name": "udfyld", "input_schema": schema}],
+    tool_choice={"type": "tool", "name": "udfyld"},
+    ...
+)
+data = response.content[0].input
+```
+
+**Caching pr. signatur i session_state**
+```python
+sig = hash((input1, input2))
+cache_key = f"resultat_{sig}"
+if cache_key not in st.session_state:
+    st.session_state[cache_key] = duer_funktion(...)
+result = st.session_state[cache_key]
+```
+
+---
+
+## Ting vi IKKE har gjort (endnu) — bevidste fravalg
+
+- **Strukturerede metadata-felter** (udfald, beløb, kategori, indklagede selskab) ekstraheret per afgørelse og lagret som kolonner. Ville muliggøre filtre som "find delvist-medhold-sager om manglende standard hvor TUI var indklagede". Stort men værdifuldt — venter på behov.
+- **Login/multi-tenant** — i dag er REJSESELSKAB_NAVN hardcoded til "TUI". Se `MULTI_TENANT_ROADMAP.md`.
+- **Unit-tests** — vi har ingen pt. Kører manuel smoke-test via `python3 -c "..."` og live-test i appen. Hvis projektet vokser, bør vi tilføje pytest.
+- **Eval-suite for RAG-kvalitet** — vi har talt om at bygge en lille liste af 20-30 kendte sager med rette præcedens, så vi kan måle precision@5 efter ændringer. Gør det før den næste store retrieval-ændring.
+- **Fine-tuning af Claude** — bevidst fravalgt. RAG er strukturelt bedre for fakta-recall.
+
+---
+
+## Konventioner for at opdatere denne fil
+
+- **Tilføj nye learnings nederst i den relevante sektion.** Hvis kategorien ikke findes, opret en ny.
+- **Beskriv konkret WHAT der virker, ikke bare HVAD der gjorde ondt.** "Brug navngivne grupper i regex" er bedre end "regex er svært".
+- **Reference koden hvor det er relevant** — fil + funktionsnavn (`embeddings.chunk_tekst`).
+- **Hvis et tidligere learning viser sig forkert, så ret det — ikke tilføj et "men faktisk..." nedenunder.** Filen skal være sand på læsetidspunktet.
+- **Hold en lærdom kort — 1-3 sætninger.** Hvis det fylder mere, hører det måske til i en separat docs-fil.
