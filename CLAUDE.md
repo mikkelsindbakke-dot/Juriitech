@@ -208,6 +208,21 @@ faktisk vil have ud. Vi spildte timer på denne i `udtraek_sagen_angaar`.
 matche datoen `25-04-2026`. En telefon-regex skal ikke matche en pris.
 Skriv en lille test-suite med kendte negative cases.
 
+**Bredere anchor-ord = flere false positives.** I `_regex_find_beloeb`
+fjernede vi anchors som "kompensation på" og "godtgørelse på" fordi
+de optræder i BÅDE klagers påstand ("klager kræver kompensation på X
+kr.") og Nævnets afgørelse ("Nævnet tilkender X kr. som kompensation
+på..."). Brug KUN anchors der eksklusivt indikerer den ene side —
+"Nævnet tilkender", "Indklagede skal betale", "Klagen tages til følge",
+"forholdsmæssigt afslag svarende til" osv.
+
+**Tillad lange ord-gaps i juridiske formuleringer.** Pakkerejse-
+Ankenævn skriver typisk "Indklagede skal **inden 30 dage fra dato for
+kendelsens forkyndelse** betale klageren X kr." — så 'skal' og
+'betale' kan være 8+ ord fra hinanden. Brug `[\s\S]{0,150}?` (eller
+tilsvarende char-baseret gap) i stedet for at kræve at ordene er
+naboer.
+
 **ILIKE i Postgres er case-insensitive ud af boksen** — du behøver ikke
 selv at lower'e begge sider. Det er hurtigere og mere læseligt.
 

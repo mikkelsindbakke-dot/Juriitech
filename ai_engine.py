@@ -3006,20 +3006,50 @@ def _regex_find_beloeb(tekst):
         klagers_krav = f"{beloeb_raw} kr."
 
     # ---- TILKENDT BELØB ----
-    TILK_ANCHORS = (
-        r"(?:Nævnet\s+tilkender|"
-        r"klager(?:en)?\s+tilkendes|"
-        r"(?:ind)?klagede\s+skal\s+(?:be)?tale|"
-        r"skal\s+udbetale\s+(?:til\s+)?klager(?:en)?|"
-        r"forholdsmæssigt\s+afslag\s+(?:svarende\s+til|på)|"
-        r"tilkendt\s+(?:en\s+)?godtgørelse\s+(?:på)?)"
-    )
+    # Pakkerejse-Ankenævn bruger MANGE forskellige formuleringer for at
+    # tilkende et beløb. Vi prøver dem i prioriteret rækkefølge — de
+    # mest specifikke først (mindste risiko for false positive), de
+    # bredeste sidst.
+    #
+    # Den hyppigste formulering er noget i retning af:
+    #   "Indklagede skal inden 30 dage fra dato for kendelsens
+    #    forkyndelse betale klageren X kr."
+    # — så "skal" og "betale" kan være langt fra hinanden. Vi bruger
+    # derfor et fleksibelt mønster der tillader op til 150 tegn mellem
+    # "skal" og betale-verbet.
     tilkendt_beloeb = ""
-    pattern_t = TILK_ANCHORS + r"[\s\S]{0,100}?" + BELOEB
-    m = _re.search(pattern_t, tekst, _re.IGNORECASE)
-    if m:
-        beloeb_raw = m.group(1).strip()
-        tilkendt_beloeb = f"{beloeb_raw} kr."
+
+    # Helper: prøv flere mønstre i rækkefølge.
+    # KRITISK: vi bruger KUN anchors der eksklusivt indikerer Nævnets
+    # afgørelse — IKKE klagers påstand. Generelle ord som "kompensation"
+    # eller "godtgørelse" optræder i BEGGE kontekster og giver derfor
+    # false positives (vi havde et tilfælde hvor "klager kræver
+    # kompensation på 12.500 kr." blev fanget som tilkendt beløb).
+    TILK_PATTERNS = [
+        # 1. "Nævnet tilkender/tilkendte/tilkendt" + beløb
+        r"Nævnet\s+tilkend(?:er|te|t)\s+(?:klager(?:en)?\s+)?[\s\S]{0,80}?" + BELOEB,
+        # 2. "klager(en) tilkendes/tilkendte/tilkendt" + beløb
+        r"klager(?:en)?\s+tilkend(?:es|te|t)\s+[\s\S]{0,80}?" + BELOEB,
+        # 3. "tilkendes klager(en)" + beløb
+        r"tilkendes\s+klager(?:en)?\s*[\s\S]{0,80}?" + BELOEB,
+        # 4. "(ind)klagede skal ... betale/tilbagebetale/udbetale" — fleksibel,
+        #    tillader op til 150 tegn ord-gap mellem 'skal' og betale-verbet
+        #    (fanger 'skal inden 30 dage fra forkyndelsen betale klageren X kr.')
+        r"(?:ind)?klagede\s+skal\b[\s\S]{0,150}?\b(?:be|tilbagebe|udbe)tale[\s\S]{0,80}?" + BELOEB,
+        # 5. "skal udbetale (til) klager(en)" + beløb
+        r"skal\s+udbetale\s+(?:til\s+)?klager(?:en)?\s*[\s\S]{0,80}?" + BELOEB,
+        # 6. "forholdsmæssigt afslag (svarende til|på)" + beløb
+        r"forholdsmæssigt\s+afslag\s+(?:svarende\s+til|på)\s*[\s\S]{0,60}?" + BELOEB,
+        # 7. "Klagen tages (delvist) til følge" — bredest, ofte fulgt af
+        #    "således at indklagede skal betale ... kr." inden for 200 tegn
+        r"Klagen\s+tages\s+(?:delvist\s+)?til\s+følge[\s\S]{0,200}?" + BELOEB,
+    ]
+
+    for pat in TILK_PATTERNS:
+        m = _re.search(pat, tekst, _re.IGNORECASE)
+        if m:
+            tilkendt_beloeb = f"{m.group(1).strip()} kr."
+            break
 
     return {
         "klagers_krav": klagers_krav,
