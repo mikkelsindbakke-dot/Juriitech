@@ -145,6 +145,110 @@ def opret_tabeller():
             )
         """)
 
+        # ═════════════════════════════════════════════════════════════
+        # B1: MULTI-TENANT TABELLER
+        # ═════════════════════════════════════════════════════════════
+        # Phase B af multi-tenant rollout. Disse to tabeller + tenant_id-
+        # kolonnerne nedenfor er fundamentet for at hver kunde-organisation
+        # (TUI, Spies, Apollo osv.) ser KUN deres egne sager og analyser.
+        #
+        # Sikkerhedsprincip: Alle queries der rør private data SKAL
+        # filtrere på tenant_id. Public data (Pakkerejse-Ankenævn-
+        # afgørelser, lovgivning) markeres med is_public=TRUE og er
+        # synlige for alle tenants som juridisk præcedens.
+
+        # 8. tenants — én række per kunde-organisation
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS tenants (
+                id SERIAL PRIMARY KEY,
+                slug TEXT UNIQUE NOT NULL,
+                navn TEXT NOT NULL,
+                sagsbehandler TEXT,
+                by TEXT,
+                logo_filnavn TEXT,
+                anonymisering_suffix TEXT,
+                interne_team_navne TEXT,
+                klageorgan_navn TEXT DEFAULT 'Pakkerejse-Ankenævnet',
+                klageorgan_url TEXT DEFAULT 'https://www.pakkerejseankenaevnet.dk',
+                rejsevilkaar_kilde_url TEXT,
+                sprog TEXT DEFAULT 'da',
+                land TEXT DEFAULT 'DK',
+                lov_navn TEXT DEFAULT 'Pakkerejseloven',
+                oprettet_dato TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 9. users — én række per autentificeret bruger
+        # supabase_user_id er UUID'en fra Supabase Auth (vi bruger Supabase
+        # som auth-leverandør i B2). Vi gemmer ikke password — det er
+        # Supabase's ansvar.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                supabase_user_id UUID UNIQUE,
+                tenant_id INTEGER NOT NULL REFERENCES tenants(id)
+                    ON DELETE RESTRICT,
+                email TEXT NOT NULL UNIQUE,
+                fulde_navn TEXT,
+                role TEXT NOT NULL DEFAULT 'jurist'
+                    CHECK (role IN ('admin', 'jurist')),
+                oprettet_dato TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_supabase_id
+            ON users (supabase_user_id)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_users_tenant_id
+            ON users (tenant_id)
+        """)
+
+        # 10. tenant_id + is_public på eksisterende tabeller
+        # mine_dokumenter: tenant_id kan være NULL for offentlige dokumenter
+        # (Ankenævn-afgørelser, lovgivning). is_public=TRUE gør dokumentet
+        # synligt for alle tenants.
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS tenant_id INTEGER
+                REFERENCES tenants(id) ON DELETE RESTRICT
+        """)
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS is_public BOOLEAN DEFAULT FALSE
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mine_dokumenter_tenant_id
+            ON mine_dokumenter (tenant_id)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mine_dokumenter_is_public
+            ON mine_dokumenter (is_public)
+            WHERE is_public = TRUE
+        """)
+
+        # analyse_arkiv: tenant_id altid sat (analyser er ALTID private)
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS tenant_id INTEGER
+                REFERENCES tenants(id) ON DELETE RESTRICT
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analyse_arkiv_tenant_id
+            ON analyse_arkiv (tenant_id)
+        """)
+
+        # gemte_sager: tenant_id altid sat (sag-state er ALTID private)
+        cur.execute("""
+            ALTER TABLE gemte_sager
+            ADD COLUMN IF NOT EXISTS tenant_id INTEGER
+                REFERENCES tenants(id) ON DELETE RESTRICT
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gemte_sager_tenant_id
+            ON gemte_sager (tenant_id)
+        """)
+
         conn.commit()
         cur.close()
         conn.close()
@@ -153,25 +257,433 @@ def opret_tabeller():
         print(f"DEBUG: Fejl ved oprettelse af tabel: {e}")
 
 
-def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None, kilde_url=None):
+# ═══════════════════════════════════════════════════════════════
+# TENANT + USER CRUD (Phase B1)
+# ═══════════════════════════════════════════════════════════════
+# Disse funktioner er fundamentet for multi-tenant. Tenants oprettes
+# typisk én gang via admin-siden (Phase B4). Users oprettes når en
+# kunde inviteres via Supabase magic-link og registrerer sig (Phase B2).
+
+def hent_alle_tenants():
+    """Returnerer alle tenants som liste af dicts. Bruges i admin-UI."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, slug, navn, sagsbehandler, by, logo_filnavn, "
+            "anonymisering_suffix, interne_team_navne, klageorgan_navn, "
+            "klageorgan_url, rejsevilkaar_kilde_url, sprog, land, "
+            "lov_navn, oprettet_dato "
+            "FROM tenants ORDER BY navn ASC"
+        )
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [_row_to_tenant_dict(r) for r in raekker]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente tenants: {e}")
+        return []
+
+
+def hent_tenant_by_id(tenant_id):
+    """Slå tenant op på id. Returnerer dict eller None."""
+    if tenant_id is None:
+        return None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, slug, navn, sagsbehandler, by, logo_filnavn, "
+            "anonymisering_suffix, interne_team_navne, klageorgan_navn, "
+            "klageorgan_url, rejsevilkaar_kilde_url, sprog, land, "
+            "lov_navn, oprettet_dato "
+            "FROM tenants WHERE id = %s",
+            (int(tenant_id),),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return _row_to_tenant_dict(row) if row else None
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente tenant {tenant_id}: {e}")
+        return None
+
+
+def hent_tenant_by_slug(slug):
+    """
+    Slå tenant op på slug ('tui', 'spies', 'apollo'). Returnerer dict
+    eller None. Bruges af selskab_profiler.py som primær lookup.
+    """
+    if not slug:
+        return None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, slug, navn, sagsbehandler, by, logo_filnavn, "
+            "anonymisering_suffix, interne_team_navne, klageorgan_navn, "
+            "klageorgan_url, rejsevilkaar_kilde_url, sprog, land, "
+            "lov_navn, oprettet_dato "
+            "FROM tenants WHERE slug = %s",
+            (slug,),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        return _row_to_tenant_dict(row) if row else None
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente tenant {slug}: {e}")
+        return None
+
+
+def opret_tenant(
+    slug, navn, sagsbehandler=None, by=None, logo_filnavn=None,
+    anonymisering_suffix=None, interne_team_navne=None,
+    klageorgan_navn="Pakkerejse-Ankenævnet",
+    klageorgan_url="https://www.pakkerejseankenaevnet.dk",
+    rejsevilkaar_kilde_url=None, sprog="da", land="DK",
+    lov_navn="Pakkerejseloven",
+):
+    """
+    Opretter en ny tenant. interne_team_navne er en liste — gemmes
+    som JSON-string i DB. Returnerer den nye tenant's id, eller None
+    ved fejl (fx hvis slug allerede findes).
+    """
+    import json as _json
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        team_json = _json.dumps(interne_team_navne or [])
+        cur.execute(
+            """
+            INSERT INTO tenants
+              (slug, navn, sagsbehandler, by, logo_filnavn,
+               anonymisering_suffix, interne_team_navne,
+               klageorgan_navn, klageorgan_url, rejsevilkaar_kilde_url,
+               sprog, land, lov_navn)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                slug, navn, sagsbehandler or navn, by or "",
+                logo_filnavn or "",
+                anonymisering_suffix or navn, team_json,
+                klageorgan_navn, klageorgan_url,
+                rejsevilkaar_kilde_url or "",
+                sprog, land, lov_navn,
+            ),
+        )
+        ny_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return ny_id
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke oprette tenant {slug}: {e}")
+        return None
+
+
+def opdater_tenant(tenant_id, **felter):
+    """
+    Opdaterer specifikke felter på en tenant. Tager keyword arguments
+    der svarer til kolonne-navne. interne_team_navne accepteres som liste
+    og gemmes som JSON.
+    """
+    import json as _json
+    if not felter:
+        return True
+    tilladt = {
+        "navn", "sagsbehandler", "by", "logo_filnavn",
+        "anonymisering_suffix", "interne_team_navne",
+        "klageorgan_navn", "klageorgan_url",
+        "rejsevilkaar_kilde_url", "sprog", "land", "lov_navn",
+    }
+    sat_dele = []
+    params = []
+    for nøgle, værdi in felter.items():
+        if nøgle not in tilladt:
+            continue
+        if nøgle == "interne_team_navne" and isinstance(værdi, (list, tuple)):
+            værdi = _json.dumps(list(værdi))
+        sat_dele.append(f"{nøgle} = %s")
+        params.append(værdi)
+    if not sat_dele:
+        return True
+    params.append(int(tenant_id))
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE tenants SET {', '.join(sat_dele)} WHERE id = %s",
+            params,
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke opdatere tenant {tenant_id}: {e}")
+        return False
+
+
+def _row_to_tenant_dict(row):
+    """Konverterer en tenant-row fra SELECT til dict, med team_navne parsed."""
+    if not row:
+        return None
+    import json as _json
+    try:
+        team_navne = _json.loads(row[7]) if row[7] else []
+    except Exception:
+        team_navne = []
+    return {
+        "id": row[0],
+        "slug": row[1],
+        "navn": row[2],
+        "sagsbehandler": row[3] or row[2],  # default til navn
+        "by": row[4] or "",
+        "logo_filnavn": row[5] or "",
+        "anonymisering_suffix": row[6] or row[2],  # default til navn
+        "interne_team_navne": team_navne,
+        "klageorgan_navn": row[8] or "Pakkerejse-Ankenævnet",
+        "klageorgan_url": row[9] or "",
+        "rejsevilkaar_kilde_url": row[10] or "",
+        "sprog": row[11] or "da",
+        "land": row[12] or "DK",
+        "lov_navn": row[13] or "Pakkerejseloven",
+        "oprettet_dato": row[14],
+    }
+
+
+# ─── USERS ───
+
+def hent_user_by_supabase_id(supabase_user_id):
+    """
+    Slå en bruger op på Supabase Auth UUID. Returnerer dict med
+    user_id + tenant_id + role + email + fulde_navn, eller None.
+    Bruges efter login til at hente den autentificerede brugers tenant.
+    """
+    if not supabase_user_id:
+        return None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, supabase_user_id, tenant_id, email, fulde_navn, "
+            "role, oprettet_dato FROM users WHERE supabase_user_id = %s",
+            (str(supabase_user_id),),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "supabase_user_id": str(row[1]),
+            "tenant_id": row[2],
+            "email": row[3],
+            "fulde_navn": row[4] or "",
+            "role": row[5],
+            "oprettet_dato": row[6],
+        }
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente user {supabase_user_id}: {e}")
+        return None
+
+
+def hent_user_by_email(email):
+    """Slå bruger op på email (bruges af admin-side til at se eksisterende invitationer)."""
+    if not email:
+        return None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, supabase_user_id, tenant_id, email, fulde_navn, "
+            "role, oprettet_dato FROM users WHERE email = %s",
+            (email.lower().strip(),),
+        )
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not row:
+            return None
+        return {
+            "id": row[0],
+            "supabase_user_id": str(row[1]) if row[1] else None,
+            "tenant_id": row[2],
+            "email": row[3],
+            "fulde_navn": row[4] or "",
+            "role": row[5],
+            "oprettet_dato": row[6],
+        }
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente user {email}: {e}")
+        return None
+
+
+def opret_user(email, tenant_id, role="jurist", fulde_navn=None,
+               supabase_user_id=None):
+    """
+    Opretter en bruger. Kaldes typisk i to situationer:
+    (1) Admin inviterer en ny bruger — opret række UDEN supabase_user_id
+        (sættes når brugeren rent faktisk registrerer sig via magic-link).
+    (2) Bruger registrerer sig — supabase_user_id sættes til Auth-UUID.
+
+    Returnerer det nye user-id eller None ved fejl.
+    """
+    if not email:
+        return None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO users
+              (email, tenant_id, role, fulde_navn, supabase_user_id)
+            VALUES (%s, %s, %s, %s, %s)
+            RETURNING id
+            """,
+            (
+                email.lower().strip(),
+                int(tenant_id),
+                role,
+                fulde_navn or "",
+                str(supabase_user_id) if supabase_user_id else None,
+            ),
+        )
+        ny_id = cur.fetchone()[0]
+        conn.commit()
+        cur.close()
+        conn.close()
+        return ny_id
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke oprette user {email}: {e}")
+        return None
+
+
+def opdater_user_supabase_id(user_id, supabase_user_id):
+    """
+    Sætter supabase_user_id på en eksisterende bruger-række. Bruges når
+    en inviteret bruger registrerer sig via magic-link og vi får deres
+    UUID fra Supabase Auth.
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE users SET supabase_user_id = %s WHERE id = %s",
+            (str(supabase_user_id), int(user_id)),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+        return True
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke opdatere user {user_id}: {e}")
+        return False
+
+
+def hent_users_for_tenant(tenant_id):
+    """Returnerer alle brugere for en tenant (admin-side)."""
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, supabase_user_id, tenant_id, email, fulde_navn, "
+            "role, oprettet_dato FROM users WHERE tenant_id = %s "
+            "ORDER BY oprettet_dato DESC",
+            (int(tenant_id),),
+        )
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {
+                "id": r[0],
+                "supabase_user_id": str(r[1]) if r[1] else None,
+                "tenant_id": r[2],
+                "email": r[3],
+                "fulde_navn": r[4] or "",
+                "role": r[5],
+                "oprettet_dato": r[6],
+            }
+            for r in raekker
+        ]
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente users for tenant {tenant_id}: {e}")
+        return []
+
+
+# ─── AKTIV TENANT ───
+# Denne helper er hjertet af multi-tenant lookup. I B1 returnerer den
+# bare TUI's id (hardcoded fallback), så systemet opfører sig præcis
+# som før. I B3 (efter login) udvides den til at læse fra
+# st.session_state.user.tenant_id.
+
+def hent_aktiv_tenant_id():
+    """
+    Returnerer id'et på den aktuelle aktive tenant.
+
+    B1: Returnerer TUI's id (hardcoded fallback). Hele systemet kører
+        som om alle brugere er TUI-brugere — uændret adfærd.
+    B3: Vil læse fra st.session_state.user.tenant_id efter login.
+    """
+    # Lazy import for at undgå at Streamlit-import sker når database.py
+    # bruges fra ikke-Streamlit kontekst (fx backfill-scripts).
+    try:
+        import streamlit as st
+        user = st.session_state.get("user")
+        if user and user.get("tenant_id"):
+            return int(user["tenant_id"])
+    except Exception:
+        pass
+
+    # Fallback (B1): TUI som default
+    tui = hent_tenant_by_slug("tui")
+    return tui["id"] if tui else None
+
+
+def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
+                 kilde_url=None, tenant_id=None, is_public=None):
     """
     Gemmer en sag i databasen.
-    dokumenttype skal være enten 'afgoerelse' (tidligere kendelse) eller 'klage'
-    (indkommen klage, endnu ikke afgjort).
+    dokumenttype skal være enten 'afgoerelse' (tidligere kendelse), 'klage'
+    (indkommen klage, endnu ikke afgjort), 'vilkaar', 'lovgivning' eller
+    'anonymisering_regler'.
 
     embedding er valgfri — hvis den er None, gemmes sagen uden, og
     backfill_embeddings() kan fylde den på bagefter.
 
     kilde_url er valgfri — bruges af scraperen til at spore hvor sagen kom fra
     og undgå dubletter på næste kørsel.
+
+    tenant_id og is_public bestemmer hvem der kan se dokumentet:
+      - is_public=True (typisk afgoerelse, lovgivning, anonymisering_regler):
+        synlig for alle tenants. tenant_id bør være None.
+      - tenant_id sat (typisk klage, vilkaar): kun synlig for den tenant.
+        Bruger hent_aktiv_tenant_id() som default hvis intet er angivet.
     """
+    # Defaults: hvis ikke specificeret, så afgør baseret på dokumenttype
+    if tenant_id is None and is_public is None:
+        if dokumenttype in ("afgoerelse", "lovgivning", "anonymisering_regler"):
+            is_public = True
+        else:
+            tenant_id = hent_aktiv_tenant_id()
+            is_public = False
+    elif is_public is None:
+        is_public = False
+
     try:
         conn = _connect()
         cur = conn.cursor()
         cur.execute(
-            "INSERT INTO mine_dokumenter (filnavn, indhold, dokumenttype, embedding, kilde_url) "
-            "VALUES (%s, %s, %s, %s, %s)",
-            (filnavn, tekst, dokumenttype, embedding, kilde_url),
+            "INSERT INTO mine_dokumenter "
+            "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
+            " tenant_id, is_public) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            (filnavn, tekst, dokumenttype, embedding, kilde_url,
+             tenant_id, bool(is_public)),
         )
         conn.commit()
         cur.close()
@@ -294,21 +806,25 @@ def hent_sager_uden_embedding():
         return []
 
 
-def hent_alle_sager():
+def hent_alle_sager(tenant_id=None):
     """
-    Returnerer alle sager i databasen som en liste af dicts:
-    [{"filnavn": ..., "indhold": ..., "oprettet_dato": ..., "dokumenttype": ...}, ...]
+    Returnerer alle sager der er synlige for den aktive tenant:
+    public docs (is_public=TRUE) PLUS tenant-private docs.
 
-    Bevaret til backwards compatibility — bruges stadig af fallback-flowet
-    når en embedding ikke kan genereres.
+    tenant_id default = aktiv tenant (TUI i B1, logged-in bruger i B3).
+    Sættes til 0 eller negativ for kun at få public docs.
     """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
     try:
         conn = _connect()
         cur = conn.cursor()
         cur.execute(
             "SELECT filnavn, indhold, oprettet_dato, dokumenttype "
             "FROM mine_dokumenter "
-            "ORDER BY oprettet_dato DESC"
+            "WHERE is_public = TRUE OR tenant_id = %s "
+            "ORDER BY oprettet_dato DESC",
+            (tenant_id,),
         )
         raekker = cur.fetchall()
         cur.close()
@@ -328,30 +844,30 @@ def hent_alle_sager():
         return []
 
 
-def hent_sager_af_type(dokumenttype, limit=None):
+def hent_sager_af_type(dokumenttype, limit=None, tenant_id=None):
     """
-    Returnerer alle dokumenter af en given dokumenttype.
+    Returnerer alle dokumenter af en given dokumenttype, filtreret så
+    man kun ser public docs + den aktive tenant's private docs.
 
     Bruges bl.a. til at hente ALLE anonymiseringsregler som fast kontekst
     til anonymiseringsopgaver (i modsætning til RAG-baseret topp-k-søgning).
     """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
     try:
         conn = _connect()
         cur = conn.cursor()
+        base_sql = (
+            "SELECT filnavn, indhold, kilde_url FROM mine_dokumenter "
+            "WHERE dokumenttype = %s "
+            "AND (is_public = TRUE OR tenant_id = %s) "
+            "ORDER BY filnavn ASC"
+        )
         if limit is not None:
-            cur.execute(
-                "SELECT filnavn, indhold, kilde_url FROM mine_dokumenter "
-                "WHERE dokumenttype = %s "
-                "ORDER BY filnavn ASC LIMIT %s",
-                (dokumenttype, int(limit)),
-            )
+            cur.execute(base_sql + " LIMIT %s",
+                        (dokumenttype, tenant_id, int(limit)))
         else:
-            cur.execute(
-                "SELECT filnavn, indhold, kilde_url FROM mine_dokumenter "
-                "WHERE dokumenttype = %s "
-                "ORDER BY filnavn ASC",
-                (dokumenttype,),
-            )
+            cur.execute(base_sql, (dokumenttype, tenant_id))
         raekker = cur.fetchall()
         cur.close()
         conn.close()
@@ -515,6 +1031,7 @@ def find_relevante_chunks(
     top_k=30,
     udeluk_dokument_id=None,
     dokumenttype="afgoerelse",
+    tenant_id=None,
 ):
     """
     Chunk-baseret RAG-søgning. Returnerer de top_k mest relevante
@@ -531,9 +1048,14 @@ def find_relevante_chunks(
                   'afgoerelse' fordi chunking kun giver mening for
                   dem (vilkår + lovgivning er korte og bruges som hele
                   dokumenter).
+    tenant_id: tenant-isolation. Default = aktiv tenant. Returnerer
+               public docs (Ankenævn-afgørelser) PLUS denne tenant's
+               private docs.
     """
     if sporgsmaal_embedding is None:
         return []
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
 
     try:
         conn = _connect()
@@ -542,8 +1064,19 @@ def find_relevante_chunks(
         where = [
             "c.embedding IS NOT NULL",
             "m.dokumenttype = %s",
+            "(m.is_public = TRUE OR m.tenant_id = %s)",
         ]
-        params = [dokumenttype, sporgsmaal_embedding]
+        # Params i SAMME rækkefølge som %s-placeholderne i SQL'en:
+        #   1. SELECT vector for similarity
+        #   2. WHERE dokumenttype
+        #   3. WHERE tenant_id
+        #   4. (optional) WHERE udeluk_dokument_id
+        #   5. ORDER BY vector
+        #   6. LIMIT
+        # OBS: tidligere version havde ordering-bug der betød at chunk-
+        # pipelinen returnerede [] silently og altid faldt tilbage til
+        # hele-dokument-RAG. Det er fixet her.
+        params = [sporgsmaal_embedding, dokumenttype, tenant_id]
         if udeluk_dokument_id:
             where.append("c.dokument_id <> %s")
             params.append(udeluk_dokument_id)
@@ -593,12 +1126,16 @@ def find_relevante_chunks(
         return []
 
 
-def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse"):
+def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse",
+                        tenant_id=None):
     """
     Stikord/keyword-søgning på chunks (ILIKE). Bruges til hybrid søgning
     sammen med find_relevante_chunks: keyword-resultater fanger sager
     hvor en specifik frase matcher næsten eksakt, men hvor embedding-
     similarity måske ikke ranglister højt nok.
+
+    tenant_id: tenant-isolation. Default = aktiv tenant. Returnerer
+               public docs PLUS denne tenant's private docs.
 
     Returnerer samme dict-struktur som find_relevante_chunks (uden
     similarity-feltet — vi kan ikke sammenligne BM25-rank direkte med
@@ -606,6 +1143,8 @@ def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse"):
     """
     if not stikord or not stikord.strip():
         return []
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -615,8 +1154,11 @@ def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse"):
         if not ord_liste:
             return []
 
-        where = ["m.dokumenttype = %s"]
-        params = [dokumenttype]
+        where = [
+            "m.dokumenttype = %s",
+            "(m.is_public = TRUE OR m.tenant_id = %s)",
+        ]
+        params = [dokumenttype, tenant_id]
         for ord_ in ord_liste:
             where.append("c.indhold ILIKE %s")
             params.append(f"%{ord_}%")
@@ -674,12 +1216,21 @@ def gem_i_arkiv(
     spoergsmaal=None,
     sagsakter=None,
     ekstra_instrukser=None,
+    tenant_id=None,
 ):
     """
     Gemmer en analyse eller et svarbrev i arkiv-tabellen.
     type_ skal være enten 'analyse' eller 'svarbrev'.
+    tenant_id default = aktiv tenant. Hvis None og ingen aktiv tenant,
+    returneres None (vi nægter at gemme uden tenant for at forhindre
+    "orphan" arkiv-indgange).
     Returnerer id på den nye række, eller None ved fejl.
     """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    if not tenant_id:
+        print("DEBUG: gem_i_arkiv afvist — ingen tenant_id (krævet)")
+        return None
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -687,12 +1238,12 @@ def gem_i_arkiv(
             """
             INSERT INTO analyse_arkiv
               (titel, type, klage_filnavn, spoergsmaal, sagsakter,
-               ekstra_instrukser, indhold)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ekstra_instrukser, indhold, tenant_id)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             RETURNING id
             """,
             (titel, type_, klage_filnavn, spoergsmaal, sagsakter,
-             ekstra_instrukser, indhold),
+             ekstra_instrukser, indhold, tenant_id),
         )
         ny_id = cur.fetchone()[0]
         conn.commit()
@@ -704,11 +1255,16 @@ def gem_i_arkiv(
         return None
 
 
-def hent_arkiv(begraens=50):
+def hent_arkiv(begraens=50, tenant_id=None):
     """
     Henter de seneste arkiv-indgange sorteret efter dato (nyeste først).
-    Returnerer liste af dicts.
+    Filtreres ALTID på tenant_id — arkiv-indgange er per definition
+    private. Returnerer liste af dicts.
     """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    if not tenant_id:
+        return []
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -717,10 +1273,11 @@ def hent_arkiv(begraens=50):
             SELECT id, titel, type, klage_filnavn, spoergsmaal,
                    oprettet_dato, indhold, sagsakter, ekstra_instrukser
             FROM analyse_arkiv
+            WHERE tenant_id = %s
             ORDER BY oprettet_dato DESC
             LIMIT %s
             """,
-            (begraens,),
+            (tenant_id, begraens),
         )
         raekker = cur.fetchall()
         cur.close()
@@ -744,16 +1301,28 @@ def hent_arkiv(begraens=50):
         return []
 
 
-def slet_arkiv_entry(entry_id):
-    """Sletter en arkiv-indgang. Bruges hvis juristen vil rydde op."""
+def slet_arkiv_entry(entry_id, tenant_id=None):
+    """
+    Sletter en arkiv-indgang — KUN hvis den tilhører den aktive tenant.
+    Returnerer True hvis sletning lykkedes; False hvis entry_id ikke
+    findes ELLER tilhører en anden tenant.
+    """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    if not tenant_id:
+        return False
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute("DELETE FROM analyse_arkiv WHERE id = %s", (entry_id,))
+        cur.execute(
+            "DELETE FROM analyse_arkiv WHERE id = %s AND tenant_id = %s",
+            (entry_id, tenant_id),
+        )
+        slettet = cur.rowcount > 0
         conn.commit()
         cur.close()
         conn.close()
-        return True
+        return slettet
     except Exception as e:
         print(f"DEBUG: Kunne ikke slette arkiv-indgang: {e}")
         return False
@@ -761,29 +1330,43 @@ def slet_arkiv_entry(entry_id):
 
 # ---------- GEMTE SAGER ----------
 
-def gem_sag_state(titel, state_json, user_id=None, sag_id=None):
+def gem_sag_state(titel, state_json, user_id=None, sag_id=None,
+                  tenant_id=None):
     """
     Gemmer hele sagens state som JSON i gemte_sager-tabellen.
-    Hvis sag_id er angivet, opdateres en eksisterende række.
+    Hvis sag_id er angivet, opdateres en eksisterende række (men kun
+    hvis den tilhører den aktive tenant — cross-tenant edit afvises).
     Ellers oprettes en ny.
-    Returnerer id'et på rækken.
+    Returnerer id'et på rækken eller None ved fejl/cross-tenant-forsøg.
     """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    if not tenant_id:
+        print("DEBUG: gem_sag_state afvist — ingen tenant_id (krævet)")
+        return None
     try:
         conn = _connect()
         cur = conn.cursor()
         if sag_id is not None:
+            # Verificér tenant-ejerskab før update
             cur.execute(
                 "UPDATE gemte_sager SET titel=%s, state_json=%s, "
-                "opdateret_dato=CURRENT_TIMESTAMP WHERE id=%s RETURNING id",
-                (titel, state_json, sag_id),
+                "opdateret_dato=CURRENT_TIMESTAMP "
+                "WHERE id=%s AND tenant_id=%s RETURNING id",
+                (titel, state_json, sag_id, tenant_id),
             )
             row = cur.fetchone()
             ny_id = row[0] if row else None
+            if ny_id is None:
+                print(
+                    f"DEBUG: gem_sag_state afvist — sag {sag_id} tilhører "
+                    f"ikke tenant {tenant_id}"
+                )
         else:
             cur.execute(
-                "INSERT INTO gemte_sager (user_id, titel, state_json) "
-                "VALUES (%s, %s, %s) RETURNING id",
-                (user_id, titel, state_json),
+                "INSERT INTO gemte_sager (user_id, titel, state_json, tenant_id) "
+                "VALUES (%s, %s, %s, %s) RETURNING id",
+                (user_id, titel, state_json, tenant_id),
             )
             ny_id = cur.fetchone()[0]
         conn.commit()
@@ -795,26 +1378,33 @@ def gem_sag_state(titel, state_json, user_id=None, sag_id=None):
         return None
 
 
-def hent_gemte_sager(user_id=None, begraens=50):
+def hent_gemte_sager(user_id=None, begraens=50, tenant_id=None):
     """
     Returnerer listen af gemte sager sorteret efter opdateringsdato.
-    Hvis user_id=None returneres alle (til simpel brug indtil login indføres).
+    Filtreres ALTID på tenant_id — gemte sager er per definition private.
+    user_id er reservet til fremtidig per-bruger-filtrering inden for
+    samme tenant (i dag deler alle brugere i en tenant arkivet).
     """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    if not tenant_id:
+        return []
     try:
         conn = _connect()
         cur = conn.cursor()
         if user_id is None:
             cur.execute(
                 "SELECT id, titel, oprettet_dato, opdateret_dato "
-                "FROM gemte_sager ORDER BY opdateret_dato DESC LIMIT %s",
-                (begraens,),
+                "FROM gemte_sager WHERE tenant_id=%s "
+                "ORDER BY opdateret_dato DESC LIMIT %s",
+                (tenant_id, begraens),
             )
         else:
             cur.execute(
                 "SELECT id, titel, oprettet_dato, opdateret_dato "
-                "FROM gemte_sager WHERE user_id=%s "
+                "FROM gemte_sager WHERE user_id=%s AND tenant_id=%s "
                 "ORDER BY opdateret_dato DESC LIMIT %s",
-                (user_id, begraens),
+                (user_id, tenant_id, begraens),
             )
         raekker = cur.fetchall()
         cur.close()
@@ -833,15 +1423,22 @@ def hent_gemte_sager(user_id=None, begraens=50):
         return []
 
 
-def hent_gemt_sag(sag_id):
-    """Returnerer en gemt sag inklusive dens state-JSON, eller None."""
+def hent_gemt_sag(sag_id, tenant_id=None):
+    """
+    Returnerer en gemt sag — KUN hvis den tilhører den aktive tenant.
+    Returnerer None hvis sag_id ikke findes ELLER tilhører anden tenant.
+    """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    if not tenant_id:
+        return None
     try:
         conn = _connect()
         cur = conn.cursor()
         cur.execute(
             "SELECT id, titel, state_json, oprettet_dato, opdateret_dato "
-            "FROM gemte_sager WHERE id=%s",
-            (sag_id,),
+            "FROM gemte_sager WHERE id=%s AND tenant_id=%s",
+            (sag_id, tenant_id),
         )
         row = cur.fetchone()
         cur.close()
@@ -860,16 +1457,27 @@ def hent_gemt_sag(sag_id):
         return None
 
 
-def slet_gemt_sag(sag_id):
-    """Sletter en gemt sag permanent."""
+def slet_gemt_sag(sag_id, tenant_id=None):
+    """
+    Sletter en gemt sag — KUN hvis den tilhører den aktive tenant.
+    Returnerer True hvis sletning lykkedes.
+    """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    if not tenant_id:
+        return False
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute("DELETE FROM gemte_sager WHERE id=%s", (sag_id,))
+        cur.execute(
+            "DELETE FROM gemte_sager WHERE id=%s AND tenant_id=%s",
+            (sag_id, tenant_id),
+        )
+        slettet = cur.rowcount > 0
         conn.commit()
         cur.close()
         conn.close()
-        return True
+        return slettet
     except Exception as e:
         print(f"DEBUG: Kunne ikke slette gemt sag: {e}")
         return False
@@ -877,21 +1485,26 @@ def slet_gemt_sag(sag_id):
 
 # ---------- RAG-SØGNING ----------
 
-def soeg_i_arkiv(stikord=None, dokumenttype=None, begraens=50):
+def soeg_i_arkiv(stikord=None, dokumenttype=None, begraens=50, tenant_id=None):
     """
     Stikordssøgning i vidensbanken.
     - stikord: hvis angivet, filtreres der på tekstindhold (ILIKE match)
     - dokumenttype: 'afgoerelse' / 'klage' / 'vilkaar' eller None for alle
     - begraens: max antal resultater
+    - tenant_id: tenant-isolation. Default = aktiv tenant.
 
     Returnerer liste af dicts med fil-metadata + indhold.
     """
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
     try:
         conn = _connect()
         cur = conn.cursor()
 
-        where = []
-        params = []
+        # Tenant-filter er ALTID med — public docs eller denne tenant's
+        # private docs. Ingen anden tenant's private docs.
+        where = ["(is_public = TRUE OR tenant_id = %s)"]
+        params = [tenant_id]
         if stikord and stikord.strip():
             # Split på mellemrum og kræv at alle ord forekommer (case-insensitive)
             ord_liste = [o.strip() for o in stikord.split() if o.strip()]
@@ -902,7 +1515,7 @@ def soeg_i_arkiv(stikord=None, dokumenttype=None, begraens=50):
             where.append("dokumenttype = %s")
             params.append(dokumenttype)
 
-        where_klausul = (" WHERE " + " AND ".join(where)) if where else ""
+        where_klausul = " WHERE " + " AND ".join(where)
         params.append(begraens)
 
         sql = f"""
@@ -937,6 +1550,7 @@ def find_relevante_sager(
     top_k=5,
     udeluk_filnavn=None,
     dokumenttype=None,
+    tenant_id=None,
 ):
     """
     Kernen i RAG: find de top_k mest relevante sager via cosine similarity.
@@ -947,6 +1561,8 @@ def find_relevante_sager(
                     er gemt automatisk ikke citerer sig selv).
     dokumenttype: hvis angivet, begrænses søgningen til denne type
                   ('afgoerelse', 'klage', 'vilkaar'). Default = alle.
+    tenant_id:   tenant-isolation. Default = aktiv tenant. Returnerer
+                 public docs PLUS denne tenant's private docs.
 
     I pgvector betyder '<=>' cosine-distance (0 = identisk, 2 = modsat).
     Vi sorterer ASC så de mest relevante kommer først, og returnerer også
@@ -954,14 +1570,19 @@ def find_relevante_sager(
     """
     if sporgsmaal_embedding is None:
         return []
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
 
     try:
         conn = _connect()
         cur = conn.cursor()
 
         # Byg WHERE-klausulen dynamisk
-        where = ["embedding IS NOT NULL"]
-        params = [sporgsmaal_embedding]
+        where = [
+            "embedding IS NOT NULL",
+            "(is_public = TRUE OR tenant_id = %s)",
+        ]
+        params = [sporgsmaal_embedding, tenant_id]
         if udeluk_filnavn:
             where.append("filnavn <> %s")
             params.append(udeluk_filnavn)

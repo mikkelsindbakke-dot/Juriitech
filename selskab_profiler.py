@@ -1,174 +1,172 @@
 """
-Selskabs-profiler — kobler en bruger til et rejseselskab.
+Selskabs-profiler — facade ovenpå tenants-tabellen i Postgres.
 
-Et "selskab" er rejseselskabet brugeren arbejder for (TUI, Spies, Apollo
-osv.). Hver profil indeholder ALT der er tenant-specifikt: navn, by,
-logo, anonymiserings-regler, klageorgan, sprog, land, m.m.
+Hvert "selskab" er en tenant: rejseselskabet brugeren arbejder for
+(TUI, Spies, Apollo osv.). I Phase B1 bor selve profil-data i
+databasen i stedet for i en hardcoded dict — det betyder at admin
+kan oprette nye tenants via UI uden kode-ændringer (Phase B4).
 
-PÅ SIGT: Når login-systemet er live, slår vi profilen op ud fra brugerens
-email/organisation (fx "@tui.dk" → tui-profilen). Indtil videre er der en
-hårdkodet AKTIV_PROFIL_KEY der defaulter til "tui" — det er TUI som er
-den første kunde.
-
-Filen er den ENESTE kilde til hvad der varierer per selskab. Resten af
-koden henter alle tenant-specifikke værdier herfra via hent_*-funktioner.
-Når man tilføjer et nyt selskab er det denne fil + et logo i
-static/logos/ der skal opdateres — ingen anden kode.
+Denne fil bevarer den samme accessor-API som tidligere
+(hent_navn, hent_by, hent_logo_sti osv.) — resten af koden behøver
+ingen ændringer.
 
 ═══════════════════════════════════════════════════════════════
-PROFIL-FELTER
+LAGER-LOOKUP-STRATEGI
 ═══════════════════════════════════════════════════════════════
 
-  navn                     — selskabets navn som det vises i tekst
-                             (svarbreve, anonymisering, prompts).
-                             Eksempel: "TUI", "Apollo", "Spies".
+I dag (B1):
+  - Aktiv tenant bestemmes af AKTIV_PROFIL_KEY (hardcoded 'tui')
+  - Profil-data hentes fra DB via database.hent_tenant_by_slug()
 
-  sagsbehandler            — det navn der underskriver svarbreve. Tit
-                             samme som navn, men kan være afdelings-
-                             specifikt (fx "Apollo Kundeservice").
+I B3 (efter login):
+  - AKTIV_PROFIL_KEY droppes
+  - hent_aktiv_profil() læser fra st.session_state.user.tenant_id
+    som sættes når brugeren logger ind via Supabase
 
-  by                       — by der vises i svarbrevets datolinje
-                             ("Frederiksberg, 29-04-2026").
-
-  logo_fil                 — relativ sti til logo-PNG (transparent
-                             baggrund anbefalet). Vises på svarbrev.
-                             Hvis filen mangler springes logoet over
-                             uden at crashe.
-
-  anonymisering_suffix     — det selskabs-mærkat der hænges på
-                             medarbejder-fornavne i anonymisering.
-                             "Maria Hansen, After Travel" → "Maria, TUI"
-                             — her er suffixet "TUI".
-
-  interne_team_navne       — liste af team/afdelings-navne der
-                             SIGNALERER at en person er ANSAT i selskabet.
-                             Bruges af AI-anonymiseringen til at skelne
-                             interne medarbejdere (får suffix) fra
-                             eksterne samarbejdspartnere (får ikke
-                             suffix). Eksempel for TUI:
-                             ["After Travel", "Customer service",
-                              "kundeservice", "After Sales"].
-
-  klageorgan_navn          — det officielle klageorgan i selskabets land.
-                             "Pakkerejse-Ankenævnet" i Danmark, "ARN" i
-                             Sverige osv.
-
-  klageorgan_url           — base-URL til klageorganets website (bruges
-                             i UI til "Åbn original"-links).
-
-  rejsevilkaar_kilde_url   — URL hvor selskabets officielle rejsevilkår
-                             kan scrapes fra (bruges af tenant-specifikke
-                             scrapere).
-
-  sprog                    — ISO-639-1 sprogkode for selskabets brugsland
-                             ("da", "sv", "no", "fi"). Bruges til at
-                             dirigere AI-prompts og UI-tekst.
-
-  land                     — ISO-3166-1 alpha-2 landekode ("DK", "SE",
-                             "NO", "FI"). Bruges til at koble til den
-                             rette national lov og det rette klageorgan.
-
-  lov_navn                 — navnet på den nationale pakkerejselov i
-                             selskabets land ("Pakkerejseloven" i DK,
-                             "Paketreselagen" i SE, osv.).
-
-═══════════════════════════════════════════════════════════════
-SÅDAN UDVIDER MAN TIL ET NYT SELSKAB
-═══════════════════════════════════════════════════════════════
-
-  1. Drop logoet i static/logos/<key>.png
-  2. Tilføj en entry til SELSKAB_PROFILER nedenfor med ALLE felter udfyldt
-  3. (Senere, når login er live: knyt email-domæne → profil-key)
-
-═══════════════════════════════════════════════════════════════
+Caching: vi cacher tenant-dicten i et modul-level dict så vi ikke
+kører en DB-query på HVER hent_navn()-kald. Cachen invalideres når
+processen genstarter (godkendt for B1; til B3 vil vi tilføje en
+eksplicit refresh-mekanisme efter login).
 """
 
-from pathlib import Path
-
-
-# ---------- PROFIL-DEFINITIONER ----------
-# Keyen ('tui', 'spies', ...) er det interne ID. Den bruges også som
-# logo-filnavn under static/logos/.
-#
-# TUI-profilen er den eneste der er FULDT udfyldt pt. — det er den
-# eneste tenant i produktion. Apollo og Spies er skeletter med navn,
-# by og logo så vi har strukturen klar; resten af deres felter udfyldes
-# når de onboardes som rigtige kunder.
-SELSKAB_PROFILER = {
-    "tui": {
-        "navn": "TUI",
-        "sagsbehandler": "TUI",
-        "by": "Frederiksberg",
-        "logo_fil": "static/logos/tui.png",
-        "anonymisering_suffix": "TUI",
-        "interne_team_navne": [
-            "After Travel",
-            "After Sales",
-            "Customer service",
-            "Customer Service",
-            "kundeservice",
-            "Kundeservice",
-        ],
-        "klageorgan_navn": "Pakkerejse-Ankenævnet",
-        "klageorgan_url": "https://www.pakkerejseankenaevnet.dk",
-        "rejsevilkaar_kilde_url": "https://www.tui.dk/rejse-med-tui/",
-        "sprog": "da",
-        "land": "DK",
-        "lov_navn": "Pakkerejseloven",
-    },
-    "spies": {
-        "navn": "Spies",
-        "sagsbehandler": "Spies",
-        "by": "København",
-        "logo_fil": "static/logos/spies.png",
-        # Felter nedenfor udfyldes ved Spies-onboarding:
-        "anonymisering_suffix": "Spies",
-        "interne_team_navne": [],
-        "klageorgan_navn": "Pakkerejse-Ankenævnet",
-        "klageorgan_url": "https://www.pakkerejseankenaevnet.dk",
-        "rejsevilkaar_kilde_url": "",
-        "sprog": "da",
-        "land": "DK",
-        "lov_navn": "Pakkerejseloven",
-    },
-    "apollo": {
-        "navn": "Apollo",
-        "sagsbehandler": "Apollo",
-        "by": "København",
-        "logo_fil": "static/logos/apollo.png",
-        # Felter nedenfor udfyldes ved Apollo-onboarding:
-        "anonymisering_suffix": "Apollo",
-        "interne_team_navne": [],
-        "klageorgan_navn": "Pakkerejse-Ankenævnet",
-        "klageorgan_url": "https://www.pakkerejseankenaevnet.dk",
-        "rejsevilkaar_kilde_url": "",
-        "sprog": "da",
-        "land": "DK",
-        "lov_navn": "Pakkerejseloven",
-    },
-}
-
-
-# ---------- AKTIV PROFIL ----------
-# Indtil login er live er denne hårdkodet. Når login lander erstattes
-# det med et opslag baseret på den autentificerede brugers email-domæne
-# eller organisation. Hold derfor ALT logik om "hvilket selskab er aktivt"
-# inde i hent_aktiv_profil() — så er der ét sted at ændre.
+# ─── AKTIV PROFIL ──────────────────────────────────────────────
+# Fallback-default når ingen bruger er logget ind. Bevares i B1 så
+# adfærden er identisk med før (alle "brugere" antages at være TUI).
+# Erstattes med per-request opslag i Phase B3.
 AKTIV_PROFIL_KEY = "tui"
+
+# Modul-level cache så vi ikke spammer DB med queries
+_PROFIL_CACHE = {}
+
+
+# ─── PROFIL-LOOKUP ─────────────────────────────────────────────
+
+def _hent_fra_db(slug):
+    """
+    Slå tenant op i DB via slug. Cachet pr. proces. Returnerer dict
+    eller None hvis tenant ikke findes.
+
+    Lazy import af database for at undgå circular import (database.py
+    importerer ikke selskab_profiler, men vi vil gerne være pæne).
+    """
+    if not slug:
+        return None
+    if slug in _PROFIL_CACHE:
+        return _PROFIL_CACHE[slug]
+    try:
+        from database import hent_tenant_by_slug
+        profil = hent_tenant_by_slug(slug)
+        if profil:
+            _PROFIL_CACHE[slug] = profil
+        return profil
+    except Exception as e:
+        print(f"DEBUG: selskab_profiler kunne ikke hente tenant {slug}: {e}")
+        return None
+
+
+def _hardcoded_fallback(slug):
+    """
+    Last-resort fallback hvis DB-opslag fejler (fx hvis migration_b1
+    ikke er kørt endnu, eller DB er nede). Returnerer minimal TUI-dict
+    så systemet ikke crasher.
+
+    Når DB er sat op korrekt (B1-migration kørt), skulle denne aldrig
+    blive ramt.
+    """
+    if slug == "tui":
+        return {
+            "id": None,
+            "slug": "tui",
+            "navn": "TUI",
+            "sagsbehandler": "TUI",
+            "by": "Frederiksberg",
+            "logo_filnavn": "static/logos/tui.png",
+            "anonymisering_suffix": "TUI",
+            "interne_team_navne": [
+                "After Travel", "After Sales",
+                "Customer service", "Customer Service",
+                "kundeservice", "Kundeservice",
+            ],
+            "klageorgan_navn": "Pakkerejse-Ankenævnet",
+            "klageorgan_url": "https://www.pakkerejseankenaevnet.dk",
+            "rejsevilkaar_kilde_url": "https://www.tui.dk/rejse-med-tui/",
+            "sprog": "da",
+            "land": "DK",
+            "lov_navn": "Pakkerejseloven",
+        }
+    return None
 
 
 def hent_aktiv_profil():
     """
-    Returnerer dict for det aktuelt aktive selskab. Falder tilbage til
-    TUI hvis nøglen er ukendt (defensiv — bør aldrig ske, men forhindrer
-    KeyError hvis nogen ændrer AKTIV_PROFIL_KEY uden at tilføje profilen).
+    Returnerer den aktive tenant's profil-dict.
+
+    B1: AKTIV_PROFIL_KEY (hardcoded 'tui') styrer hvilken tenant.
+    B3: vil læse fra st.session_state.user.tenant_id efter login.
+
+    Falder tilbage til hardcoded TUI-fallback hvis DB er utilgængelig
+    (defensivt — bør aldrig ramme i produktion).
     """
-    return SELSKAB_PROFILER.get(AKTIV_PROFIL_KEY) or SELSKAB_PROFILER["tui"]
+    # B3-prep: hvis Streamlit-session har en logged-in user, brug deres
+    # tenant. I B1 sker dette aldrig fordi vi ikke har login.
+    try:
+        import streamlit as st
+        user = st.session_state.get("user")
+        if user and user.get("tenant_id"):
+            try:
+                from database import hent_tenant_by_id
+                profil = hent_tenant_by_id(user["tenant_id"])
+                if profil:
+                    return profil
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+    # B1-default: hardcoded slug-baseret lookup
+    profil = _hent_fra_db(AKTIV_PROFIL_KEY)
+    if profil:
+        return profil
+    return _hardcoded_fallback(AKTIV_PROFIL_KEY) or _hardcoded_fallback("tui")
 
 
 def hent_profil(key):
-    """Slå en profil op på key. Returnerer None hvis ukendt."""
-    return SELSKAB_PROFILER.get(key)
+    """Slå profil op på slug ('tui', 'spies', 'apollo'). None hvis ukendt."""
+    return _hent_fra_db(key)
+
+
+def ryd_cache():
+    """
+    Tøm profil-cachen. Bruges fx efter at admin har opdateret en
+    tenant via admin-siden (Phase B4) så de nye værdier hentes ved
+    næste request.
+    """
+    global _PROFIL_CACHE
+    _PROFIL_CACHE = {}
+
+
+# ─── ACCESSOR-FUNKTIONER ───────────────────────────────────────
+# Samme API som før refaktoren — eksisterende kode behøver ingen
+# ændringer. Hver henter den aktive profil (eller den specificerede)
+# og returnerer det relevante felt med en sensibel default.
+
+def hent_navn(profil=None):
+    """Returnerer selskabets navn (fx 'TUI', 'Apollo')."""
+    return (profil or hent_aktiv_profil() or {}).get("navn", "")
+
+
+def hent_sagsbehandler(profil=None):
+    """
+    Returnerer det navn der underskriver svarbreve. Default = samme
+    som hent_navn() hvis ikke sat eksplicit.
+    """
+    p = profil or hent_aktiv_profil() or {}
+    return p.get("sagsbehandler") or p.get("navn", "")
+
+
+def hent_by(profil=None):
+    """Returnerer den by der vises i svarbrevets datolinje."""
+    return (profil or hent_aktiv_profil() or {}).get("by", "")
 
 
 def hent_logo_sti(profil=None):
@@ -178,39 +176,13 @@ def hent_logo_sti(profil=None):
     hvis filen ikke findes på disk — så kalderen kan rendere uden logo
     i stedet for at crashe.
     """
-    p = profil or hent_aktiv_profil()
-    rel = p.get("logo_fil")
+    from pathlib import Path
+    p = profil or hent_aktiv_profil() or {}
+    rel = p.get("logo_filnavn") or p.get("logo_fil")  # bagudkompat for "logo_fil"
     if not rel:
         return None
-    # Sti er relativ til projekt-rod (samme mappe som denne fil ligger i)
     abs_sti = Path(__file__).resolve().parent / rel
     return str(abs_sti) if abs_sti.exists() else None
-
-
-# ─────────────────────────────────────────────────────────────────
-# ACCESSOR-FUNKTIONER
-# Én pr. felt — så koden ude i resten af projektet kalder
-# hent_navn(), hent_sagsbehandler() osv. Det giver ÉT sted at ændre
-# hvis vi senere vil hente fra database (fx pr. login).
-# ─────────────────────────────────────────────────────────────────
-
-def hent_navn(profil=None):
-    """Returnerer selskabets navn (fx 'TUI', 'Apollo')."""
-    return (profil or hent_aktiv_profil()).get("navn", "")
-
-
-def hent_sagsbehandler(profil=None):
-    """
-    Returnerer det navn der underskriver svarbreve. Default = samme
-    som hent_navn() hvis ikke sat eksplicit.
-    """
-    p = profil or hent_aktiv_profil()
-    return p.get("sagsbehandler") or p.get("navn", "")
-
-
-def hent_by(profil=None):
-    """Returnerer den by der vises i svarbrevets datolinje."""
-    return (profil or hent_aktiv_profil()).get("by", "")
 
 
 def hent_anonymisering_suffix(profil=None):
@@ -219,7 +191,7 @@ def hent_anonymisering_suffix(profil=None):
     anonymisering. 'Maria Hansen, After Travel' → 'Maria, <suffix>'.
     Default = samme som hent_navn() hvis ikke sat eksplicit.
     """
-    p = profil or hent_aktiv_profil()
+    p = profil or hent_aktiv_profil() or {}
     return p.get("anonymisering_suffix") or p.get("navn", "")
 
 
@@ -230,7 +202,7 @@ def hent_interne_team_navne(profil=None):
     samarbejdspartner). Bruges af AI-anonymiseringen til at skelne.
     Returnerer altid en liste (tom liste hvis ikke sat).
     """
-    return list((profil or hent_aktiv_profil()).get("interne_team_navne") or [])
+    return list((profil or hent_aktiv_profil() or {}).get("interne_team_navne") or [])
 
 
 def hent_klageorgan_navn(profil=None):
@@ -238,12 +210,14 @@ def hent_klageorgan_navn(profil=None):
     Returnerer det officielle klageorgan i selskabets land. Eksempel:
     'Pakkerejse-Ankenævnet' (DK), 'ARN' (SE).
     """
-    return (profil or hent_aktiv_profil()).get("klageorgan_navn", "")
+    return (profil or hent_aktiv_profil() or {}).get(
+        "klageorgan_navn", "Pakkerejse-Ankenævnet"
+    )
 
 
 def hent_klageorgan_url(profil=None):
     """Returnerer base-URL til klageorganets website."""
-    return (profil or hent_aktiv_profil()).get("klageorgan_url", "")
+    return (profil or hent_aktiv_profil() or {}).get("klageorgan_url", "")
 
 
 def hent_rejsevilkaar_kilde_url(profil=None):
@@ -251,17 +225,17 @@ def hent_rejsevilkaar_kilde_url(profil=None):
     Returnerer URL hvor selskabets officielle rejsevilkår kan scrapes
     fra. Tom streng hvis ikke sat (fx for selskaber endnu ikke onboardet).
     """
-    return (profil or hent_aktiv_profil()).get("rejsevilkaar_kilde_url", "")
+    return (profil or hent_aktiv_profil() or {}).get("rejsevilkaar_kilde_url", "")
 
 
 def hent_sprog(profil=None):
     """Returnerer ISO-639-1 sprogkode ('da', 'sv', 'no', 'fi')."""
-    return (profil or hent_aktiv_profil()).get("sprog", "da")
+    return (profil or hent_aktiv_profil() or {}).get("sprog", "da")
 
 
 def hent_land(profil=None):
     """Returnerer ISO-3166-1 alpha-2 landekode ('DK', 'SE', 'NO', 'FI')."""
-    return (profil or hent_aktiv_profil()).get("land", "DK")
+    return (profil or hent_aktiv_profil() or {}).get("land", "DK")
 
 
 def hent_lov_navn(profil=None):
@@ -269,4 +243,4 @@ def hent_lov_navn(profil=None):
     Returnerer navnet på den nationale pakkerejselov i selskabets land
     ('Pakkerejseloven' i DK, 'Paketreselagen' i SE).
     """
-    return (profil or hent_aktiv_profil()).get("lov_navn", "Pakkerejseloven")
+    return (profil or hent_aktiv_profil() or {}).get("lov_navn", "Pakkerejseloven")

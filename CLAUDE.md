@@ -320,6 +320,29 @@ Sortér ASC for "mest relevante først". Konverter til similarity med
 Sletter du et dokument, ryger chunks med — ellers ender du med
 forældreløse rækker.
 
+**`ON DELETE RESTRICT`** for tenant_id FK'er. Vi vil ALDRIG accidentielt
+slette en tenant og dermed miste alle deres sager — RESTRICT tvinger
+admin til først at flytte/slette data manuelt. Kun chunks → dokumenter
+bruger CASCADE fordi chunks er afhængige metadata.
+
+**Param-ordering i SQL med flere %s placeholders.** psycopg2 substituerer
+positionelt — så `params`-listen SKAL være i samme rækkefølge som
+%s-placeholderne i SQL'en. Hvis SQL har en %s i SELECT (fx
+`1 - (embedding <=> %s::vector)`), skal det være FØRSTE element i
+params. Vi havde en bug i find_relevante_chunks hvor dokumenttype
+kom først i params — psycopg2 prøvede at substituere strengen som
+vector og funktionen returnerede [] silently (caught af except). Hele
+chunk-pipelinen var stille død. Tjek altid at params-rækkefølge matcher
+SQL-rækkefølgen, og brug navngivne params (`%(name)s`) for komplekse
+queries.
+
+**Tenant-isolation: explicit tenant_id-parameter på ALLE queries.**
+Princip: hver query der rør private data SKAL kunne tage tenant_id
+eksplicit (default = hent_aktiv_tenant_id()). Det giver ÉT sted at
+verificere isolation, og test-scripts kan eksplicit teste cross-tenant
+adgang. ALDRIG global state for tenant — det er for nemt at glemme
+tilfilteringen. Se test_b1_isolation.py for det fulde testmønster.
+
 ---
 
 ## Etablerede mønstre i koden
@@ -405,10 +428,37 @@ update i ui.py + forside.py):
   - Field-navn i sagsresumé: `tui_handtering` — bruges i UI-rendering
 Suffixet `_tui` er HISTORISK; betydningen er nu generisk.
 
-**Phase B — login + database (planlagt):**
-Tenants-tabel + tenant_id-kolonner + login. Hver bruger autentificerer
-sig og knyttes til en tenant. AKTIV_PROFIL_KEY erstattes med dynamisk
-opslag baseret på loggede brugers tenant_id.
+**Phase B1 — database + tenant-isolation (gennemført, v1.7.0):**
+Tenants- og users-tabeller oprettet. tenant_id + is_public kolonner på
+mine_dokumenter, analyse_arkiv, gemte_sager. Alle queries refaktoreret
+til at filtrere på tenant_id (default = aktiv tenant via
+hent_aktiv_tenant_id). Public docs (Pakkerejse-Ankenævn-afgørelser,
+lovgivning, anonymiserings-regler) er is_public=TRUE og synlige for
+alle tenants. Private docs (klage, vilkår, arkiv, gemte sager) er
+isolerede pr. tenant. Cross-tenant slet/læs af andre tenants' data
+afvises i database-laget.
+
+selskab_profiler.py læser nu fra DB i stedet for hardcoded dict.
+Aktiv tenant fastsættes stadig hardcoded ('tui') indtil B2/B3 (login).
+
+Migration-script: migration_b1_tenants.py opretter TUI/Spies/Apollo
+tenants + backfiller alle eksisterende data → TUI-tenant.
+Cross-tenant isolation-test: test_b1_isolation.py opretter dummy-
+tenants og verificerer alt er isoleret.
+
+OBS bug fixet undervejs: find_relevante_chunks havde param-ordering
+bug (passede dokumenttype som første %s i stedet for embedding-vector).
+Det betød chunk-pipelinen returnerede [] silently og altid faldt
+tilbage til hele-dokument-RAG. Nu fixet — chunks bruges som intended.
+
+**Phase B2 — Supabase Auth integration (planlagt):**
+Login via Supabase Auth. Custom login-side. Magic-link invitation.
+Session-management i st.session_state. Stadig hardcoded TUI som default
+tenant for alle brugere.
+
+**Phase B3 — per-request tenant lookup (planlagt):**
+hent_aktiv_tenant_id læser fra st.session_state.user.tenant_id efter
+login. Forskellige brugere ser forskellige tenants automatisk.
 
 **Phase C — onboard nye selskaber (planlagt):**
 Apollo, Spies osv. som rigtige tenants med egne profiler, scrapere og
