@@ -223,6 +223,21 @@ kendelsens forkyndelse** betale klageren X kr." — så 'skal' og
 tilsvarende char-baseret gap) i stedet for at kræve at ordene er
 naboer.
 
+**Pakkerejse-Ankenævn anonymiserer parts-navne.** I scrapede afgørelser
+bliver firmanavne og personnavne erstattet med firkantede klammer-
+labels: `[Rejsearrangøren]`, `[Klageren]`, `[Indklagede]`,
+`[Fuldmagtshaveren]`, `[Arrangøren]`. Når du laver regex for subjekter/
+objekter i afgørelserne, så accepter BÅDE klassiske ord ("Indklagede")
+OG disse anonymiserede labels med valgfri klammer (`\[?Rejsearrangør(?:en)?\]?`).
+Se `_regex_find_beloeb`'s SUBJEKT- og KLAGER_LABEL-konstanter.
+
+**Brug specifikke struktur-mønstre når flere beløb optræder i én
+afgørelse.** En typisk afgørelse indeholder fx 3.746 kr. (tilkendt),
+2.500 kr. (sagsomkostninger til Ankenævnet) og 275 kr. (klagegebyr) —
+plus klagers oprindelige krav. Stærkeste signal for tilkendt er
+kombinationen "subjekt skal betale X kr. til [Klageren]" — den fanger
+det rigtige beløb selv med flere kandidater i teksten.
+
 **ILIKE i Postgres er case-insensitive ud af boksen** — du behøver ikke
 selv at lower'e begge sider. Det er hurtigere og mere læseligt.
 

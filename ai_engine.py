@@ -3023,8 +3023,23 @@ def _regex_find_beloeb(tekst):
     # KRITISK: vi bruger KUN anchors der eksklusivt indikerer Nævnets
     # afgørelse — IKKE klagers påstand. Generelle ord som "kompensation"
     # eller "godtgørelse" optræder i BEGGE kontekster og giver derfor
-    # false positives (vi havde et tilfælde hvor "klager kræver
-    # kompensation på 12.500 kr." blev fanget som tilkendt beløb).
+    # false positives.
+    #
+    # OBS om anonymisering: Pakkerejse-Ankenævn skraberer typisk afgørelser
+    # hvor parts-navne er erstattet med firkantede klammer-labels:
+    #   "[Rejsearrangøren] skal ... betale 3.746 kr. til [Klageren]..."
+    # Vi accepterer derfor BÅDE klassiske "(ind)klagede" subjekter OG
+    # disse anonymiserede labels.
+    SUBJEKT = (
+        r"(?:"
+        r"(?:ind)?klagede|"
+        r"\[?Rejsearrangør(?:en)?\]?|"
+        r"\[?Indklagede\]?|"
+        r"\[?Arrangør(?:en)?\]?"
+        r")"
+    )
+    KLAGER_LABEL = r"(?:\[?Klager(?:en)?\]?|\[?Fuldmagtshaver(?:en)?\]?)"
+
     TILK_PATTERNS = [
         # 1. "Nævnet tilkender/tilkendte/tilkendt" + beløb
         r"Nævnet\s+tilkend(?:er|te|t)\s+(?:klager(?:en)?\s+)?[\s\S]{0,80}?" + BELOEB,
@@ -3032,15 +3047,22 @@ def _regex_find_beloeb(tekst):
         r"klager(?:en)?\s+tilkend(?:es|te|t)\s+[\s\S]{0,80}?" + BELOEB,
         # 3. "tilkendes klager(en)" + beløb
         r"tilkendes\s+klager(?:en)?\s*[\s\S]{0,80}?" + BELOEB,
-        # 4. "(ind)klagede skal ... betale/tilbagebetale/udbetale" — fleksibel,
-        #    tillader op til 150 tegn ord-gap mellem 'skal' og betale-verbet
-        #    (fanger 'skal inden 30 dage fra forkyndelsen betale klageren X kr.')
-        r"(?:ind)?klagede\s+skal\b[\s\S]{0,150}?\b(?:be|tilbagebe|udbe)tale[\s\S]{0,80}?" + BELOEB,
-        # 5. "skal udbetale (til) klager(en)" + beløb
+        # 4. "[Subjekt] skal ... betale/tilbagebetale/udbetale ... [beløb] ... til [Klageren]"
+        #    — det STÆRKESTE signal: kombinationen 'skal betale ... til klager'
+        #    fanger Nævn-afgørelser uanset om subjektet er anonymiseret
+        #    eller skrevet ud. Tillader op til 150 tegn ord-gap mellem
+        #    'skal' og betale-verbet.
+        SUBJEKT + r"\s+skal\b[\s\S]{0,150}?\b(?:be|tilbagebe|udbe)tale\s*"
+        + BELOEB + r"[\s\S]{0,40}?til\s+" + KLAGER_LABEL,
+        # 5. "[Subjekt] skal ... betale/tilbagebetale/udbetale [beløb]"
+        #    — uden krav om "til klageren" bagefter (kortere afgørelser)
+        SUBJEKT + r"\s+skal\b[\s\S]{0,150}?\b(?:be|tilbagebe|udbe)tale[\s\S]{0,80}?"
+        + BELOEB,
+        # 6. "skal udbetale (til) klager(en)" + beløb
         r"skal\s+udbetale\s+(?:til\s+)?klager(?:en)?\s*[\s\S]{0,80}?" + BELOEB,
-        # 6. "forholdsmæssigt afslag (svarende til|på)" + beløb
+        # 7. "forholdsmæssigt afslag (svarende til|på)" + beløb
         r"forholdsmæssigt\s+afslag\s+(?:svarende\s+til|på)\s*[\s\S]{0,60}?" + BELOEB,
-        # 7. "Klagen tages (delvist) til følge" — bredest, ofte fulgt af
+        # 8. "Klagen tages (delvist) til følge" — bredest, ofte fulgt af
         #    "således at indklagede skal betale ... kr." inden for 200 tegn
         r"Klagen\s+tages\s+(?:delvist\s+)?til\s+følge[\s\S]{0,200}?" + BELOEB,
     ]
