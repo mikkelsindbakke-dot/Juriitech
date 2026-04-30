@@ -2013,7 +2013,15 @@ def udled_sandsynligheder_strukturelt(analyse_tekst):
             d = int(data["delvist_medhold"])
             a = int(data["afvist"])
             if all(0 <= v <= 100 for v in (f, d, a)):
-                return {"fuld_medhold": f, "delvist_medhold": d, "afvist": a}
+                # Afvis 0/0/0 — dvs. AI'en gav tomt svar. Bedre at
+                # returnere None så UI'et viser fallback-banneret end
+                # at vise et misvisende dashboard med alle 0%.
+                if f + d + a > 0:
+                    return {"fuld_medhold": f, "delvist_medhold": d, "afvist": a}
+                print(
+                    "DEBUG: udled_sandsynligheder_strukturelt fik 0/0/0 "
+                    "fra AI — afviser og returnerer None"
+                )
     except Exception as e:
         print(f"DEBUG: Struktureret sandsynlighedsudledning fejlede: {e}")
     return None
@@ -3939,8 +3947,20 @@ def udled_foerstevurdering_struktureret(
             + "vidensbanken som juridisk præcedens, og inkluder "
             + "[Bilag XX]-referencer i alle felter. Følg felt-"
             + "beskrivelserne præcist — de definerer indholdet af hver "
-            + "sektion. Husk: 'kort_juridisk_vurdering' er KORT (2-4 "
-            + "sætninger), og 'konklusion_en_linje' er ÉN sætning."
+            + "sektion.\n\n"
+            + "KRITISKE REGLER FOR HVERT FELT:\n"
+            + "- 'kort_juridisk_vurdering' er KORT (2-4 sætninger).\n"
+            + "- 'konklusion_en_linje' er ÉN sætning.\n"
+            + "- 'sandsynlighedsvurdering' SKAL indeholde 3 KONKRETE "
+            + "procenttal (fuld_medhold_til_klager, delvist_medhold_til_klager, "
+            + "afvisning_af_klagen) der tilsammen summer til 100. "
+            + "Estimér ÆRLIGT baseret på sagens faktum + præcedens fra "
+            + "vidensbanken. Returnér ALDRIG 0/0/0 — selv hvis sagen er "
+            + "ufuldstændigt oplyst, gæt kvalificeret. Et eksempel på "
+            + "valid fordeling er fx 15/55/30. 'begrundelse' skal være "
+            + "3-5 sætninger der forklarer hvorfor netop denne fordeling "
+            + "er sandsynlig, gerne med henvisninger til lignende "
+            + "tidligere afgørelser fra vidensbanken."
         )
 
         user_content = _byg_sag_content(

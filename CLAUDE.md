@@ -110,6 +110,17 @@ op via filnavn/dokument_id og scanner hele teksten. Se
 højere temperature kun for kreative opgaver (svarbrev-formuleringer hvor
 variation er ønsket). Vi bruger 0 alle steder vi vil have determinisme.
 
+**Tool-use schema garanterer FELT-tilstedeværelse, ikke FELT-kvalitet.**
+Selv med required=[felt_x], kan AI'en returnere felt_x med tomme/null/0
+værdier. Når et felt SKAL have indholdsfulde værdier (fx
+sandsynlighedsvurdering der summer til 100), skal man (a) eksplicit
+nævne det i slutningen af user-prompten ("Returnér ALDRIG 0/0/0"),
+(b) give et konkret eksempel-fordeling, og (c) tilføje en defensiv
+fallback der detekterer den tomme case og kører et second-chance-kald.
+Vi havde et tilfælde hvor sandsynlighederne kom som 0/0/0 — schemaet var
+opfyldt men værdierne meningsløse. Se `udled_foerstevurdering_struktureret`
++ forside.py's `_alle_nuller`-check.
+
 ### RAG-arkitektur
 
 **Én vektor pr. dokument = "find lignende sager". Chunks-pr-paragraf =

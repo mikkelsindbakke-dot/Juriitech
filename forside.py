@@ -2250,7 +2250,17 @@ if st.session_state.get("aktuel_sag"):
                 # tvinger tre procenter ud.
                 from vurdering import parse_sandsynligheder
                 _s = parse_sandsynligheder(auto_svar)
-                if not _s["fandt_alle_tre"]:
+                # Detekt 0/0/0 som "ikke fundet" — det sker hvis AI'en
+                # returnerede tom/manglende sandsynlighedsvurdering, og
+                # parse-funktionen så fanger 0% i fallback-markdownen.
+                # I så fald skal vi køre den dedikerede fallback-AI-kald.
+                _alle_nuller = (
+                    _s["fandt_alle_tre"]
+                    and (_s.get("fuld_medhold") or 0) == 0
+                    and (_s.get("delvist_medhold") or 0) == 0
+                    and (_s.get("afvist") or 0) == 0
+                )
+                if not _s["fandt_alle_tre"] or _alle_nuller:
                     with st.spinner("Finjusterer sandsynligheder..."):
                         _strukt = udled_sandsynligheder_strukturelt(auto_svar)
                     st.session_state.sandsynligheder_dict = _strukt
