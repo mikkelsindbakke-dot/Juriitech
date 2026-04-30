@@ -1959,9 +1959,11 @@ if st.session_state.get("aktuel_sag"):
         with thinking_fullpage(
             titel="juriitech PAX laver en grundig analyse",
             beskrivelse=(
-                "Kvalitet tager tid. +10 dokumenter analyseres typisk på "
-                "2-3 minutter. +20 dokumenter tager typisk 4-5 min. "
-                "Dette kan variere fra sag til sag afhængig af indhold."
+                "Det kan tage et par minutter, da vi serverer det hele "
+                "samlet. PAX er trænet til først og fremmest at være "
+                "grundig. +10 dokumenter analyseres typisk på 2-3 "
+                "minutter. +20 dokumenter tager typisk 4-5 min., men "
+                "vær opmærksom på, at det kan variere fra sag til sag."
             ),
         ):
             try:
