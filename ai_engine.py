@@ -86,12 +86,24 @@ TOP_K_FALLBACK = 8
 MAX_CHARS_PR_SAG = 15_000
 
 # ---------- ORGANISATIONS-KONSTANTER ----------
-# Indtil vi har et rigtigt login-system, hardcodes organisations-
-# specifikke værdier her. Når juriitech-kontoen bygges, flyttes disse
-# til brugerens organisations-profil (så TUI-brugere får 'TUI' og
-# 'After Travel team', Apollo-brugere får deres egne termer, osv.).
-REJSESELSKAB_NAVN = "TUI"
-REJSESELSKAB_SAGSBEHANDLER = "TUI"
+# Disse værdier er nu DYNAMISKE — de hentes fra selskab_profiler ved
+# import-tid. For TUI (det eneste aktive selskab) returneres 'TUI' /
+# 'TUI', så al eksisterende f-string-interpolation virker uændret.
+#
+# Når login-systemet er live (Phase B i MULTI_TENANT_ROADMAP), bliver
+# AKTIV_PROFIL_KEY i selskab_profiler dynamisk per request, og konstant-
+# patternet vil ikke længere virke (et import-tid-snapshot er ikke
+# per-request). Dér konverterer vi hver prompt-funktion til at kalde
+# hent_navn() / hent_sagsbehandler() eksplicit ved hvert kald.
+from selskab_profiler import (
+    hent_navn as _hent_navn,
+    hent_sagsbehandler as _hent_sagsbehandler,
+    hent_anonymisering_suffix as _hent_anonymisering_suffix,
+    hent_interne_team_navne as _hent_interne_team_navne,
+    hent_klageorgan_navn as _hent_klageorgan_navn,
+)
+REJSESELSKAB_NAVN = _hent_navn()
+REJSESELSKAB_SAGSBEHANDLER = _hent_sagsbehandler()
 
 # Øvre grænse på samlet anonymiseringsreglerblok vi injicerer i prompten.
 # ~18000 tegn ≈ 4500 tokens — rummeligt nok til at dække Datatilsynets
@@ -104,7 +116,7 @@ MAX_CHARS_ANONYMISERINGSREGLER = 18_000
 _ANONYMISERINGSREGLER_CACHE = None
 
 SYSTEM_PROMPT = (
-    "Du er en højt specialiseret juridisk konsulent for et rejseselskab "
+    f"Du er en højt specialiseret juridisk konsulent for et rejseselskab "
     "og ekspert i Pakkerejseankenævnets praksis. Din tone er professionel, "
     "objektiv og analytisk. Du skal altid finde de stærkeste forsvarspunkter "
     "for rejseselskabet baseret på de tidligere afgørelser i vidensbanken.\n"
@@ -167,7 +179,7 @@ SYSTEM_PROMPT = (
     "gælder uanset om påstanden er central eller perifer. Format:\n"
     "  • Fra sagens bilag: [Bilag 03, s. 2]  eller  [Klageskema, s. 1]\n"
     "  • Fra tidligere afgørelse: [Afgørelse 19-1467 (2019)]\n"
-    "  • Fra rejseselskabets vilkår: [TUI rejsevilkår, punkt 4.3]\n"
+    f"  • Fra rejseselskabets vilkår: [{REJSESELSKAB_NAVN} rejsevilkår, punkt 4.3]\n"
     "  • Fra sagsakter (C4C/interne): [Sagsakter — C4C-notat 14/8-2024]\n"
     "  • Fra høringsbrev: [Høring, s. 1]\n"
     "\n"
@@ -880,8 +892,30 @@ def _hent_anonymiseringsregler_tekst(max_tegn=MAX_CHARS_ANONYMISERINGSREGLER):
     return samlet
 
 
-ANONYMISERING_PROMPT = """
-Du forbereder dokumenter (bilag) som TUI sender til
+def _byg_anonymisering_prompt():
+    """
+    Bygger anonymiseringsprompten dynamisk fra det aktive selskabs profil.
+    Denne erstatter den tidligere ANONYMISERING_PROMPT-konstant — vi har
+    konverteret til funktion fordi prompten har MANGE selskabs-specifikke
+    referencer (selskabsnavn, anonymiserings-suffix, interne team-navne)
+    der nu skal være dynamiske per tenant.
+
+    Reglerne i prompten er identiske med den tidligere version — kun
+    konkrete TUI-eksempler og -labels er gjort dynamiske.
+    """
+    navn = _hent_navn()
+    suffix = _hent_anonymisering_suffix()
+    team_navne = _hent_interne_team_navne()
+    # "After Travel team, kundeservice, salg" — bygges dynamisk fra
+    # profilens interne_team_navne. Hvis listen er tom, falder vi
+    # tilbage til en generisk beskrivelse.
+    if team_navne:
+        team_beskrivelse = ", ".join(team_navne)
+    else:
+        team_beskrivelse = "kundeservice-team og medarbejdere"
+
+    return f"""
+Du forbereder dokumenter (bilag) som {navn} sender til
 Pakkerejse-Ankenævnet sammen med svarbrevet. Disse bilag bruges som
 dokumentation, og reglerne for hvad der må fremgå er ANDERLEDES end
 for selve svarbrevet.
@@ -905,26 +939,26 @@ REGLER DU SKAL FØLGE:
      • Følsomme helbreds-, religiøse eller etniske oplysninger der
        IKKE er nødvendige for sagen → fjernes
 
-2. TUI-MEDARBEJDERE (After Travel team, kundeservice, salg) OG
-   TUI-GUIDER (på destinationen):
-   - Erstattes konsekvent med "Fornavn, TUI" — efternavn + titel/rolle
+2. {navn.upper()}-MEDARBEJDERE ({team_beskrivelse}) OG
+   {navn.upper()}-GUIDER (på destinationen):
+   - Erstattes konsekvent med "Fornavn, {suffix}" — efternavn + titel/rolle
      fjernes
-   - "Maria Hansen, After Travel" → "Maria, TUI"
-   - "Vores guide Søren tog imod os" → "Søren, TUI tog imod os"
-   - "Pernille fra TUI svarede" → "Pernille, TUI svarede"
-   - "Customer service-medarbejder Lars Olsen" → "Lars, TUI"
+   - "Maria Hansen, After Travel" → "Maria, {suffix}"
+   - "Vores guide Søren tog imod os" → "Søren, {suffix} tog imod os"
+   - "Pernille fra {navn} svarede" → "Pernille, {suffix} svarede"
+   - "Customer service-medarbejder Lars Olsen" → "Lars, {suffix}"
    - Hvis personen KUN har efternavn eller titel (intet fornavn) →
-     erstat hele referencen med "TUI"
-     • "Hr. Schmidt fra TUI" → "TUI"
-     • "Vores After Travel-medarbejder" → "TUI"
+     erstat hele referencen med "{suffix}"
+     • "Hr. Schmidt fra {navn}" → "{suffix}"
+     • "Vores After Travel-medarbejder" → "{suffix}"
 
-3. HOTELLET OG TUIs EKSTERNE SAMARBEJDSPARTNERE — TITEL + FORNAVN:
+3. HOTELLET OG {navn.upper()}s EKSTERNE SAMARBEJDSPARTNERE — TITEL + FORNAVN:
    - Hotelnavn, hotelkæde, hotelmærke → BEVARES
    - Hotellets logo, adresse, beliggenhed, faciliteter → BEVARES
    - Hotellets type, klasse, beskrivelser → BEVARES
    - MEN navngivne ansatte hos hotellet/eksterne partnere →
-     "Titel + Fornavn" (efternavn fjernes, INGEN TUI tilføjes —
-     fordi de IKKE er TUI-ansatte)
+     "Titel + Fornavn" (efternavn fjernes, INGEN {suffix} tilføjes —
+     fordi de IKKE er {navn}-ansatte)
      • "Hotelmanager Carlos Rodriguez" → "Hotelmanager Carlos"
      • "Receptionist Maria Garcia" → "Receptionist Maria"
      • "Direktør John Smith" → "Direktør John"
@@ -934,11 +968,11 @@ REGLER DU SKAL FØLGE:
      • "Hr. Schmidt fra hotellet" → "[ekstern partner]"
      • "Hotellets manager" → "Hotellets manager"
 
-   VIGTIGT: Forskellen mellem TUI-medarbejdere og eksterne
+   VIGTIGT: Forskellen mellem {navn}-medarbejdere og eksterne
    samarbejdspartnere SKAL bevares:
-   - TUI-medarbejdere/guider → "Fornavn, TUI" (signalerer TUI-tilknytning)
-   - Eksterne ansatte → "Titel + Fornavn" (INGEN TUI — de er ikke
-     ansat af TUI, kun samarbejdspartnere)
+   - {navn}-medarbejdere/guider → "Fornavn, {suffix}" (signalerer {navn}-tilknytning)
+   - Eksterne ansatte → "Titel + Fornavn" (INGEN {suffix} — de er ikke
+     ansat af {navn}, kun samarbejdspartnere)
 
 4. BIPERSONER (medrejsende der ikke selv er klager — ægtefælle,
    børn, venner, rejseledsagere):
@@ -1002,28 +1036,31 @@ def anonymiser_tekst(tekst, filnavn=None):
         # altid har dem i "hjernen" uanset inputtets længde.
         #
         # KRITISK: Denne anonymisering er til BILAG, ikke til svarbrev.
-        # TUI har sine egne specifikke regler (klagers info bevares, TUI
-        # bruges som generisk navn for medarbejdere/guider, partner-
-        # ansatte får fornavn + TUI). Disse TUI-regler OVERSTYRER de
-        # generelle Ankenævn-/Datatilsyn-regler. Vi gør dette eksplicit
-        # i system-prompten, så modellen ikke fejlagtigt anonymiserer
-        # klagers navn fordi den autoritative kilde tilsiger det.
+        # Hvert selskab har sine egne specifikke regler (klagers info
+        # bevares, selskabsnavn bruges som generisk label for medarbejdere/
+        # guider, partner-ansatte får fornavn + selskabsnavn). Disse
+        # selskabs-specifikke regler OVERSTYRER de generelle Ankenævn-/
+        # Datatilsyn-regler. Vi gør dette eksplicit i system-prompten, så
+        # modellen ikke fejlagtigt anonymiserer klagers navn fordi den
+        # autoritative kilde tilsiger det.
+        _navn = _hent_navn()
+        _suffix = _hent_anonymisering_suffix()
         system_prompt = (
-            "Du forbereder dokumenter til TUI's brug i klagesager hos "
-            "Pakkerejse-Ankenævnet. Følg de TUI-specifikke regler i "
+            f"Du forbereder dokumenter til {_navn}'s brug i klagesager hos "
+            f"Pakkerejse-Ankenævnet. Følg de {_navn}-specifikke regler i "
             "brugerprompten PRÆCIST — disse regler overstyrer eventuelle "
             "andre anonymiseringsregler du måtte være trænet i. "
             "Hovedreglerne: (1) klagers navn og kontaktoplysninger MÅ "
             "fremgå i bilag (i modsætning til svarbrevet). (2) "
-            "TUI-medarbejdere og TUI-guider erstattes med 'Fornavn, TUI' "
-            "(fx 'Maria, TUI'). (3) Eksterne samarbejdspartnere som "
-            "hotelpersonale erstattes med 'Titel + Fornavn' UDEN TUI "
+            f"{_navn}-medarbejdere og {_navn}-guider erstattes med 'Fornavn, {_suffix}' "
+            f"(fx 'Maria, {_suffix}'). (3) Eksterne samarbejdspartnere som "
+            f"hotelpersonale erstattes med 'Titel + Fornavn' UDEN {_suffix} "
             "(fx 'Hotelmanager Carlos', 'Receptionist Maria') — fordi de "
-            "ikke er TUI-ansatte."
+            f"ikke er {_navn}-ansatte."
         )
         if regler:
             system_prompt += (
-                "\n\n# BAGGRUNDSREGLER (kun til reference — TUI-reglerne "
+                f"\n\n# BAGGRUNDSREGLER (kun til reference — {_navn}-reglerne "
                 "i brugerprompten har FORRANG ved konflikt):\n\n" + regler
             )
 
@@ -1034,7 +1071,7 @@ def anonymiser_tekst(tekst, filnavn=None):
             system=system_prompt,
             messages=[{
                 "role": "user",
-                "content": ANONYMISERING_PROMPT + header + tekst,
+                "content": _byg_anonymisering_prompt() + header + tekst,
             }],
         )
         return response.content[0].text
@@ -1258,7 +1295,7 @@ Eksempler på korrekte punkter:
 **1. Første bekræftelsesmail for bestillingen med oversigt over vedhæftede dokumenter, afsender/modtager, dato og emne.**
 - Status: ❌ MANGLER
 - Fundet i: (ingen)
-- Bemærkning: Bekræftelsesmailen er ikke blandt de uploadede bilag. Juristen skal fremsende den fra TUI's e-mail-arkiv.
+- Bemærkning: Bekræftelsesmailen er ikke blandt de uploadede bilag. Juristen skal fremsende den fra rejseselskabets e-mail-arkiv.
 
 **2. Første og sidste udgave af rejsebeviset.**
 - Status: ⚠️ DELVIST DÆKKET
@@ -1371,7 +1408,7 @@ def byg_svarbrev_opgave(
             tidsforhold_blok += f"  • {obs}\n"
         tidsforhold_blok += (
             "\nSvarbrevet SKAL adressere denne forsinkelse som "
-            "forsvarsargument — TUI havde ikke mulighed for at "
+            f"forsvarsargument — {REJSESELSKAB_NAVN} havde ikke mulighed for at "
             "afhjælpe manglen på destinationen, hvilket Nævnet "
             "lægger vægt på. Brug konkrete datoer i argumentationen.\n"
         )
@@ -2192,28 +2229,41 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "samlet_vurdering": str,
         "konkrete_observationer": [str],
         "kunne_ikke_udledes": bool,
-        "begivenheder": [                   # NY: kronologisk tidslinje
+        "begivenheder": [                   # kronologisk tidslinje
             {
                 "dato": str,                # "8. juni 2025"
                 "tidspunkt": str | None,    # "14:30" eller None
-                "type": str,                # "ankomst" | "klage_til_guide" | "tui_reaktion" | "klage_til_tui" | "afgang" | "andet"
-                "aktoer": str,              # "Klager" | "TUI guide" | "TUI After Travel" | "Hotel" | etc.
+                "type": str,                # se enum-værdier nedenfor
+                "aktoer": str,              # "Klager" | "<selskab> guide" | etc.
                 "beskrivelse": str,         # 1-2 sætninger om hvad der skete
-                "betydning": str            # "neutral" | "positiv_for_tui" | "negativ_for_tui"
+                "betydning": str            # se enum-værdier nedenfor
             }
         ]
     }
+
+    NOTE om enum-værdier (LEGACY-STABILE — må ikke omdøbes uden
+    koordineret update i ui.py + forside.py):
+      type:       "ankomst" | "klage_til_guide" | "tui_reaktion" |
+                  "klage_til_tui" | "afgang" | "andet"
+      betydning:  "neutral" | "positiv_for_tui" | "negativ_for_tui"
+    Suffixet "_tui" er historisk — værdierne betyder GENERELT "for det
+    aktive selskab" (fx for Apollo læses positiv_for_tui som "positiv
+    for Apollo"). Vi har ikke omdøbt dem fordi de bruges som dict-keys
+    i farve-renderingen i ui.py og forside.py.
+
     Returnerer None hvis ekstraktion fejler.
     """
     import json as _json
     import re as _re
+
+    _navn = _hent_navn()
 
     indled = (
         "Du er en præcis juridisk research-assistent specialiseret i "
         "Pakkerejse-Ankenævnet sager. Din ENESTE opgave lige nu er at "
         "kortlægge TIDSFORHOLDET mellem hvornår klager konstaterede "
         "mangler/problemer og hvornår klager kontaktede rejseselskabet "
-        "(TUI) om dem.\n\n"
+        f"({_navn}) om dem.\n\n"
         "═══════════════════════════════════════════════════════════════\n"
         "KRITISK PRINCIP: KILDE-FORANKRING (ingen gæt — ingen 'ca.')\n"
         "═══════════════════════════════════════════════════════════════\n"
@@ -2242,13 +2292,13 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "═══════════════════════════════════════════════════════════════\n"
         "Pakkerejse-Ankenævnet vægter RETTIDIG REKLAMATION ekstremt højt. "
         "Hvis klager:\n"
-        "  • Kontaktede TUI samme dag eller umiddelbart efter en mangel "
+        f"  • Kontaktede {_navn} samme dag eller umiddelbart efter en mangel "
         "blev konstateret (på destinationen) → RETTIDIG reklamation, "
         "neutralt for sagen\n"
-        "  • Ventede flere dage efter konstatering med at kontakte TUI "
-        "→ POTENTIELT FOR SEN reklamation, fordel for TUI\n"
-        "  • Først kontaktede TUI EFTER hjemkomst → ALMINDELIGVIS FOR "
-        "SEN reklamation, stærkt forsvarsargument for TUI\n\n"
+        f"  • Ventede flere dage efter konstatering med at kontakte {_navn} "
+        f"→ POTENTIELT FOR SEN reklamation, fordel for {_navn}\n"
+        f"  • Først kontaktede {_navn} EFTER hjemkomst → ALMINDELIGVIS FOR "
+        f"SEN reklamation, stærkt forsvarsargument for {_navn}\n\n"
         "INSTRUKTION:\n"
         "1. Find rejseperioden (udrejse + hjemrejse) — KUN hvis det "
         "fremgår af bilagene.\n"
@@ -2256,7 +2306,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "   - Hvornår blev manglen konstateret? Brug KUN datoer der "
         "  EKSPLICIT fremgår. Ellers skriv 'konstateringsdato kan "
         "  ikke verificeres — bør tjekkes manuelt'.\n"
-        "   - Hvornår kontaktede klager TUI om det? Brug KUN dato fra "
+        f"   - Hvornår kontaktede klager {_navn} om det? Brug KUN dato fra "
         "  e-mail-headers, dokumentdato eller eksplicit dato i bilag. "
         "  Ellers skriv 'kontaktdato kan ikke verificeres — bør "
         "  tjekkes manuelt'.\n"
@@ -2270,7 +2320,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "  • Datoer på dansk format ('12. juni 2025', ikke '12 June 2025')\n"
         "  • Vurderinger og observationer i danske juridiske termer\n"
         "  • Brug 'rettidig reklamation' (ikke 'timely complaint'),\n"
-        "    'mangel' (ikke 'deficiency'), 'henvendelse til TUI' osv.\n"
+        f"    'mangel' (ikke 'deficiency'), 'henvendelse til {_navn}' osv.\n"
         "Output skal kunne læses direkte af en dansk jurist uden\n"
         "konsultation af originalsproget.\n\n"
         "FILER FRA SAGEN FØLGER NEDENFOR:\n"
@@ -2296,9 +2346,9 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         'Hvis intet kan udledes, skriv det ærligt.",\n'
         '  "konkrete_observationer": [\n'
         '    "Kort beskrivelse af hvert relevant tidsforhold, fx: '
-        '\\"Pool-problem konstateret 9. juni, TUI kontaktet samme dag — '
+        f'\\"Pool-problem konstateret 9. juni, {_navn} kontaktet samme dag — '
         'rettidig\\" eller \\"Ekstraseng-problem konstateret 8. juni, '
-        'TUI først kontaktet 14. juni efter hjemkomst (6 dages '
+        f'{_navn} først kontaktet 14. juni efter hjemkomst (6 dages '
         'forsinkelse) — for sen reklamation\\"",\n'
         '    "..."\n'
         '  ],\n'
@@ -2308,12 +2358,18 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         '      "dato": "8. juni 2025",\n'
         '      "tidspunkt": "14:30 eller null hvis ikke angivet",\n'
         '      "type": "ankomst|klage_til_guide|tui_reaktion|klage_til_tui|afgang|andet",\n'
-        '      "aktoer": "Klager / TUI guide / TUI After Travel / Hotel / etc.",\n'
+        f'      "aktoer": "Klager / {_navn} guide / {_navn} kundeservice / Hotel / etc.",\n'
         '      "beskrivelse": "1-2 sætninger om hvad der skete",\n'
         '      "betydning": "neutral|positiv_for_tui|negativ_for_tui"\n'
         '    }\n'
         '  ]\n'
         "}\n\n"
+        "BEMÆRK om enum-værdier ('type' og 'betydning'): Strengene "
+        "indeholder suffixet '_tui' som er HISTORISK — de bruges som "
+        "interne identifikatorer i UI-renderingen. Brug dem PRÆCIS som "
+        f"angivet uanset hvilket selskab ({_navn}) du analyserer for. "
+        "'positiv_for_tui' betyder 'positiv for det aktive selskab', "
+        "'tui_reaktion' betyder 'reaktion fra det aktive selskab' osv.\n\n"
         "VIGTIGE REGLER:\n"
         "- har_problematisk_forsinkelse SKAL være TRUE KUN hvis AT "
         "LEAST ÉN mangel BEVISLIGT (med verificerede datoer fra "
@@ -2325,13 +2381,13 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "udlede dette, sæt kunne_ikke_udledes=true og skriv det ærligt "
         "i samlet_vurdering. OPFIND ALDRIG datoer.\n"
         "- konkrete_observationer SKAL formuleres ærligt med kilde:\n"
-        "  ✓ KORREKT: 'Reklamation modtaget af TUI 23. juni 2025 [Bilag 13]'\n"
-        "  ✓ KORREKT: 'TUI's svar fremsendt 14. juli 2025 [Bilag 14] — "
+        f"  ✓ KORREKT: 'Reklamation modtaget af {_navn} 23. juni 2025 [Bilag 13]'\n"
+        f"  ✓ KORREKT: '{_navn}'s svar fremsendt 14. juli 2025 [Bilag 14] — "
         "dato for klagers oprindelige konstatering af manglen kan ikke "
         "verificeres af materialet og bør tjekkes manuelt'\n"
         "  ✗ FORKERT: 'Mangel konstateret ca. 28.-29. maj 2025' "
         "(brug ALDRIG 'ca.')\n"
-        "  ✗ FORKERT: 'INGEN henvendelse til TUI under rejsen' (brug "
+        f"  ✗ FORKERT: 'INGEN henvendelse til {_navn} under rejsen' (brug "
         "ALDRIG sådanne påstande uden EKSPLICIT bekræftelse i bilag)\n"
         "  ✗ FORKERT: 'Mangel konstateret dag 2 af opholdet' (gæt "
         "baseret på rejseperiode)\n"
@@ -2342,23 +2398,23 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "REGLER FOR begivenheder (TIDSLINJE):\n"
         "- DESTINATIONS-PERIODEN ER VIGTIGST: Den juridiske vurdering "
         "  vægter primært hvad der skete PÅ DESTINATIONEN — om klager "
-        "  reklamerede til guide/hotel/After Travel mens man stadig var "
-        "  der, og hvordan TUI reagerede dér og da. Dette er hjertet af "
+        "  reklamerede til guide/hotel/kundeservice mens man stadig var "
+        f"  der, og hvordan {_navn} reagerede dér og da. Dette er hjertet af "
         "  'rettidig reklamation'-vurderingen.\n"
         "- Vær EKSTRA OMHYGGELIG og DETALJERET med begivenheder mellem "
         "  ankomst og afgang. Hver enkelt henvendelse til guide, hver "
-        "  reaktion fra hotel, hver gang TUI svarede ude på destinationen "
+        f"  reaktion fra hotel, hver gang {_navn} svarede ude på destinationen "
         "  — alt skal med, præcist dateret. Det er på destinationen at "
         "  rejseselskabet enten har haft chancen for at afhjælpe (eller ej).\n"
         "- Inkludér ALLE relevante kronologiske begivenheder med dato:\n"
         "  • Klagers ankomst til destinationen (markér 'type': 'ankomst')\n"
-        "  • Hver gang klager henvendte sig til guide/hotel/After Travel "
+        "  • Hver gang klager henvendte sig til guide/hotel/kundeservice "
         "    PÅ destinationen — disse er HØJEST PRIORITET\n"
-        "  • Hver gang TUI/hotel reagerede/svarede/handlede PÅ destinationen "
+        f"  • Hver gang {_navn}/hotel reagerede/svarede/handlede PÅ destinationen "
         "    — disse er HØJEST PRIORITET\n"
         "  • Klagers afgang fra destinationen (markér 'type': 'afgang')\n"
-        "  • Begivenheder EFTER hjemkomst (klage til TUI After Travel "
-        "    hjemmefra, klage til Ankenævnet, TUI's svar hjemmefra) — "
+        f"  • Begivenheder EFTER hjemkomst (klage til {_navn}'s kundeservice "
+        f"    hjemmefra, klage til Ankenævnet, {_navn}'s svar hjemmefra) — "
         "    disse må gerne medtages, men er sekundære. Vær kortfattet "
         "    her — fokus skal stadig ligge på destinationen.\n"
         "- Sortér ALTID kronologisk (ældste først).\n"
@@ -2367,11 +2423,11 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "- Inkludér tidspunkt KUN hvis det fremgår af materialet — "
         "ellers sæt 'tidspunkt': null.\n"
         "- 'aktoer' beskriver hvem der handler/skriver (ikke hvem der "
-        "modtager). Brug 'Klager', 'TUI guide', 'TUI After Travel', "
+        f"modtager). Brug 'Klager', '{_navn} guide', '{_navn} kundeservice', "
         "'Hotel', 'Pakkerejse-Ankenævnet'.\n"
-        "- 'betydning' er hvordan begivenheden påvirker TUI's "
-        "forsvarsposition: 'positiv_for_tui' (fx TUI reagerede hurtigt, "
-        "klager reklamerede sent), 'negativ_for_tui' (fx TUI ignorerede "
+        f"- 'betydning' er hvordan begivenheden påvirker {_navn}'s "
+        f"forsvarsposition: 'positiv_for_tui' (fx {_navn} reagerede hurtigt, "
+        f"klager reklamerede sent), 'negativ_for_tui' (fx {_navn} ignorerede "
         "klage, lang ventetid på respons), 'neutral' (faktuel begivenhed "
         "uden vurdering).\n"
         "- Hvis ingen datoer kan udledes, returnér tom liste: "
@@ -2696,7 +2752,7 @@ def udled_bilag_overskrifter(filer):
     """
     Foreslår en kort dansk overskrift til hvert bilag i bilag-listen
     på et svarbrev (fx 'Første bekræftelsesmail på rejsebestillingen',
-    'TUIs rejsevilkår', 'Hotelbeskrivelse vedhæftet i 1. bekræftelsesmail').
+    'Rejsearrangørens rejsevilkår', 'Hotelbeskrivelse vedhæftet i 1. bekræftelsesmail').
 
     Tager en liste af fil-dicts på formen:
       [{"filnavn": "bilag_05.pdf", "tekst": "...", "rolle": "..."}, ...]
@@ -2739,6 +2795,7 @@ def udled_bilag_overskrifter(filer):
             f"--- {filnavn}{rolle_str} ---\n{tekst or '(ingen tekst udtrukket)'}"
         )
 
+    _navn = _hent_navn()
     indled = (
         "Du er en præcis dokument-klassifikator. Din ENESTE opgave er at "
         "foreslå en KORT dansk overskrift til hvert af nedenstående bilag, "
@@ -2751,9 +2808,9 @@ def udled_bilag_overskrifter(filer):
         "ikke bare 'Mail 1' eller 'Dokument'.\n"
         "- Eksempler på gode overskrifter:\n"
         "  • 'Første bekræftelsesmail på rejsebestillingen'\n"
-        "  • 'TUIs rejsevilkår'\n"
+        f"  • '{_navn}s rejsevilkår'\n"
         "  • 'Hotelbeskrivelse vedhæftet i 1. bekræftelsesmail'\n"
-        "  • 'Klagers korrespondance med TUI efter hjemkomst'\n"
+        f"  • 'Klagers korrespondance med {_navn} efter hjemkomst'\n"
         "  • 'Voucher vedr. Hotel InterContinental Bali Resort'\n"
         "- Hvis du IKKE kan udlede et fornuftigt indhold (fx fordi teksten "
         "er tom eller meningsløs), brug en pæn default som 'Bilag — "
@@ -2824,7 +2881,9 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         "emne": str,                 # 1-2 sætninger
         "klagepunkter": [str, ...],  # 3-6 korte bullet points
         "krav": str,                 # klagers krav med beløb hvis oplyst
-        "tui_handtering": str,       # hvordan TUI har håndteret det indtil nu
+        "tui_handtering": str,       # hvordan selskabet har håndteret det
+                                     # (LEGACY-stabil nøgle — bruges af
+                                     # ui.py + forside.py; må ikke omdøbes)
         "forventet_udfald": str      # ultrakort vurdering: udfald + beløb
       }
     eller None hvis udledningen fejler. Funktionen laver ét enkelt AI-kald
@@ -2835,6 +2894,8 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
 
     if not analyse_tekst or not analyse_tekst.strip():
         return None
+
+    _navn = _hent_navn()
 
     ekstra_kontekst = ""
     if sagsakter_tekst and sagsakter_tekst.strip():
@@ -2855,13 +2916,17 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         '  "emne": "1-2 sætninger der forklarer hvad sagen handler om",\n'
         '  "klagepunkter": ["kort punkt 1", "kort punkt 2", "..."],\n'
         '  "krav": "en kort beskrivelse af hvad klager kræver, inkl. beløb hvis oplyst",\n'
-        '  "tui_handtering": "kort beskrivelse af hvordan rejseselskabet (TUI) har håndteret sagen INDEN Nævnet blev involveret",\n'
+        f'  "tui_handtering": "kort beskrivelse af hvordan rejseselskabet ({_navn}) har håndteret sagen INDEN Nævnet blev involveret",\n'
         '  "forventet_udfald": "ULTRAKORT vurdering (max 15 ord) af det mest sandsynlige udfald + beløbsmæssigt estimat"\n'
         "}\n\n"
+        "BEMÆRK: Feltet hedder 'tui_handtering' uanset hvilket selskab "
+        f"({_navn}) du analyserer for — navnet er LEGACY-stabilt og bruges "
+        "som nøgle i UI-renderingen. Indholdet skal naturligvis omtale det "
+        "rigtige selskab.\n\n"
         "KRAV:\n"
         "- emne: 1-2 sætninger på dansk. Konkret, ikke generisk.\n"
         "- klagepunkter: KRITISK — du SKAL inkludere ALLE klagepunkter "
-        "  klager rejser mod TUI, uanset hvor mange der er. Det er IKKE "
+        f"  klager rejser mod {_navn}, uanset hvor mange der er. Det er IKKE "
         "  nok at finde 3-6 'vigtigste'. Hvis klager nævner 8 forskellige "
         "  problemer, skal alle 8 stå på listen. Tag IKKE genvej. Hvert "
         "  punkt: max ~15 ord.\n"
@@ -2870,7 +2935,7 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         "- forventet_udfald: ULTRAKORT — max 15 ord. Formater som én linje med det sandsynlige udfald og beløb.\n"
         "  Eksempler:\n"
         "    'Delvist medhold — formentlig 1.000-2.500 kr. i kompensation'\n"
-        "    'Afvisning af klagen — TUI får medhold'\n"
+        f"    'Afvisning af klagen — {_navn} får medhold'\n"
         "    'Fuld medhold — kompensation på ca. 18.500 kr.'\n"
         "    'Forligstilbud på 2.000-4.000 kr. er den mest realistiske udgang'\n"
         "- Alt på dansk.\n"
@@ -2932,13 +2997,14 @@ def _udled_forventet_udfald_separat(analyse_tekst):
     if not analyse_tekst or not analyse_tekst.strip():
         return None
     try:
+        _navn = _hent_navn()
         prompt = (
             "Læs nedenstående juridiske analyse af en pakkerejse-klagesag "
             "og giv mig ÉN linje (max 15 ord) der opsummerer det mest "
             "sandsynlige udfald + beløbsmæssigt estimat.\n\n"
             "Eksempler på god outputformat:\n"
             "  'Delvist medhold — formentlig 1.000-2.500 kr. i kompensation'\n"
-            "  'Afvisning af klagen — TUI får medhold'\n"
+            f"  'Afvisning af klagen — {_navn} får medhold'\n"
             "  'Fuld medhold — kompensation på ca. 18.500 kr.'\n\n"
             "Returnér KUN linjen — ingen forklaring, ingen anførselstegn, "
             "ingen markdown.\n\n"
@@ -3286,8 +3352,8 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         "  - titel (string): Kort beskrivende titel på sagens tema — "
         "4-8 danske ord (fx 'Pool-mangel og refusion afvist').\n"
         "  - rejsearrangoer (string): Navn på rejsearrangøren (fx 'TUI "
-        "Danmark A/S'). IKKE CVR-nummer — udelad det. Hvis ikke nævnt, "
-        "skriv 'ukendt'.\n"
+        "Danmark A/S', 'Apollo Rejser A/S', 'Spies Rejser A/S'). IKKE "
+        "CVR-nummer — udelad det. Hvis ikke nævnt, skriv 'ukendt'.\n"
         "  - klagers_krav (string): Hvad klageren krævede, fx '12.500 kr.' "
         "— eller 'ukendt' hvis ikke tydeligt i teksten.\n"
         "  - tilkendt_beloeb (string): Hvad Nævnet tilkendte klageren, "
@@ -3573,7 +3639,7 @@ def spoerg_ai_med_sag(
 
         indled = (
             f"VIDENSBANK (de mest relevante tidligere afgørelser og "
-            f"TUI's rejsevilkår):\n"
+            f"{REJSESELSKAB_NAVN}'s rejsevilkår):\n"
             f"{vidensbank}\n\n"
             f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + bilag — "
             f"{len(filer)} filer i alt):"
@@ -3675,8 +3741,8 @@ FOERSTEVURDERING_SCHEMA = {
         "rejseselskabets_stillingtagen_indtil_nu": {
             "type": "string",
             "description": (
-                "Beskriv KRONOLOGISK hvad rejseselskabet (TUI/Spies/"
-                "Apollo osv.) har gjort, tilbudt eller afvist i "
+                f"Beskriv KRONOLOGISK hvad rejseselskabet ({REJSESELSKAB_NAVN}) "
+                "har gjort, tilbudt eller afvist i "
                 "forhold til klagen INDEN Nævnet blev involveret. "
                 "Inkluder konkrete datoer fra mail-korrespondance og "
                 "sagsakter. Strukturér som flere afsnit (separer med "
@@ -3752,9 +3818,9 @@ FOERSTEVURDERING_SCHEMA = {
                 "ÉN ENKELT sætning (max 200 tegn) der opsummerer hvad "
                 "denne sag samlet anbefales at ende med. Eksempel: "
                 "'Sagen anbefales delvist afvist da reklamationen var "
-                "for sen, mens TUI tilbyder 1.500 kr. for booking-"
-                "fejlen.' INGEN bullets, INGEN flere sætninger, INGEN "
-                "ekstra argumentation — kun ÉN linje."
+                f"for sen, mens {REJSESELSKAB_NAVN} tilbyder 1.500 kr. for "
+                "booking-fejlen.' INGEN bullets, INGEN flere sætninger, "
+                "INGEN ekstra argumentation — kun ÉN linje."
             ),
         },
     },
@@ -3848,7 +3914,7 @@ def udled_foerstevurdering_struktureret(
         # ---------- BYG PROMPT-INDLEDNING ----------
         indled = (
             f"VIDENSBANK (de mest relevante tidligere afgørelser og "
-            f"TUI's rejsevilkår):\n{vidensbank}\n\n"
+            f"{REJSESELSKAB_NAVN}'s rejsevilkår):\n{vidensbank}\n\n"
             f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + "
             f"bilag — {len(filer)} filer i alt):"
         )
