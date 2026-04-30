@@ -38,7 +38,6 @@ from eksport import analyse_til_docx, svarbrev_til_docx
 from vurdering import vis_dashboard as vis_udfalds_dashboard
 from ui import (
     thinking,
-    thinking_fullpage,
     render_analyse_som_pillars,
     render_sagsresume,
     render_tidslinje,
@@ -1148,68 +1147,6 @@ if "sagsresume" not in st.session_state:
     st.session_state.sagsresume = None
 
 
-def _udfor_rydning_af_sag():
-    """
-    Udfører fuld rydning af den aktive sag — wipes alle session_state-
-    felter relateret til sagen så brugeren returneres til empty state
-    (ingen sag uploaded).
-
-    Bruges fra TO steder:
-      1. 'Ryd sag'-knappen i den grønne success-bar (efter bekræftelse)
-      2. 'Ryd sag'-knappen i fullpage-loading-viewet (via ?ryd_sag=1
-         query-parameter — se handler nedenunder)
-
-    Funktionen kalder IKKE st.rerun() — den lader caller'en gøre det
-    så hver call site kan kontrollere flowet.
-    """
-    st.session_state.aktuel_sag = None
-    st.session_state.sidste_sagsfil_signatur = None
-    st.session_state.sagsakter = ""
-    st.session_state.sagsakter_filer = []
-    st.session_state.sagsakter_signatur = None
-    st.session_state.sagsakter_opdaterede_vurdering = False
-    st.session_state.auto_vurdering_tekst = None
-    st.session_state.auto_vurdering_for_signatur = None
-    st.session_state.seneste_svar = None
-    st.session_state.seneste_svarbrev = None
-    st.session_state.seneste_tjekliste = None
-    st.session_state.seneste_anonymisering = None
-    st.session_state.relevante_sager = []
-    st.session_state.match_info = []
-    st.session_state.sandsynligheder_dict = None
-    st.session_state.sagsresume = None
-    st.session_state.chat_historik = []
-    st.session_state.anon_resultater_per_fil = {}
-    # Ryd alle sag-specifikke svarbrev-instrukser fra session state
-    # så de ikke siver med til en ny sag.
-    for _key in list(st.session_state.keys()):
-        if (
-            _key.startswith("svarbrev_instrukser_")
-            or _key.startswith("ny_instruks_input_")
-            or _key.startswith("tilfoej_btn_")
-            or _key.startswith("fjern_instruks_")
-        ):
-            del st.session_state[_key]
-    # Ryd selve bekræftelses-flaget hvis det er der
-    if "_ryd_sag_bekraefter" in st.session_state:
-        del st.session_state["_ryd_sag_bekraefter"]
-
-
-# ---------- QUERY-PARAM-HANDLER FOR 'RYD SAG' UNDER LOADING ----------
-# Når brugeren klikker den røde 'Ryd sag'-knap inde i fullpage-loading-
-# viewet, naviger iframen parent-vinduet til samme URL med ?ryd_sag=1.
-# Vi opfanger parameteren her ved næste page-load, kører rydningen, og
-# fjerner parameteren så et refresh ikke kører rydningen igen.
-if st.query_params.get("ryd_sag") == "1":
-    _udfor_rydning_af_sag()
-    # Fjern query-parameteren så browseren ikke beholder den
-    try:
-        del st.query_params["ryd_sag"]
-    except KeyError:
-        pass
-    st.rerun()
-
-
 def _auto_gem_klage_i_db(klage_dict):
     """
     Gemmer en uploadet klage i databasen med dokumenttype='klage', hvis den
@@ -1858,10 +1795,39 @@ if st.session_state.get("aktuel_sag"):
                 st.rerun()
 
         if _bekraeft_klik:
-            # Bekræftet — udfør den fulde rydning via den fælles helper
-            # (samme funktion bruges også af query-param-handleren når
-            # 'Ryd sag'-knappen i loading-viewet klikkes).
-            _udfor_rydning_af_sag()
+            # Bekræftet — udfør den fulde rydning (inline, original
+            # implementation før d841656-refaktoreringen)
+            st.session_state.aktuel_sag = None
+            st.session_state.sidste_sagsfil_signatur = None
+            st.session_state.sagsakter = ""
+            st.session_state.sagsakter_filer = []
+            st.session_state.sagsakter_signatur = None
+            st.session_state.sagsakter_opdaterede_vurdering = False
+            st.session_state.auto_vurdering_tekst = None
+            st.session_state.auto_vurdering_for_signatur = None
+            st.session_state.seneste_svar = None
+            st.session_state.seneste_svarbrev = None
+            st.session_state.seneste_tjekliste = None
+            st.session_state.seneste_anonymisering = None
+            st.session_state.relevante_sager = []
+            st.session_state.match_info = []
+            st.session_state.sandsynligheder_dict = None
+            st.session_state.sagsresume = None
+            st.session_state.chat_historik = []
+            st.session_state.anon_resultater_per_fil = {}
+            # Ryd alle sag-specifikke svarbrev-instrukser fra session state
+            # så de ikke siver med til en ny sag.
+            for _key in list(st.session_state.keys()):
+                if (
+                    _key.startswith("svarbrev_instrukser_")
+                    or _key.startswith("ny_instruks_input_")
+                    or _key.startswith("tilfoej_btn_")
+                    or _key.startswith("fjern_instruks_")
+                ):
+                    del st.session_state[_key]
+            # Ryd selve bekræftelses-flaget
+            if _ryd_bekraeft_key in st.session_state:
+                del st.session_state[_ryd_bekraeft_key]
             st.rerun()
 
     # Vis oversigt over filerne i sagen (foldbar)
