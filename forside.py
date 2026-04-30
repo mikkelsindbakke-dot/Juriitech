@@ -1547,7 +1547,7 @@ if not _har_aktiv_sag:
         unsafe_allow_html=True,
     )
 
-    # CSS til at gøre Streamlit's file_uploader stor og prominent.
+    # CSS til at gøre Streamlit's file_uploader stor, prominent og centreret.
     # Vi targeter de officielle data-testid attributter så styling holder
     # på tværs af Streamlit-opdateringer. KUN visuelt — funktionaliteten
     # (drag-and-drop, multi-select, browse-knap) er uberørt.
@@ -1556,17 +1556,25 @@ if not _har_aktiv_sag:
         <style>
         /* Den ydre container omkring file_uploader */
         [data-testid="stFileUploader"] {
-            margin-bottom: 4px;
+            margin-bottom: 18px;
         }
-        /* Selve drop-zonen: stor, dashed border, blød lavendel-tone */
+        /* Selve drop-zonen: STOR (mindst halv side), centreret indhold,
+           dashed lavendel border, blød gradient. */
         [data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"],
         [data-testid="stFileUploader"] section {
-            min-height: 220px !important;
-            padding: 36px 28px !important;
+            min-height: 50vh !important;
+            padding: 48px 28px !important;
             border: 2px dashed #C7D2FE !important;
             border-radius: 18px !important;
             background: linear-gradient(180deg, #FAFAFF 0%, #F5F3FF 100%) !important;
             transition: all 0.18s ease;
+            /* Centrér indholdet (knap + tekst) lodret OG vandret */
+            display: flex !important;
+            flex-direction: column !important;
+            justify-content: center !important;
+            align-items: center !important;
+            gap: 14px !important;
+            text-align: center !important;
         }
         /* Hover-tilstand: lidt mørkere kant + skygge */
         [data-testid="stFileUploader"] section[data-testid="stFileUploaderDropzone"]:hover,
@@ -1575,23 +1583,41 @@ if not _har_aktiv_sag:
             background: linear-gradient(180deg, #F5F3FF 0%, #EEEAFF 100%) !important;
             box-shadow: 0 4px 16px rgba(99, 102, 241, 0.08);
         }
-        /* Tekst inde i drop-zonen — gør den lidt større og mere tydelig */
-        [data-testid="stFileUploader"] section span,
-        [data-testid="stFileUploader"] section small {
-            font-size: 0.95rem !important;
+        /* Skjul Streamlits default 'Drag and drop'-tekst — vi viser i
+           stedet vores egen format-info NEDENUNDER knappen via ::after */
+        [data-testid="stFileUploader"]
+            section [data-testid="stFileUploaderDropzoneInstructions"] {
+            display: none !important;
         }
-        /* 'Browse files'-knappen — gør den til primary-stilen */
+        /* 'Browse files'-knappen — gør den til primary-stilen, lidt
+           større nu hvor den er det centrale element i zonen */
         [data-testid="stFileUploader"] section button {
             background: #4F46E5 !important;
             color: white !important;
             border: none !important;
             font-weight: 600 !important;
-            padding: 8px 20px !important;
-            border-radius: 8px !important;
+            padding: 12px 28px !important;
+            font-size: 1rem !important;
+            border-radius: 10px !important;
             transition: background 0.15s ease;
+            box-shadow: 0 2px 8px rgba(79, 70, 229, 0.18);
         }
         [data-testid="stFileUploader"] section button:hover {
             background: #4338CA !important;
+            box-shadow: 0 4px 12px rgba(79, 70, 229, 0.28);
+        }
+        /* Egen format/størrelse-tekst under knappen, centreret i zonen */
+        [data-testid="stFileUploader"]
+            section[data-testid="stFileUploaderDropzone"]::after,
+        [data-testid="stFileUploader"] section::after {
+            content: "200 MB pr. fil  ·  ZIP · PDF · DOCX · PNG · JPG";
+            display: block;
+            color: #6B7280;
+            font-size: 0.88rem;
+            font-family: 'Inter', -apple-system, sans-serif;
+            text-align: center;
+            margin-top: -4px;
+            line-height: 1.4;
         }
         </style>
         """,
@@ -1609,26 +1635,6 @@ if not _har_aktiv_sag:
             "Flere filer kan vælges samtidigt eller tilføjes ad "
             "flere omgange før du klikker Scan filer."
         ),
-    )
-
-    # Hjælpe-bjælke under upload-zonen: formater til venstre, max-størrelse
-    # til højre — ligesom på inspiration-billedet.
-    st.markdown(
-        """
-        <div style="
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin: 4px 4px 18px 4px;
-            color: #6B7280;
-            font-size: 0.8rem;
-            font-family: 'Inter', sans-serif;
-        ">
-            <span>Understøttede formater: ZIP · PDF · DOCX · PNG · JPG</span>
-            <span>Maks. filstørrelse: 200 MB pr. fil</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
     )
 
     # 'Scan filer'-knappen vises kun når der er nye/ændrede filer.
