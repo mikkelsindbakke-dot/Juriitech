@@ -452,21 +452,22 @@ with tab_brugere:
 
 
 # ───────────────────────────────────────────────────────────────
-# TAB: INVITER NY BRUGER
+# TAB: OPRET NY BRUGER
 # ───────────────────────────────────────────────────────────────
 with tab_inviter:
-    st.subheader("Inviter ny bruger")
+    st.subheader("Opret ny bruger")
     st.caption(
-        "Når du inviterer en bruger, sender Supabase dem en mail med "
-        "et link. De klikker, sætter et password, og logger ind. Ved "
-        "første login kobles deres Supabase-konto automatisk til denne "
-        "users-tabel-row."
+        "Opretter brugeren direkte i Supabase Auth med et auto-genereret "
+        "midlertidigt password. Du skal selv videregive credentials til "
+        "brugeren via en SIKKER kanal (Signal, telefonisk — IKKE almindelig "
+        "email). Brugeren kan ændre passwordet selv via 'Glemt adgangskode?' "
+        "efter første login."
     )
 
     tenants_til_invite = hent_alle_tenants()
     if not tenants_til_invite:
         st.warning(
-            "Du skal oprette mindst én tenant FØR du kan invitere brugere."
+            "Du skal oprette mindst én tenant FØR du kan oprette brugere."
         )
     else:
         with st.form("invite_form", clear_on_submit=True):
@@ -500,15 +501,15 @@ with tab_inviter:
             )
 
             inviter_btn = st.form_submit_button(
-                "Send invitation",
+                "Opret bruger",
                 type="primary",
                 use_container_width=True,
             )
 
         if inviter_btn:
             tenant_id = tenant_options.get(i_tenant_label)
-            with st.spinner("Sender invitation..."):
-                ok, fejl = auth.admin_invite_user(
+            with st.spinner("Opretter bruger..."):
+                ok, fejl, temp_pw = auth.admin_create_user(
                     email=i_email,
                     tenant_id=tenant_id,
                     role=i_role,
@@ -516,13 +517,23 @@ with tab_inviter:
                 )
             if ok:
                 st.success(
-                    f"✅ Invitation sendt til **{i_email}**. "
-                    f"De er tilknyttet **{i_tenant_label}** som "
-                    f"**{i_role}**. Bed dem tjekke deres indbakke "
-                    "(inkl. spam-mappen)."
+                    f"✅ Bruger oprettet: **{i_email}** "
+                    f"({i_role}) i **{i_tenant_label}**."
                 )
-                if fejl:
-                    # Notice (fx hvis Supabase-konto allerede fandtes)
-                    st.info(fejl)
+                st.warning(
+                    "🔐 **VIGTIGT — videregiv disse credentials sikkert "
+                    "til brugeren** (Signal, telefonisk, eller anden krypteret "
+                    "kanal). Send IKKE password i almindelig email. "
+                    "Passwordet vises KUN her én gang og kan ikke hentes "
+                    "igen — kopiér det nu."
+                )
+                st.code(
+                    f"Email:    {i_email}\nPassword: {temp_pw}",
+                    language="text",
+                )
+                st.caption(
+                    "Brugeren kan ændre passwordet selv efter første login "
+                    "via 'Glemt adgangskode?' på login-siden."
+                )
             else:
-                st.error(fejl or "Invitation fejlede.")
+                st.error(fejl or "Oprettelse fejlede.")

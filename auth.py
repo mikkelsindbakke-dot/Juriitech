@@ -318,75 +318,128 @@ def _get_admin_client():
         return None
 
 
-def admin_invite_user(email, tenant_id, role="jurist", fulde_navn=""):
+def _generate_temp_password(length=14):
     """
-    Inviterer en ny bruger:
-      1. Validerer at email ikke allerede findes i vores users-tabel
-      2. Opretter row i users-tabel (uden supabase_user_id endnu —
-         den linkes automatisk ved første login via invitation-mail)
-      3. Sender Supabase magic-link invitation til email'en
+    Genererer et sikkert midlertidigt password til en ny bruger.
+    Bruger Python's secrets-modul (kryptografisk sikker tilfældighed)
+    med en blanding af store/små bogstaver, tal og symboler. Garanterer
+    mindst ét tegn fra hver klasse for at matche typiske password-policy.
+    """
+    import secrets
+    import string
 
-    Når brugeren modtager mail'en og klikker linket, sætter de et
-    password og logger ind. Vores login-flow finder dem via email,
-    linker UUID, og giver dem adgang.
+    bogstaver_store = string.ascii_uppercase
+    bogstaver_smaa = string.ascii_lowercase
+    tal = string.digits
+    symboler = "!@#$%&*"
+    alle_tegn = bogstaver_store + bogstaver_smaa + tal + symboler
 
-    Returnerer (success: bool, fejlmeddelelse: str | None).
+    # Sikr mindst ét fra hver klasse
+    pw_chars = [
+        secrets.choice(bogstaver_store),
+        secrets.choice(bogstaver_smaa),
+        secrets.choice(tal),
+        secrets.choice(symboler),
+    ]
+    # Fyld op til length med tilfældige tegn
+    pw_chars += [secrets.choice(alle_tegn) for _ in range(length - 4)]
+    # Bland rækkefølgen så de garanterede tegn ikke altid står først
+    secrets.SystemRandom().shuffle(pw_chars)
+    return "".join(pw_chars)
+
+
+def admin_create_user(email, tenant_id, role="jurist", fulde_navn=""):
+    """
+    Opretter en ny bruger med et automatisk genereret midlertidigt
+    password. Admin skal manuelt videregive passwordet til brugeren
+    via en sikker kanal (Signal, telefonisk, etc. — IKKE email).
+
+    Forskellen fra magic-link invite: ingen URL-token-håndtering,
+    intet ekstra trin med "Glemt adgangskode" for første login.
+    Brugeren kan logge ind med email + temp password med det samme.
+
+    Process:
+      1. Validerer input + tjekker at email ikke allerede findes
+      2. Genererer secure 14-tegns temp password
+      3. Opretter brugeren i Supabase Auth med email_confirm=True
+         (springer email-verifikation over — admin har already
+         vouchet for emailen)
+      4. Opretter row i vores users-tabel med supabase_user_id
+         (linkningen sker MED DET SAMME, ikke ved første login)
+      5. Returnerer det genererede password til admin
+
+    Returnerer (success: bool, fejlmeddelelse: str | None,
+                temp_password: str | None).
     """
     if not email or not email.strip():
-        return False, "Email er påkrævet."
+        return False, "Email er påkrævet.", None
     email = email.strip().lower()
 
     if not tenant_id:
-        return False, "Tenant er påkrævet."
+        return False, "Tenant er påkrævet.", None
 
     if role not in ("admin", "jurist"):
-        return False, f"Ugyldig rolle: {role!r} (skal være 'admin' eller 'jurist')."
+        return False, f"Ugyldig rolle: {role!r}.", None
 
-    # Tjek om brugeren allerede er inviteret
+    # Tjek om brugeren allerede findes i vores users-tabel
     from database import hent_user_by_email, opret_user
     eksisterende = hent_user_by_email(email)
     if eksisterende:
         return False, (
-            f"{email} er allerede oprettet i users-tabellen "
+            f"{email} er allerede oprettet "
             f"(tenant_id={eksisterende['tenant_id']}, "
-            f"role={eksisterende['role']}). "
-            f"Brug edit-funktionen i stedet, eller slet først."
-        )
+            f"role={eksisterende['role']})."
+        ), None
 
-    # Opret row i vores DB
+    # Generer temp password
+    temp_pw = _generate_temp_password()
+
+    # Opret bruger i Supabase Auth
+    admin_client = _get_admin_client()
+    if not admin_client:
+        return False, (
+            "SUPABASE_SERVICE_KEY mangler — kan ikke oprette bruger "
+            "i Supabase Auth. Tjek fly secrets."
+        ), None
+
+    try:
+        result = admin_client.auth.admin.create_user({
+            "email": email,
+            "password": temp_pw,
+            "email_confirm": True,  # Skip email-verifikation
+            "user_metadata": {
+                "fulde_navn": fulde_navn or "",
+            },
+        })
+        sup_user = result.user
+        sup_user_id = getattr(sup_user, "id", None) or sup_user.get("id")
+    except Exception as e:
+        msg = str(e).lower()
+        if "already" in msg and ("registered" in msg or "exists" in msg):
+            return False, (
+                f"{email} har allerede en konto i Supabase Auth (men "
+                "ikke i vores users-tabel). Slet brugeren i Supabase "
+                "Dashboard → Authentication → Users først, eller gå "
+                "via 'reset password' for at få adgang."
+            ), None
+        return False, f"Supabase create_user fejlede: {e}", None
+
+    # Opret row i vores users-tabel — link straks med supabase_user_id
     user_db_id = opret_user(
         email=email,
         tenant_id=tenant_id,
         role=role,
         fulde_navn=fulde_navn,
+        supabase_user_id=sup_user_id,
     )
     if not user_db_id:
-        return False, "Kunne ikke oprette bruger-row i databasen."
-
-    # Send Supabase invitation
-    admin_client = _get_admin_client()
-    if not admin_client:
         return False, (
-            "Bruger oprettet i DB, men SUPABASE_SERVICE_KEY mangler så "
-            "invitation-mail ikke kunne sendes. Tjek fly secrets."
-        )
+            "Bruger oprettet i Supabase, men kunne ikke oprettes i "
+            "vores DB. Slet brugeren manuelt i Supabase Dashboard og "
+            "prøv igen."
+        ), None
 
-    try:
-        admin_client.auth.admin.invite_user_by_email(email)
-        return True, None
-    except Exception as e:
-        msg = str(e)
-        # Hvis brugeren allerede findes i Supabase Auth (måske admin
-        # oprettede dem manuelt før), er det ok — de skal bare logge
-        # ind med det password de allerede har.
-        if "already" in msg.lower() and "registered" in msg.lower():
-            return True, (
-                "Bruger oprettet i DB. Bemærk: Supabase Auth siger at "
-                f"{email} allerede har en konto — de skal logge ind med "
-                "deres eksisterende password (eller bruge "
-                "'Glemt adgangskode?' for at nulstille)."
-            )
-        return False, f"Bruger oprettet i DB, men Supabase invitation fejlede: {e}"
+    return True, None, temp_pw
 
 
 # ───────────────────────────────────────────────────────────────

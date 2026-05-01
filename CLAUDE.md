@@ -517,13 +517,23 @@ ikke-admins + auth.is_admin()-check i top af admin.py). Tre tabs:
   2. **Brugere**: liste af brugere pr. tenant — viser email, fulde
      navn, role, og om de har linket deres Supabase-konto.
 
-  3. **Inviter ny bruger**: email + tenant + role formular.
-     Kalder auth.admin_invite_user() der:
-       a) Opretter row i vores users-tabel (uden supabase_user_id)
-       b) Sender Supabase magic-link til email'en
-       c) Når brugeren klikker linket og sætter password, kobles
-          deres Supabase-UUID automatisk til vores users-row
-          ved første login (via _link_supabase_to_db_user i auth.py).
+  3. **Opret ny bruger**: email + tenant + role formular.
+     Kalder auth.admin_create_user() der:
+       a) Genererer secure 14-tegns temp password via secrets-modul
+       b) Opretter brugeren i Supabase Auth med email_confirm=True
+          (springer email-verifikation over)
+       c) Opretter row i vores users-tabel MED supabase_user_id
+          (linkningen sker straks, ikke ved første login)
+       d) Returnerer temp passwordet til admin der videregiver det
+          sikkert (Signal/telefonisk — IKKE email)
+     Brugeren kan ændre passwordet selv via "Glemt adgangskode?".
+
+NOTE om hvorfor vi IKKE bruger Supabase's magic-link invite-flow:
+Streamlit kan ikke læse URL hash-fragmenter (det er hvor Supabase
+lægger access_token efter klik på magic-link). At bygge en proper
+"set password"-side ville kræve JavaScript-bridge. Direkte create-user
+med temp password er robust og virker uden token-håndtering. Trade-off:
+admin skal manuelt videregive password.
 
 Logo-upload: gemmes som static/logos/<slug>.png. OBS: Fly's disk
 er ikke persistent på tværs af deploys — uploadede logoer skal
