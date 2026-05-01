@@ -584,6 +584,88 @@ def opdater_user_supabase_id(user_id, supabase_user_id):
         return False
 
 
+def slet_user(user_id):
+    """
+    Sletter en bruger-row fra users-tabellen baseret på id. Bruges fra
+    admin-siden når en administrator vil fjerne en bruger.
+
+    NB: Denne funktion sletter KUN i vores users-tabel — den tilhørende
+    Supabase Auth-konto skal slettes separat (typisk via auth.admin_
+    delete_user() der orkestrerer begge dele atomisk).
+
+    Returnerer True hvis præcis én række blev slettet, ellers False.
+    """
+    if not user_id:
+        return False
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("DELETE FROM users WHERE id = %s", (int(user_id),))
+        antal = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return antal == 1
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke slette user {user_id}: {e}")
+        return False
+
+
+def tael_admins():
+    """
+    Returnerer antallet af brugere med role='admin' på tværs af ALLE
+    tenants. Bruges til last-admin-spær: hvis tallet er 1, må den
+    sidste admin ikke kunne slettes — det ville låse alle ude af
+    admin-siden.
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM users WHERE role = 'admin'")
+        antal = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+        return int(antal)
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke tælle admins: {e}")
+        # Defensiv default: returnér 2 så last-admin-spærren ikke
+        # blokerer ved transient DB-fejl
+        return 2
+
+
+def hent_user_by_id(user_id):
+    """
+    Slå en bruger op via id. Bruges af admin-flow til at verificere
+    at en bruger eksisterer før destruktive operationer (slet, etc.).
+    """
+    if not user_id:
+        return None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT id, supabase_user_id, tenant_id, email, fulde_navn, "
+            "role FROM users WHERE id = %s",
+            (int(user_id),),
+        )
+        r = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not r:
+            return None
+        return {
+            "id": r[0],
+            "supabase_user_id": str(r[1]) if r[1] else None,
+            "tenant_id": r[2],
+            "email": r[3],
+            "fulde_navn": r[4] or "",
+            "role": r[5],
+        }
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke hente user {user_id}: {e}")
+        return None
+
+
 def hent_users_for_tenant(tenant_id):
     """Returnerer alle brugere for en tenant (admin-side)."""
     try:

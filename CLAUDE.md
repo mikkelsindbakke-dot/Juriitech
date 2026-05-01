@@ -566,6 +566,32 @@ er ikke persistent på tværs af deploys — uploadede logoer skal
 re-uploades efter deploy. Future work: migrer til persistent storage
 (Fly volumes eller Supabase Storage).
 
+**Phase B4.10 — slet bruger fra admin-side (gennemført, v2.2.0):**
+Brugere kan nu slettes direkte fra admin → Brugere-tabben uden at gå
+i terminalen. Hver bruger-række har en 🗑️-knap der åbner et to-trins
+bekræftelses-dialog ("Ja, slet" / "Annullér") — destruktivt = aldrig
+ét-klik.
+
+`auth.admin_delete_user(user_id)` orkestrerer:
+  1. Slå brugeren op (db_user via hent_user_by_id)
+  2. Sikkerheds-spær — afviser hvis:
+     a) Brugeren er den nuværende admin selv (kan ikke slette sig selv)
+     b) Brugeren er den sidste admin på platformen
+        (tael_admins() <= 1 → ville låse alle ude af admin-siden)
+  3. Slet i Supabase Auth via admin-klient (skip hvis "User not found"
+     fordi konto allerede er væk)
+  4. Slet i vores users-tabel (database.slet_user)
+  5. Returnér (ok, fejl)
+
+Hvis Supabase-sletningen fejler, slettes der IKKE i vores DB heller —
+så vi undgår "halvt slettede" brugere. Eneste undtagelse: hvis
+Supabase-kontoen allerede er væk (admin har slettet manuelt), så
+fortsætter vi med DB-sletningen så de to systemer bliver re-synkrone.
+
+UI-detalje: knappen vises ikke for dig selv (caption "_(dig)_") og
+heller ikke for sidste admin (caption "🔒 _sidste admin_") — så
+brugeren ser visuelt hvorfor knappen mangler de steder.
+
 Service_role-nøgle: bruges i auth._get_admin_client() til Supabase
 Admin API. Kun til admin-operationer. Må ALDRIG eksponeres via UI
 eller logs.

@@ -427,6 +427,16 @@ with tab_brugere:
     if not tenants_for_oversigt:
         st.info("Ingen tenants endnu.")
     else:
+        # Den nuværende admin's id — bruges til at disable slet-knap
+        # på sig selv, så man ikke logger sig selv ud per uheld.
+        _aktuel_user = auth.current_user() or {}
+        _aktuel_user_id = _aktuel_user.get("id")
+        # Hvor mange admins findes der i alt — bruges til at disable
+        # slet-knappen på den sidste admin (forhindrer at man låser
+        # sig selv ude af admin-siden).
+        from database import tael_admins as _tael_admins
+        _antal_admins = _tael_admins()
+
         for t in tenants_for_oversigt:
             users = hent_users_for_tenant(t["id"])
             antal = len(users)
@@ -435,7 +445,10 @@ with tab_brugere:
                 expanded=(antal > 0),
             ):
                 if not users:
-                    st.caption("_Ingen brugere endnu. Inviter dem under fanen 'Inviter ny bruger'._")
+                    st.caption(
+                        "_Ingen brugere endnu. Inviter dem under fanen "
+                        "'Inviter ny bruger'._"
+                    )
                 else:
                     for u in users:
                         ikon = "🛡️" if u["role"] == "admin" else "👤"
@@ -444,11 +457,81 @@ with tab_brugere:
                             if u["supabase_user_id"]
                             else "ikke linket endnu (har ikke logget ind)"
                         )
-                        st.markdown(
-                            f"- {ikon} **{u['email']}** "
-                            f"({u.get('fulde_navn', '') or '_navn ikke sat_'}) "
-                            f"— role=`{u['role']}` — {link_status}"
-                        )
+                        kol_info, kol_btn = st.columns([6, 1])
+                        with kol_info:
+                            st.markdown(
+                                f"{ikon} **{u['email']}** "
+                                f"({u.get('fulde_navn', '') or '_navn ikke sat_'}) "
+                                f"— role=`{u['role']}` — {link_status}"
+                            )
+                        with kol_btn:
+                            er_dig_selv = (u["id"] == _aktuel_user_id)
+                            er_sidste_admin = (
+                                u["role"] == "admin" and _antal_admins <= 1
+                            )
+                            if er_dig_selv:
+                                st.caption("_(dig)_")
+                            elif er_sidste_admin:
+                                st.caption("🔒 _sidste admin_")
+                            else:
+                                # Slet-knap åbner et bekræftelses-trin via
+                                # session_state — ingen direkte sletning ved
+                                # første klik (destruktivt = to-trins).
+                                bekraft_key = f"bekraft_slet_user_{u['id']}"
+                                if st.session_state.get(bekraft_key):
+                                    # Trin 2: vist bekræftelses-prompt
+                                    pass
+                                else:
+                                    if st.button(
+                                        "🗑️",
+                                        key=f"slet_user_{u['id']}",
+                                        help=f"Slet {u['email']}",
+                                    ):
+                                        st.session_state[bekraft_key] = True
+                                        st.rerun()
+
+                        # Trin 2: bekræftelses-boks (vises kun hvis knappen
+                        # er klikket). Lægges UDENFOR kolonnerne så den
+                        # kan fylde fuld bredde.
+                        bekraft_key = f"bekraft_slet_user_{u['id']}"
+                        if st.session_state.get(bekraft_key):
+                            with st.container(border=True):
+                                st.warning(
+                                    f"⚠️ Du er ved at slette **{u['email']}** "
+                                    "permanent — både her og i Supabase Auth. "
+                                    "Det kan IKKE fortrydes."
+                                )
+                                kol_ja, kol_nej = st.columns(2)
+                                with kol_ja:
+                                    if st.button(
+                                        "Ja, slet brugeren",
+                                        key=f"slet_ja_{u['id']}",
+                                        type="primary",
+                                        use_container_width=True,
+                                    ):
+                                        with st.spinner("Sletter..."):
+                                            ok, fejl = auth.admin_delete_user(
+                                                u["id"]
+                                            )
+                                        # Ryd bekræftelses-flag uanset udfald
+                                        st.session_state[bekraft_key] = False
+                                        if ok:
+                                            st.success(
+                                                f"✅ **{u['email']}** slettet."
+                                            )
+                                            st.rerun()
+                                        else:
+                                            st.error(
+                                                fejl or "Sletning fejlede."
+                                            )
+                                with kol_nej:
+                                    if st.button(
+                                        "Annullér",
+                                        key=f"slet_nej_{u['id']}",
+                                        use_container_width=True,
+                                    ):
+                                        st.session_state[bekraft_key] = False
+                                        st.rerun()
 
 
 # ───────────────────────────────────────────────────────────────

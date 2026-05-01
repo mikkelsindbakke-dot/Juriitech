@@ -528,6 +528,94 @@ def admin_create_user(email, tenant_id, role="jurist", fulde_navn=""):
     return True, None, temp_pw
 
 
+def admin_delete_user(user_id):
+    """
+    Sletter en bruger BÅDE i Supabase Auth og i vores users-tabel.
+
+    Sikkerheds-spær (returnerer fejl uden at slette noget):
+      - Brugeren findes ikke
+      - Brugeren er den nuværende administrator (du må ikke slette dig
+        selv — log ud i stedet)
+      - Brugeren er den sidste admin på platformen (ville låse alle
+        ude af admin-siden)
+
+    Process:
+      1. Slå brugeren op i vores DB (få supabase_user_id + role + email)
+      2. Kør sikkerheds-checks
+      3. Slet i Supabase Auth (hvis supabase_user_id findes)
+      4. Slet i vores users-tabel
+      5. Returnér succes
+
+    Bemærk: Hvis Supabase-sletningen fejler, slettes den ikke i vores
+    DB heller — så vi undgår "halvt slettede" brugere der findes i
+    vores tabel men ikke har en Auth-konto. Den eneste undtagelse er
+    hvis Supabase-kontoen ALLEREDE er væk (admin har slettet den
+    manuelt) — så fortsætter vi med DB-sletningen.
+
+    Returnerer (success: bool, fejlmeddelelse: str | None).
+    """
+    from database import (
+        hent_user_by_id,
+        slet_user,
+        tael_admins,
+    )
+
+    # Step 1: slå op
+    db_user = hent_user_by_id(user_id)
+    if not db_user:
+        return False, f"Bruger med id={user_id} findes ikke."
+
+    # Step 2: spær — må ikke slette sig selv
+    aktuel = current_user()
+    if aktuel and aktuel.get("id") == db_user["id"]:
+        return False, (
+            "Du kan ikke slette din egen konto her. Hvis du vil logge "
+            "ud, brug 'Log ud'-knappen i sidebaren."
+        )
+
+    # Step 2b: spær — må ikke slette sidste admin
+    if db_user["role"] == "admin" and tael_admins() <= 1:
+        return False, (
+            "Du kan ikke slette den sidste administrator. Opret først "
+            "en anden admin før du sletter denne."
+        )
+
+    # Step 3: slet i Supabase Auth (hvis vi har deres UUID)
+    sup_uuid = db_user.get("supabase_user_id")
+    if sup_uuid:
+        admin_client = _get_admin_client()
+        if admin_client is None:
+            return False, (
+                "SUPABASE_SERVICE_KEY mangler — kan ikke slette i Supabase "
+                "Auth. Slet i Supabase Dashboard → Users og prøv igen."
+            )
+        try:
+            admin_client.auth.admin.delete_user(sup_uuid)
+        except Exception as e:
+            msg = str(e).lower()
+            # "User not found" / 404 — Supabase-kontoen er allerede væk
+            # (admin har slettet manuelt). Vi fortsætter med DB-sletning.
+            if "not found" in msg or "404" in msg or "no rows" in msg:
+                print(
+                    f"DEBUG: Supabase-konto for {db_user['email']} var "
+                    "allerede væk — fortsætter med DB-sletning."
+                )
+            else:
+                return False, (
+                    f"Supabase-sletning fejlede: {e}. "
+                    "Bruger IKKE slettet i vores DB."
+                )
+
+    # Step 4: slet i vores users-tabel
+    if not slet_user(db_user["id"]):
+        return False, (
+            f"Slettet i Supabase Auth, men sletning i vores DB fejlede. "
+            f"Slet manuelt med: DELETE FROM users WHERE id={db_user['id']}"
+        )
+
+    return True, None
+
+
 # ───────────────────────────────────────────────────────────────
 # UI-KOMPONENTER
 # ───────────────────────────────────────────────────────────────
