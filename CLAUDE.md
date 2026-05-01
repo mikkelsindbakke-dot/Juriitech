@@ -52,7 +52,8 @@ internt hos rejseselskaberne.
 | `gemte_sager.py` | Save/load sag-state |
 | `arkiv.py` | Arkiv-side — søgning + visning af gemte analyser |
 | `selskab_profiler.py` | Per-selskab branding (TUI, Apollo osv.) — læser fra DB |
-| `auth.py` | Supabase Auth wrapper — login/logout/session/admin_invite_user |
+| `auth.py` | Supabase Auth wrapper — login/logout/session/admin_invite_user/admin_create_user |
+| `set_password.py` | Bruger-side til at sætte initial password efter invite (token_hash flow) |
 | `admin.py` | Admin-side: tenants + brugere CRUD + invite-flow (KUN role='admin') |
 | `bootstrap_admin.py` | Engangs-script til at oprette første admin-bruger |
 | `diagnose_tenants.py` | Tenant-integritet diagnostic + auto-fix orphans |
@@ -528,12 +529,37 @@ ikke-admins + auth.is_admin()-check i top af admin.py). Tre tabs:
           sikkert (Signal/telefonisk — IKKE email)
      Brugeren kan ændre passwordet selv via "Glemt adgangskode?".
 
-NOTE om hvorfor vi IKKE bruger Supabase's magic-link invite-flow:
-Streamlit kan ikke læse URL hash-fragmenter (det er hvor Supabase
-lægger access_token efter klik på magic-link). At bygge en proper
-"set password"-side ville kræve JavaScript-bridge. Direkte create-user
-med temp password er robust og virker uden token-håndtering. Trade-off:
-admin skal manuelt videregive password.
+FIRST attempt brugte direkte create-user med temp password. Det
+fungerede teknisk men gav dårlig UX (admin skal manuelt videregive
+password). v2.1.0 implementerer proper email-baseret invite-flow:
+
+  - Admin sender invite via admin_invite_user() (ikke admin_create_user)
+  - Supabase sender email med link der peger på pax.juriitech.com med
+    `?token_hash=...&type=invite` query params (KRÆVER at Supabase
+    email-templates er konfigureret korrekt — se docs nedenfor)
+  - Bruger klikker link → app.py detekterer token_hash → router til
+    set_password.render() i stedet for login-siden
+  - Bruger sætter password (med "bekræft password"-felt) → Supabase
+    verify_otp validerer tokenet og opretter session → update_user
+    sætter passwordet → _link_supabase_to_db_user linker UUID til
+    vores users-row → session_state.user sættes → forsiden vises
+
+Backup-flow: admin_create_user (med temp password) er stadig
+tilgængelig som "advanced option" i admin-UI'en, hvis email-leveringen
+fejler eller Supabase rate-limit'er.
+
+KRITISK SUPABASE EMAIL-TEMPLATE KONFIGURATION:
+Mikkel skal manuelt opdatere to email-templates i Supabase Dashboard
+→ Authentication → Email Templates:
+
+  "Invite user" template — link skal være:
+    {{ .SiteURL }}?token_hash={{ .TokenHash }}&type=invite
+
+  "Reset password" template — link skal være:
+    {{ .SiteURL }}?token_hash={{ .TokenHash }}&type=recovery
+
+Hvis disse ikke opdateres, sender Supabase default-links der ikke
+matcher vores set_password-side, og brugerne får en gå-i-stå-oplevelse.
 
 Logo-upload: gemmes som static/logos/<slug>.png. OBS: Fly's disk
 er ikke persistent på tværs af deploys — uploadede logoer skal

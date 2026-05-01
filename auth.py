@@ -348,6 +348,92 @@ def _generate_temp_password(length=14):
     return "".join(pw_chars)
 
 
+def admin_invite_user(email, tenant_id, role="jurist", fulde_navn=""):
+    """
+    Inviterer en ny bruger via email — den ANBEFALEDE måde.
+
+    Process:
+      1. Validerer input
+      2. Tjekker at email ikke allerede findes i vores users-tabel
+      3. Opretter row i vores users-tabel UDEN supabase_user_id
+         (linkes ved første login når brugeren klikker invite-link)
+      4. Beder Supabase om at sende invite-email til brugeren med et
+         link til vores set_password-side
+
+    Brugeren modtager en email, klikker linket, sættes ind på
+    set_password-siden, vælger sin egen adgangskode, og logges ind.
+    Linket indeholder et token_hash som verify_otp validerer.
+
+    KRÆVER: Supabase email-templates skal være konfigureret til at bruge
+    URL-format: {{ .SiteURL }}?token_hash={{ .TokenHash }}&type=invite
+    Se docs/CLAUDE.md for præcis HTML.
+
+    Returnerer (success: bool, fejlmeddelelse: str | None).
+    """
+    if not email or not email.strip():
+        return False, "Email er påkrævet."
+    email = email.strip().lower()
+
+    if not tenant_id:
+        return False, "Tenant er påkrævet."
+
+    if role not in ("admin", "jurist"):
+        return False, f"Ugyldig rolle: {role!r}."
+
+    # Tjek om brugeren allerede findes i vores users-tabel
+    from database import hent_user_by_email, opret_user
+    eksisterende = hent_user_by_email(email)
+    if eksisterende:
+        return False, (
+            f"{email} er allerede oprettet "
+            f"(tenant_id={eksisterende['tenant_id']}, "
+            f"role={eksisterende['role']})."
+        )
+
+    # Opret row i vores users-tabel UDEN supabase_user_id.
+    # _link_supabase_to_db_user vil finde rækken via email ved invite-flowet
+    # og linke UUID når brugeren sætter password.
+    user_db_id = opret_user(
+        email=email,
+        tenant_id=tenant_id,
+        role=role,
+        fulde_navn=fulde_navn,
+    )
+    if not user_db_id:
+        return False, "Kunne ikke oprette bruger-row i databasen."
+
+    # Bed Supabase sende invite-email
+    admin_client = _get_admin_client()
+    if not admin_client:
+        return False, (
+            "Bruger oprettet i DB, men SUPABASE_SERVICE_KEY mangler så "
+            "invite-email ikke kunne sendes."
+        )
+
+    try:
+        admin_client.auth.admin.invite_user_by_email(email)
+        return True, None
+    except Exception as e:
+        msg = str(e).lower()
+        if "already" in msg and ("registered" in msg or "exists" in msg):
+            # Brugeren har allerede en Supabase Auth-konto.
+            # Send dem en password-reset i stedet, så de kan sætte ny pw.
+            try:
+                admin_client.auth.reset_password_for_email(email)
+                return True, (
+                    f"{email} havde allerede en Supabase-konto. Vi har "
+                    "sendt dem et password-reset-link i stedet. De kan "
+                    "klikke på linket og vælge en ny adgangskode."
+                )
+            except Exception:
+                return False, (
+                    f"{email} har allerede en Supabase-konto, og vi kunne "
+                    "ikke sende reset-link. Slet brugeren manuelt i "
+                    "Supabase Dashboard og prøv igen."
+                )
+        return False, f"Bruger oprettet i DB, men invite-email fejlede: {e}"
+
+
 def admin_create_user(email, tenant_id, role="jurist", fulde_navn=""):
     """
     Opretter en ny bruger med et automatisk genereret midlertidigt

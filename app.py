@@ -128,6 +128,15 @@ _auth_konfigureret = bool(
 )
 
 if _auth_konfigureret and not _auth.is_logged_in():
+    # Specialcase: hvis URL har ?token_hash=... så er brugeren her via
+    # invite-link eller password-reset-link fra deres email. Vi sender
+    # dem til set_password-siden i stedet for login-siden.
+    _qp_check = st.query_params
+    if _qp_check.get("token_hash"):
+        import set_password as _set_password
+        _set_password.render()
+        st.stop()
+    # Almindeligt tilfælde: vis login-siden
     _auth.render_login_page()
     st.stop()
 
