@@ -625,21 +625,46 @@ def hent_aktiv_tenant_id():
     """
     Returnerer id'et på den aktuelle aktive tenant.
 
-    B1: Returnerer TUI's id (hardcoded fallback). Hele systemet kører
-        som om alle brugere er TUI-brugere — uændret adfærd.
-    B3: Vil læse fra st.session_state.user.tenant_id efter login.
+    Lookup-rækkefølge:
+      1. Streamlit session: st.session_state.user.tenant_id (efter login)
+      2. Fallback: TUI's id (hardcoded — bruges i scripts/backfills hvor
+         der ikke er en logged-in user, fx migration_b1_tenants.py).
+
+    I Streamlit-kontekst BØR fallback'en aldrig ramme — auth-gate i
+    app.py forhindrer ikke-loggede brugere i at nå queries. Hvis
+    fallback rammes mens Streamlit kører, er det et tegn på en bug
+    (auth-gate er omgået, eller user-objektet i session er korrupt).
+    Vi printer en WARNING så det opdages tidligt.
     """
     # Lazy import for at undgå at Streamlit-import sker når database.py
     # bruges fra ikke-Streamlit kontekst (fx backfill-scripts).
+    streamlit_aktiv = False
     try:
         import streamlit as st
+        # Tjek om vi faktisk kører inde i en Streamlit-runtime — ikke
+        # bare har streamlit installeret som package.
+        try:
+            from streamlit.runtime.scriptrunner import get_script_run_ctx
+            streamlit_aktiv = get_script_run_ctx() is not None
+        except Exception:
+            streamlit_aktiv = False
+
         user = st.session_state.get("user")
         if user and user.get("tenant_id"):
             return int(user["tenant_id"])
     except Exception:
         pass
 
-    # Fallback (B1): TUI som default
+    # Fallback: TUI som default
+    if streamlit_aktiv:
+        # Bekymrende: vi kører i Streamlit men ingen user — auth-gate
+        # er omgået, eller session er tom på et sted hvor den ikke burde.
+        print(
+            "WARNING: hent_aktiv_tenant_id() faldt tilbage til TUI under "
+            "Streamlit-session — auth-gate kan være omgået eller session.user "
+            "er tom uventet. Tjek at app.py's auth-check kører før queries."
+        )
+
     tui = hent_tenant_by_slug("tui")
     return tui["id"] if tui else None
 

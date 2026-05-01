@@ -482,11 +482,31 @@ Defensive fallback: hvis SUPABASE_URL/ANON_KEY ikke er sat, springer
 auth-gate over så lokal udvikling stadig virker. Produktion må have
 secrets sat via 'fly secrets set'.
 
-**Phase B3 — per-request tenant lookup (planlagt):**
-hent_aktiv_tenant_id læser fra st.session_state.user.tenant_id efter
-login. Forskellige brugere ser forskellige tenants automatisk.
-Ingen kode-ændring i auth.py — kun selskab_profiler.py og evt.
-ai_engine.py konstanter.
+**Phase B3 — per-request tenant lookup (gennemført, v1.9.0):**
+Aktiveringen af multi-tenant routing — det er nu rigtigt at sige at
+forskellige brugere ser forskellige tenants. Tre konkrete ting:
+
+  1. `hent_aktiv_tenant_id()` i database.py læser PRIMÆRT fra
+     st.session_state.user.tenant_id (sat ved login). TUI-fallback
+     bruges KUN i ikke-Streamlit kontekster (scripts, backfills).
+  2. `selskab_profiler.hent_aktiv_profil()` følger samme mønster.
+  3. Strammet logging: hvis fallback rammes UNDER en Streamlit-
+     session, printes en WARNING — det er et tegn på at auth-gate
+     er omgået eller session.user er korrupt.
+
+Faktisk var logikken allerede pre-implementeret i B1 (vi byggede
+session-aware lookup samtidig med tabellerne). B3 er derfor primært
+en aktiverings-milestone + verifikation + diagnostic-værktøj.
+
+Nyt værktøj: diagnose_tenants.py rapporterer tenant-fordeling pr.
+tabel og auto-fixer 'orphaned' tenant_ids (rækker der peger på et
+tenant_id der ikke længere findes — kan ske hvis migration_b1_tenants.py
+køres flere gange og SERIAL-counter genstarter).
+
+**Phase B4 — admin-side til tenant + bruger-management (planlagt):**
+Side kun for role='admin'. Opret nye tenants (fx Apollo med logo,
+by, sagsbehandler-navn). Inviter brugere via Supabase magic-link.
+Manage eksisterende tenants og brugere.
 
 **Phase B3 — per-request tenant lookup (planlagt):**
 hent_aktiv_tenant_id læser fra st.session_state.user.tenant_id efter
