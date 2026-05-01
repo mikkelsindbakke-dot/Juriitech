@@ -277,6 +277,119 @@ def logout():
 
 
 # ───────────────────────────────────────────────────────────────
+# ADMIN-OPERATIONER (Phase B4)
+# ───────────────────────────────────────────────────────────────
+# Disse funktioner bruger SUPABASE_SERVICE_KEY til at udføre operationer
+# der KUN må køres af administrators — fx invitere nye brugere, slette
+# brugere fra Supabase Auth osv. Service-key giver fuld adgang og må
+# ALDRIG eksponeres via UI eller logs.
+
+_admin_client = None
+_admin_client_init_fejlet = False
+
+
+def _get_admin_client():
+    """
+    Returnér Supabase-klient med SERVICE_KEY (admin-privileges).
+    Lazy init. Returnerer None hvis SERVICE_KEY mangler.
+    """
+    global _admin_client, _admin_client_init_fejlet
+    if _admin_client is not None:
+        return _admin_client
+    if _admin_client_init_fejlet:
+        return None
+
+    url = os.getenv("SUPABASE_URL")
+    service_key = os.getenv("SUPABASE_SERVICE_KEY")
+    if not url or not service_key:
+        print(
+            "DEBUG: SUPABASE_URL eller SUPABASE_SERVICE_KEY mangler — "
+            "admin-operationer deaktiveret."
+        )
+        _admin_client_init_fejlet = True
+        return None
+    try:
+        from supabase import create_client
+        _admin_client = create_client(url, service_key)
+        return _admin_client
+    except Exception as e:
+        print(f"DEBUG: Supabase admin-klient kunne ikke initialiseres: {e}")
+        _admin_client_init_fejlet = True
+        return None
+
+
+def admin_invite_user(email, tenant_id, role="jurist", fulde_navn=""):
+    """
+    Inviterer en ny bruger:
+      1. Validerer at email ikke allerede findes i vores users-tabel
+      2. Opretter row i users-tabel (uden supabase_user_id endnu —
+         den linkes automatisk ved første login via invitation-mail)
+      3. Sender Supabase magic-link invitation til email'en
+
+    Når brugeren modtager mail'en og klikker linket, sætter de et
+    password og logger ind. Vores login-flow finder dem via email,
+    linker UUID, og giver dem adgang.
+
+    Returnerer (success: bool, fejlmeddelelse: str | None).
+    """
+    if not email or not email.strip():
+        return False, "Email er påkrævet."
+    email = email.strip().lower()
+
+    if not tenant_id:
+        return False, "Tenant er påkrævet."
+
+    if role not in ("admin", "jurist"):
+        return False, f"Ugyldig rolle: {role!r} (skal være 'admin' eller 'jurist')."
+
+    # Tjek om brugeren allerede er inviteret
+    from database import hent_user_by_email, opret_user
+    eksisterende = hent_user_by_email(email)
+    if eksisterende:
+        return False, (
+            f"{email} er allerede oprettet i users-tabellen "
+            f"(tenant_id={eksisterende['tenant_id']}, "
+            f"role={eksisterende['role']}). "
+            f"Brug edit-funktionen i stedet, eller slet først."
+        )
+
+    # Opret row i vores DB
+    user_db_id = opret_user(
+        email=email,
+        tenant_id=tenant_id,
+        role=role,
+        fulde_navn=fulde_navn,
+    )
+    if not user_db_id:
+        return False, "Kunne ikke oprette bruger-row i databasen."
+
+    # Send Supabase invitation
+    admin_client = _get_admin_client()
+    if not admin_client:
+        return False, (
+            "Bruger oprettet i DB, men SUPABASE_SERVICE_KEY mangler så "
+            "invitation-mail ikke kunne sendes. Tjek fly secrets."
+        )
+
+    try:
+        admin_client.auth.admin.invite_user_by_email(email)
+        return True, None
+    except Exception as e:
+        msg = str(e)
+        # Hvis brugeren allerede findes i Supabase Auth (måske admin
+        # oprettede dem manuelt før), er det ok — de skal bare logge
+        # ind med det password de allerede har.
+        if "already" in msg.lower() and "registered" in msg.lower():
+            return True, (
+                "Bruger oprettet i DB. Bemærk: Supabase Auth siger at "
+                f"{email} allerede har en konto — de skal logge ind med "
+                "deres eksisterende password (eller bruge "
+                "'Glemt adgangskode?' for at nulstille)."
+            )
+        return False, f"Bruger oprettet i DB, men Supabase invitation fejlede: {e}"
+
+
+# ───────────────────────────────────────────────────────────────
 # UI-KOMPONENTER
 # ───────────────────────────────────────────────────────────────
 

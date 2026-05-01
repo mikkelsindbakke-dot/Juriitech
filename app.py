@@ -181,6 +181,20 @@ _pages = [
         icon=":material/info:",
     ),
 ]
+
+# Admin-side vises KUN for brugere med role='admin'. Den selv har
+# desuden adgangskontrol i top af filen (auth.is_admin()) så ingen
+# kan komme ind via direkte URL-tilgang selvom de gætter URL'en.
+if _auth_konfigureret and _auth.is_admin():
+    _pages.append(
+        st.Page(
+            "admin.py",
+            title="Admin",
+            url_path="admin",
+            icon=":material/admin_panel_settings:",
+        )
+    )
+
 _pg = st.navigation(_pages)
 
 # ---------- TOP-LEVEL SAFETY NET ----------

@@ -52,8 +52,10 @@ internt hos rejseselskaberne.
 | `gemte_sager.py` | Save/load sag-state |
 | `arkiv.py` | Arkiv-side — søgning + visning af gemte analyser |
 | `selskab_profiler.py` | Per-selskab branding (TUI, Apollo osv.) — læser fra DB |
-| `auth.py` | Supabase Auth wrapper — login/logout/session/render_login_page |
+| `auth.py` | Supabase Auth wrapper — login/logout/session/admin_invite_user |
+| `admin.py` | Admin-side: tenants + brugere CRUD + invite-flow (KUN role='admin') |
 | `bootstrap_admin.py` | Engangs-script til at oprette første admin-bruger |
+| `diagnose_tenants.py` | Tenant-integritet diagnostic + auto-fix orphans |
 | `scraper.py` | Pakkerejse-Ankenævn afgørelses-scraper |
 | `pakkerejselov_scraper.py` | Lovgivning-scraper |
 | `tui_scraper.py` | TUI-vilkår scraper |
@@ -503,14 +505,34 @@ tabel og auto-fixer 'orphaned' tenant_ids (rækker der peger på et
 tenant_id der ikke længere findes — kan ske hvis migration_b1_tenants.py
 køres flere gange og SERIAL-counter genstarter).
 
-**Phase B4 — admin-side til tenant + bruger-management (planlagt):**
-Side kun for role='admin'. Opret nye tenants (fx Apollo med logo,
-by, sagsbehandler-navn). Inviter brugere via Supabase magic-link.
-Manage eksisterende tenants og brugere.
+**Phase B4 — admin-side til tenant + bruger-management (gennemført, v2.0.0):**
+Side kun for role='admin' (dobbelt access-control: skjult i nav for
+ikke-admins + auth.is_admin()-check i top af admin.py). Tre tabs:
 
-**Phase B3 — per-request tenant lookup (planlagt):**
-hent_aktiv_tenant_id læser fra st.session_state.user.tenant_id efter
-login. Forskellige brugere ser forskellige tenants automatisk.
+  1. **Tenants**: liste af eksisterende selskaber + opret/edit-formular
+     med alle profil-felter (navn, slug, sagsbehandler, by, logo-upload,
+     anonymiserings-suffix, interne team-navne, klageorgan, sprog,
+     land, lov-navn). Slug kan IKKE ændres efter oprettelse.
+
+  2. **Brugere**: liste af brugere pr. tenant — viser email, fulde
+     navn, role, og om de har linket deres Supabase-konto.
+
+  3. **Inviter ny bruger**: email + tenant + role formular.
+     Kalder auth.admin_invite_user() der:
+       a) Opretter row i vores users-tabel (uden supabase_user_id)
+       b) Sender Supabase magic-link til email'en
+       c) Når brugeren klikker linket og sætter password, kobles
+          deres Supabase-UUID automatisk til vores users-row
+          ved første login (via _link_supabase_to_db_user i auth.py).
+
+Logo-upload: gemmes som static/logos/<slug>.png. OBS: Fly's disk
+er ikke persistent på tværs af deploys — uploadede logoer skal
+re-uploades efter deploy. Future work: migrer til persistent storage
+(Fly volumes eller Supabase Storage).
+
+Service_role-nøgle: bruges i auth._get_admin_client() til Supabase
+Admin API. Kun til admin-operationer. Må ALDRIG eksponeres via UI
+eller logs.
 
 **Phase C — onboard nye selskaber (planlagt):**
 Apollo, Spies osv. som rigtige tenants med egne profiler, scrapere og
