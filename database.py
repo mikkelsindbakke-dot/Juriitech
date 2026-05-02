@@ -226,6 +226,35 @@ def opret_tabeller():
             ON mine_dokumenter (is_public)
             WHERE is_public = TRUE
         """)
+        # Composite index der understøtter den almindelige RAG-query:
+        # WHERE (is_public = TRUE OR tenant_id = X) AND dokumenttype = 'afgoerelse'
+        # Uden denne kan Postgres kun bruge ét enkelt index ad gangen.
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mine_dokumenter_tenant_dokumenttype
+            ON mine_dokumenter (tenant_id, dokumenttype)
+        """)
+        # content_hash: SHA-256 af indhold-feltet. Bruges til (a) at undgå
+        # at re-embedde identiske dokumenter og (b) til at detektere når
+        # et dokument faktisk har ændret sig (vs. bare blev re-uploadet).
+        # NULL for eksisterende rækker — backfill udfylder dem efterhånden.
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS content_hash CHAR(64)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mine_dokumenter_content_hash
+            ON mine_dokumenter (content_hash)
+            WHERE content_hash IS NOT NULL
+        """)
+        # updated_at: tidspunkt for sidste ændring. Bruges til audit
+        # (hvornår blev embedding sidst opdateret, hvornår blev en sag
+        # re-scrapet osv.). DEFAULT CURRENT_TIMESTAMP gør at nye rækker
+        # automatisk får det sat; eksisterende får NULL og udfyldes
+        # efterhånden af opdater_*-funktionerne.
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        """)
 
         # analyse_arkiv: tenant_id altid sat (analyser er ALTID private)
         cur.execute("""
