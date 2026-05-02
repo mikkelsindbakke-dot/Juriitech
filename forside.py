@@ -52,11 +52,8 @@ from selskab_profiler import (
 
 
 # ---------- OPSÆTNING ----------
-st.set_page_config(
-    page_title="juriitech PAX",
-    page_icon=None,
-    layout="wide",
-)
+# st.set_page_config sættes nu i app.py øverst, så page_title er korrekt
+# fra første render — ikke først efter auth-gate.
 
 # Admin-status er sat af app.py før siden køres — hent bare flaget
 ER_ADMIN = st.session_state.get("er_admin", False)

@@ -15,6 +15,16 @@ import os
 import streamlit as st
 from dotenv import load_dotenv
 
+# Sæt page-config ALLERFØRST. Skal ske før alt andet st.*-kald, ellers
+# kaster Streamlit en fejl. Dette sikrer at browser-fanen viser
+# "juriitech PAX" fra første render — ikke "app" eller URL'en mens
+# resten af bootstrap kører (Sentry, auto-load, auth-gate).
+st.set_page_config(
+    page_title="juriitech PAX",
+    page_icon=None,
+    layout="wide",
+)
+
 # Indlæs miljøvariabler (inkl. ADMIN_KEY) før alt andet
 load_dotenv()
 _ADMIN_KEY = os.getenv("ADMIN_KEY", "")
