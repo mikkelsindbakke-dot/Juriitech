@@ -264,6 +264,20 @@ def chunk_tekst(tekst: str, target_chars: int = CHUNK_TARGET_CHARS):
     if not tekst or not tekst.strip():
         return []
 
+    # ---- TRIN 0: Normalisér whitespace-only-linjer ----
+    # OCR-tekst fra Pakkerejse-Ankenævnets PDF'er har typisk linjer der
+    # SER tomme ud men reelt er '\n[mellemrum]\n'. Det blokerer både
+    # paragraf-detection (split('\n\n') matcher ikke) og sektion-split
+    # (multilinje-regex'en matcher ikke når der er whitespace-trail).
+    # Resultat: 80% af afgørelserne ender med kun 2 chunks fordi alt
+    # efter første overskrift smides i én monster-chunk.
+    # Normaliser ved at fjerne whitespace fra "tomme" linjer.
+    import re as _re
+    tekst = _re.sub(r"\n[ \t]+\n", "\n\n", tekst)
+    # Fang også 3+ newlines i træk (sker hvis fx flere whitespace-only-linjer
+    # var i træk — efter første sub er der måske nu \n\n\n\n)
+    tekst = _re.sub(r"\n{3,}", "\n\n", tekst)
+
     # ---- TRIN 1: Forsøg sektion-baseret split ----
     sektioner = _split_paa_overskrifter(tekst)
 
