@@ -60,11 +60,6 @@ st.markdown(
         background-color: rgba(250, 250, 252, 0.72) !important;
         border-right: 1px solid rgba(0, 0, 0, 0.06) !important;
     }
-    @media (prefers-color-scheme: dark) {
-        section[data-testid="stSidebar"] {
-            background-color: rgba(25, 27, 32, 0.72) !important;
-        }
-    }
 
     /* ========== NAV-MENU — afrundede pillers, ikon + tekst ========== */
     [data-testid="stSidebarNav"] { padding-top: 0.6rem !important; }
