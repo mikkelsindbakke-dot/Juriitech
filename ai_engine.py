@@ -413,7 +413,24 @@ def _byg_vidensbank_tekst(sager):
             blokke.append(f"{header}\n{overskrift}\n\n{indhold}")
         else:
             blokke.append(f"{header}\n{indhold}")
-    return "\n\n".join(blokke)
+    samlet = "\n\n".join(blokke)
+
+    # Observability: log faktisk størrelse af vidensbank-blokken så vi kan
+    # se om vi presser context-window. Heuristik: ~3.5 tegn pr. token for
+    # dansk tekst. Anthropic Sonnet 4.6 har 200k token context, men store
+    # vidensbanke æder hurtigt budget hvis vidensbank + sagsdokumenter +
+    # prompt-skelet kombineres.
+    if blokke:
+        tegn = len(samlet)
+        est_tokens = int(tegn / 3.5)
+        antal_chunks = sum(1 for s in sager if s.get("chunk_index") is not None)
+        antal_hele = len(sager) - antal_chunks
+        print(
+            f"DEBUG: vidensbank bygget — {len(sager)} blokke "
+            f"({antal_chunks} chunks + {antal_hele} hele dokumenter), "
+            f"{tegn:,} tegn, ~{est_tokens:,} tokens estimeret"
+        )
+    return samlet
 
 
 def _opgave_tekst():
