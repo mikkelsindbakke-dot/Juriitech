@@ -24,7 +24,7 @@ klager til Pakkerejse-Ankenævnet:
 ## Teknisk stack
 
 - **Frontend:** Streamlit
-- **Database:** Neon (PostgreSQL + pgvector til vektorsøgning)
+- **Database:** Supabase (PostgreSQL + pgvector til vektorsøgning)
 - **AI:** Anthropic Claude (analyse + generering)
 - **Embeddings:** Voyage AI (multilingual-2)
 - **Scraping:** requests + BeautifulSoup

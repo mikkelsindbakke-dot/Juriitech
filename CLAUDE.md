@@ -31,7 +31,7 @@ internt hos rejseselskaberne.
 | AI | Anthropic Claude (`claude-sonnet-4-6`) via tool-use |
 | Embeddings | Voyage AI (`voyage-multilingual-2`, 1024 dim) |
 | Reranking | Voyage AI (`rerank-2`) |
-| Database | Neon Postgres + pgvector (HNSW indexes) |
+| Database | Supabase Postgres + pgvector 0.8.0 (HNSW indexes) |
 | Deploy | Fly.io |
 | Fejl-monitoring | Sentry |
 
@@ -464,7 +464,7 @@ Logout-knap i sidebar.
 
 To-system-arkitektur:
   - Supabase Auth (extern): credentials, JWT, password-reset emails
-  - Vores users-tabel (Neon): tenant_id, role, business metadata
+  - Vores users-tabel (Supabase Postgres): tenant_id, role, business metadata
 Bro: supabase_user_id på vores users-row peger på Supabase Auth UUID.
 
 Login-flow:

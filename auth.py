@@ -15,8 +15,8 @@ Der er TO bruger-systemer i spil, og de skal være synkroniserede:
      password-reset-emails, magic-links, email-verifikation. Ingen
      forretningsdata.
 
-  2. Vores users-tabel (Neon Postgres) — kobler Supabase-user til
-     tenant_id (TUI/Spies/Apollo) + role (admin/jurist) + business
+  2. Vores users-tabel (Supabase Postgres) — kobler Supabase-Auth-user
+     til tenant_id (TUI/Spies/Apollo) + role (admin/jurist) + business
      metadata. Ingen credentials.
 
 Bro'en: vores users-row har et felt 'supabase_user_id' der peger på

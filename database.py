@@ -10,8 +10,9 @@ DB_URL = os.getenv("DATABASE_URL")
 
 def _connect():
     """
-    Opretter en forbindelse til Neon og registrerer pgvector-typen,
-    så Python kan sende/modtage vector-kolonner som almindelige lister.
+    Opretter en forbindelse til Supabase Postgres og registrerer
+    pgvector-typen, så Python kan sende/modtage vector-kolonner som
+    almindelige lister.
     """
     conn = psycopg2.connect(DB_URL)
     try:

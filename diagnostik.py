@@ -68,14 +68,14 @@ tjek("VOYAGE_API_KEY sat", bool(os.getenv("VOYAGE_API_KEY")))
 print()
 
 # --- 3. Database-opsætning ---
-print("3) Database (Neon)")
+print("3) Database (Supabase Postgres)")
 try:
     import psycopg2
     conn = psycopg2.connect(os.getenv("DATABASE_URL"))
     cur = conn.cursor()
 
     cur.execute("SELECT 1")
-    tjek("Forbindelse til Neon", True)
+    tjek("Forbindelse til Supabase", True)
 
     cur.execute("SELECT extname FROM pg_extension WHERE extname = 'vector'")
     pgvec_aktiv = cur.fetchone() is not None
@@ -111,7 +111,7 @@ try:
     cur.close()
     conn.close()
 except Exception as e:
-    tjek("Forbindelse til Neon", False, str(e))
+    tjek("Forbindelse til Supabase", False, str(e))
 
 print()
 
