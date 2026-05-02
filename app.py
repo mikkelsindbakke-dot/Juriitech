@@ -25,6 +25,111 @@ st.set_page_config(
     layout="wide",
 )
 
+# ---------- SSO LOADING-OVERLAY ----------
+# Når brugeren klikker PAX i juriitech.com/dashboard, lander de her med
+# ?sso_token=<refresh_token> i URL'en. Mellem at browseren parser HTML
+# og at try_sso_login() har valideret tokenet + redirected, ser brugeren
+# default Streamlit-shell + JWT-tokenet i URL'en. Vi inject'er et
+# juriitech-brandet fuldskærms-overlay der dækker hele viewport indtil
+# SSO er færdig (st.rerun() rydder URL'en → overlay vises ikke længere).
+# Ren CSS, ingen JS — virker uanset om Streamlit-frontenden er færdig.
+if st.query_params.get("sso_token"):
+    st.markdown(
+        """
+        <style>
+        @keyframes jt-fade-in { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes jt-orb-drift {
+            0%, 100% { transform: translate(-50%, -50%) scale(1); }
+            50%      { transform: translate(-50%, -52%) scale(1.04); }
+        }
+        @keyframes jt-spin {
+            to { transform: rotate(360deg); }
+        }
+        #jt-sso-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 999999;
+            background: #FAF8F4;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+                         'Segoe UI', sans-serif;
+            animation: jt-fade-in 0.2s ease;
+            overflow: hidden;
+        }
+        #jt-sso-overlay .jt-orb {
+            position: absolute;
+            width: 62vw;
+            height: 62vw;
+            max-width: 880px; max-height: 880px;
+            min-width: 420px; min-height: 420px;
+            border-radius: 50%;
+            background: radial-gradient(
+                circle at 50% 50%,
+                rgba(99, 102, 241, 0.20) 0%,
+                rgba(99, 102, 241, 0.08) 35%,
+                transparent 70%
+            );
+            filter: blur(40px);
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+            animation: jt-orb-drift 18s ease-in-out infinite;
+        }
+        #jt-sso-overlay .jt-wordmark {
+            position: relative;
+            z-index: 1;
+            font-size: clamp(3rem, 9vw, 6rem);
+            font-weight: 800;
+            letter-spacing: -0.055em;
+            line-height: 0.95;
+            color: #0A0B0F;
+        }
+        #jt-sso-overlay .jt-wordmark .j {
+            color: #6366F1;
+        }
+        #jt-sso-overlay .jt-status {
+            position: relative;
+            z-index: 1;
+            margin-top: 1.4rem;
+            display: flex;
+            align-items: center;
+            gap: 0.7rem;
+            color: #64748B;
+            font-size: 1rem;
+            font-weight: 400;
+            letter-spacing: 0.01em;
+        }
+        #jt-sso-overlay .jt-spinner {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            border: 2px solid rgba(99, 102, 241, 0.25);
+            border-top-color: #6366F1;
+            animation: jt-spin 0.9s linear infinite;
+        }
+        /* Skjul Streamlit's default loading-spinner og evt. shell-elementer
+           der måtte ligge bagved — overlay skal være ALENE på skærmen */
+        [data-testid="stAppViewContainer"],
+        [data-testid="stHeader"],
+        [data-testid="stSidebar"] {
+            visibility: hidden !important;
+        }
+        </style>
+        <div id="jt-sso-overlay">
+            <div class="jt-orb"></div>
+            <div class="jt-wordmark"><span class="j">j</span>uriitech</div>
+            <div class="jt-status">
+                <span class="jt-spinner"></span>
+                <span>Logger ind…</span>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 # Indlæs miljøvariabler (inkl. ADMIN_KEY) før alt andet
 load_dotenv()
 _ADMIN_KEY = os.getenv("ADMIN_KEY", "")
