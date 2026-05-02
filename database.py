@@ -257,6 +257,155 @@ def opret_tabeller():
             ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         """)
 
+        # 10b. GDPR Fase 1: anonymiserings_status + anonymiseres_efter
+        # på mine_dokumenter. Pipeline (Fase 3) bruger disse til at
+        # identificere sager der skal anonymiseres.
+        # Status-enum:
+        #   'pending'       — ikke startet behandling endnu (default for nye sager)
+        #   'aktiv'         — sag er aktiv, persondata findes som nødvendigt
+        #   'anonymiseret'  — pipeline har kørt, original-data slettet
+        #   'public'        — offentlig afgørelse (matcher is_public=TRUE),
+        #                     skal aldrig anonymiseres
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS anonymiserings_status TEXT
+            DEFAULT 'pending'
+        """)
+        # CHECK-constraint adderes separat så det er idempotent
+        # (CONSTRAINT IF NOT EXISTS findes ikke før Postgres 17)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'mine_dokumenter_anon_status_check'
+                ) THEN
+                    ALTER TABLE mine_dokumenter
+                    ADD CONSTRAINT mine_dokumenter_anon_status_check
+                    CHECK (anonymiserings_status IN
+                        ('pending', 'aktiv', 'anonymiseret', 'public'));
+                END IF;
+            END$$
+        """)
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS anonymiseres_efter TIMESTAMPTZ
+        """)
+        # Index så Fase-3-cron kan hurtigt finde rækker der skal
+        # anonymiseres. Filtrerer eksplicit is_public=FALSE — offentlige
+        # afgørelser fra Pakkerejse-Ankenævnet er allerede pseudonymiseret
+        # af kilden og må ALDRIG røres.
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_mine_dok_anonym_pending
+            ON mine_dokumenter (anonymiseres_efter)
+            WHERE anonymiserings_status = 'aktiv'
+              AND is_public = FALSE
+        """)
+        # Backfill: eksisterende offentlige afgørelser → 'public',
+        # eksisterende private dokumenter (klage-sager) → 'aktiv'
+        # (de er allerede uploadet, så pipelinen ville ellers tro de
+        # var i 'pending' og aldrig trigge dem).
+        cur.execute("""
+            UPDATE mine_dokumenter
+            SET anonymiserings_status = 'public'
+            WHERE is_public = TRUE
+              AND anonymiserings_status = 'pending'
+        """)
+        cur.execute("""
+            UPDATE mine_dokumenter
+            SET anonymiserings_status = 'aktiv'
+            WHERE is_public = FALSE
+              AND anonymiserings_status = 'pending'
+              AND tenant_id IS NOT NULL
+        """)
+        # Bemærk: anonymiseres_efter SÆTTES IKKE her. Det betyder
+        # eksisterende sager bliver liggende i 'aktiv' indefinitely
+        # indtil Fase 3 deploys og en bevidst migration trigger på
+        # dem. Det er bevidst — vi vil ikke pludseligt anonymisere
+        # alt eksisterende data uden test.
+
+        # 10c. GDPR Fase 1: gdpr_audit_log-tabel
+        # Per-sag historik over GDPR-relevante handlinger. Skal kunne
+        # fremvises ved kunde-revision.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS gdpr_audit_log (
+                id SERIAL PRIMARY KEY,
+                sag_id TEXT NOT NULL,
+                tenant_id INTEGER NOT NULL
+                    REFERENCES tenants(id) ON DELETE RESTRICT,
+                handling TEXT NOT NULL,
+                tidspunkt TIMESTAMPTZ DEFAULT NOW(),
+                metadata JSONB
+            )
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'gdpr_audit_log_handling_check'
+                ) THEN
+                    ALTER TABLE gdpr_audit_log
+                    ADD CONSTRAINT gdpr_audit_log_handling_check
+                    CHECK (handling IN (
+                        'upload', 'analyse', 'anonymisering',
+                        'sletning', 'cross_tenant_share',
+                        'tilbage_kald'
+                    ));
+                END IF;
+            END$$
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gdpr_audit_tenant_sag
+            ON gdpr_audit_log (tenant_id, sag_id, tidspunkt DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gdpr_audit_tidspunkt
+            ON gdpr_audit_log (tidspunkt DESC)
+        """)
+
+        # 10d. GDPR Fase 1: shared_patterns — cross-tenant anonymiseret pulje
+        # Designprincip: INGEN tenant_id-kolonne her. Det er fysisk umuligt
+        # at lække tenant-info via SQL fra denne tabel. K-anonymitet
+        # (k_count ≥ 5) håndhæves af pipelinen i Fase 3 — kun mønstre
+        # der allerede har 4+ lignende kandidater må gemmes her.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS shared_patterns (
+                id SERIAL PRIMARY KEY,
+                tilfojet_dato TIMESTAMPTZ DEFAULT NOW(),
+                sag_kategori TEXT NOT NULL,
+                udfald_kategori TEXT NOT NULL,
+                region TEXT,
+                anonymiseret_tekst TEXT NOT NULL,
+                embedding vector(1024),
+                k_count INTEGER NOT NULL DEFAULT 5
+            )
+        """)
+        # CHECK-constraint på k_count så ingen pipeline-fejl skriver
+        # k<5 (defense in depth — pipelinen tjekker også selv).
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'shared_patterns_k_count_check'
+                ) THEN
+                    ALTER TABLE shared_patterns
+                    ADD CONSTRAINT shared_patterns_k_count_check
+                    CHECK (k_count >= 5);
+                END IF;
+            END$$
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_shared_patterns_kategori
+            ON shared_patterns (sag_kategori, udfald_kategori, region)
+        """)
+        # HNSW-index på embedding for cosine-similarity-søgning
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_shared_patterns_embedding
+            ON shared_patterns USING hnsw (embedding vector_cosine_ops)
+        """)
+
         # analyse_arkiv: tenant_id altid sat (analyser er ALTID private)
         cur.execute("""
             ALTER TABLE analyse_arkiv
