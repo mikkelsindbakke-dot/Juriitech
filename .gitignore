@@ -39,6 +39,15 @@ Thumbs.db
 uploads/
 output/
 
+# Eval-cases indeholder klage-tekst + præcedens-citationer trukket fra
+# en specifik tenant's analyse_arkiv. Det er privat klient-data og må
+# ALDRIG committes. Kun cases.example.json (placeholder-template)
+# er versioneret. Hver tenant/udvikler skal kopiere example til en
+# privat cases.json eller cases-<tenant>.json lokalt.
+eval/cases.json
+eval/cases-*.json
+eval/results-*.json
+
 # Backup-filer
 *.bak
 *.backup

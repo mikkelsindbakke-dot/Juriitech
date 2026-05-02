@@ -1,0 +1,30 @@
+{
+  "_kommentar": [
+    "TEMPLATE — kopier denne fil til 'eval/cases.json' eller 'eval/cases-<tenant>.json' og fyld dine egne cases på.",
+    "VIGTIGT: cases.json er gitignored fordi den indeholder PRIVAT KLIENT-DATA (klage-tekst + præcedens-citationer fra en specifik tenant's analyse_arkiv). Klage-tekst kan rumme sensitive oplysninger om navngivne kunder selv efter anonymisering. Multi-tenant-isolation kræver at TUI's cases aldrig ses af Apollo/Spies og omvendt.",
+    "Sådan kommer du i gang: cp eval/cases.example.json eval/cases.json, og udfyld så cases-arrayet med rigtige sager fra dit arkiv.",
+    "Format pr. case: id (kort stikordsnavn), description (én linje), query (klage-tekst eller sammenfatning), expected_filenames (2-5 afgørelses-filer DER MINDST SKAL VÆRE I top-K), notes (frivilligt — hvorfor disse filer er præcedens)."
+  ],
+  "version": "1",
+  "tenant_slug": "PLACEHOLDER — sæt til 'tui' / 'apollo' / 'spies' for at gøre case-tilhørsforhold eksplicit",
+  "cases": [
+    {
+      "id": "EKSEMPEL-flyforsinkelse-hotel",
+      "description": "PLACEHOLDER. Klage om flyforsinkelse hvor klager kræver hotel-omkostninger refunderet.",
+      "query": "Klagen handler om at flyet til Mallorca var forsinket 8 timer. Klager bestilte selv hotel for natten og kræver omkostningerne refunderet.",
+      "expected_filenames": [
+        "udfyld-med-2-til-5-kendte-relevante-afgoerelses-filnavne.pdf"
+      ],
+      "notes": "Erstat expected_filenames med de afgørelser DU ved er præcedens. Find dem ved at se i din arkiv-side eller i analyse_arkiv-tabellen for sager du allerede har analyseret."
+    },
+    {
+      "id": "EKSEMPEL-aflyst-rejse-fuld-refusion",
+      "description": "PLACEHOLDER. Klage hvor rejsen blev aflyst pga. udløbet pas — klager kræver alligevel fuld refusion.",
+      "query": "Klager bestilte en pakkerejse til Tyrkiet, men kunne ikke rejse fordi hans pas var udløbet. Klager kræver fuld refusion.",
+      "expected_filenames": [
+        "udfyld-med-kendte-pas-relaterede-afgoerelser.pdf"
+      ],
+      "notes": "Erstat med kendte præcedenser om udløbet pas / klagers ansvar."
+    }
+  ]
+}

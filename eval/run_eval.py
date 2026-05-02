@@ -58,25 +58,59 @@ load_dotenv()
 from ai_engine import _hent_relevante_chunks_med_rerank  # noqa: E402
 
 
-CASES_FILE = PROJECT_ROOT / "eval" / "cases.json"
+EVAL_DIR = PROJECT_ROOT / "eval"
+DEFAULT_CASES = EVAL_DIR / "cases.json"           # Privat, gitignored
+TEMPLATE_CASES = EVAL_DIR / "cases.example.json"  # Versioneret template
 
 
-def hent_cases():
-    if not CASES_FILE.exists():
-        print(f"❌ Kunne ikke finde {CASES_FILE}")
-        sys.exit(1)
-    with CASES_FILE.open() as f:
+def _find_cases_fil(eksplicit_path: str | None):
+    """
+    Returnerer path til cases-fil. Prioritet:
+      1. --cases <path> hvis brugeren har angivet det eksplicit
+      2. eval/cases.json hvis den findes (privat, gitignored)
+      3. eval/cases.example.json som fallback (med advarsel)
+
+    Multi-tenant-bevidst: brugeren kan også angive
+    eval/cases-tui.json eller cases-apollo.json osv. via --cases.
+    """
+    if eksplicit_path:
+        p = Path(eksplicit_path)
+        if not p.exists():
+            print(f"❌ Cases-fil ikke fundet: {p}")
+            sys.exit(1)
+        return p
+    if DEFAULT_CASES.exists():
+        return DEFAULT_CASES
+    if TEMPLATE_CASES.exists():
+        print(
+            "⚠️  eval/cases.json findes ikke. Falder tilbage til cases.example.json\n"
+            "    (template med PLACEHOLDER-cases — kan ikke score noget).\n"
+            "    For at lave en rigtig eval:\n"
+            "      cp eval/cases.example.json eval/cases.json\n"
+            "    og udfyld så cases-arrayet med rigtige sager fra DIT arkiv.\n"
+            "    cases.json er gitignored — privat klient-data ender aldrig i git.\n"
+        )
+        return TEMPLATE_CASES
+    print("❌ Hverken eval/cases.json eller eval/cases.example.json findes.")
+    sys.exit(1)
+
+
+def hent_cases(eksplicit_path: str | None = None):
+    fil = _find_cases_fil(eksplicit_path)
+    with fil.open() as f:
         data = json.load(f)
     cases = data.get("cases", [])
     # Frasortér placeholder-cases (id starter med EKSEMPEL-)
     rigtige = [c for c in cases if not c.get("id", "").startswith("EKSEMPEL-")]
     if not rigtige:
         print(
-            "⚠️  Alle cases i eval/cases.json er stadig placeholders (EKSEMPEL-*).\n"
-            "    Erstat dem med rigtige cases fra dit arkiv før du kan måle noget.\n"
-            "    Format: se kommentar-feltet i cases.json eller eval/README.md."
+            f"⚠️  Alle cases i {fil.name} er stadig placeholders (EKSEMPEL-*).\n"
+            "    Erstat dem med rigtige cases fra DIT arkiv før du kan måle noget.\n"
+            "    Format: se kommentar-feltet i cases.example.json eller eval/README.md."
         )
         return []
+    tenant = data.get("tenant_slug", "ukendt")
+    print(f"📂 Læser {len(rigtige)} cases fra {fil.name} (tenant: {tenant})")
     return rigtige
 
 
@@ -150,11 +184,16 @@ def main():
     parser = argparse.ArgumentParser(description="Kør RAG-eval mod kuraterede cases")
     parser.add_argument("--top-k", type=int, default=5,
                         help="Antal retrieved filnavne pr. case (default 5)")
+    parser.add_argument("--cases", type=str, default=None,
+                        help="Sti til cases-fil. Default: eval/cases.json (gitignored), "
+                             "fallback eval/cases.example.json. Brug fx "
+                             "eval/cases-tui.json hvis du vil holde flere tenant-sæt adskilt.")
     parser.add_argument("--json", type=str, default=None,
-                        help="Gem resultater som JSON til denne fil")
+                        help="Gem resultater som JSON til denne fil (gitignored hvis "
+                             "filnavn matcher results-*.json)")
     args = parser.parse_args()
 
-    cases = hent_cases()
+    cases = hent_cases(eksplicit_path=args.cases)
     if not cases:
         sys.exit(1)
 

@@ -14,14 +14,42 @@ eller:
 
 ## Filer
 
-- `cases.json` — kuraterede sager (klage-tekst + kendt-relevante afgørelser)
-- `run_eval.py` — runner der bruger PAX's reelle RAG-pipeline (`_hent_relevante_chunks_med_rerank`)
-- `README.md` — dette dokument
+- `cases.example.json` — **versioneret template** med 2 PLACEHOLDER-cases. Vis hvordan formatet ser ud — udfyld ALDRIG med rigtige klager her.
+- `cases.json` — **din egen private case-fil**, gitignored. Hver tenant/udvikler kopierer template'et hertil og udfylder med data fra eget arkiv.
+- `run_eval.py` — runner der bruger PAX's reelle RAG-pipeline (`_hent_relevante_chunks_med_rerank`).
+- `README.md` — dette dokument.
+
+## Privacy / multi-tenant
+
+**Klage-tekst er privat klient-data og må ALDRIG committes til git.** Selv efter
+anonymisering kan klager rumme genkendelige oplysninger om navngivne kunder,
+hotelnavne, datoer, beløb osv. Multi-tenant-isolation kræver derudover at
+TUI's cases aldrig ses af Apollo/Spies og omvendt.
+
+Derfor:
+- `eval/cases.json` og `eval/cases-*.json` er gitignored (se `.gitignore`)
+- Resultater (`eval/results-*.json`) er også gitignored
+- Kun `cases.example.json` (template uden rigtig data) er versioneret
+
+Hvis du arbejder på flere tenants samtidig, så hold deres cases adskilt:
+```
+eval/cases-tui.json     # privat
+eval/cases-apollo.json  # privat
+```
+og kør med `python3 eval/run_eval.py --cases eval/cases-tui.json`.
+
+## Sådan kommer du i gang første gang
+
+```bash
+cp eval/cases.example.json eval/cases.json
+# Sæt tenant_slug i toppen af filen (fx "tui")
+# Tilføj rigtige cases — slet de to EKSEMPEL-* placeholders
+```
 
 ## Sådan tilføjer du en case
 
 1. Find en sag i din arkiv-side eller i `analyse_arkiv` hvor du KENDER hvilke afgørelser der er præcedens.
-2. Tilføj en ny entry i `cases.json`:
+2. Tilføj en ny entry i `cases.json` (ikke i `cases.example.json` — den er kun template):
 
 ```json
 {
