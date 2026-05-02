@@ -114,36 +114,64 @@ def hent_cases(eksplicit_path: str | None = None):
     return rigtige
 
 
+def _filnavn_til_sagsnummer(fn: str) -> str:
+    """
+    Normalisér filnavn til sagsnummer for robust matching.
+    '19-2480.pdf' → '19-2480'
+    '2015.0220.pdf' → '2015.0220'
+    'foo' → 'foo'
+    Vidensbanken har duplikater (samme sagsnummer som .pdf og .docx),
+    så vi matcher på sagsnummer-niveau, ikke nøjagtig filnavn.
+    """
+    if not fn:
+        return ""
+    # Strip kun den SIDSTE extension (rsplit fra højre, max 1 split)
+    base = fn.rsplit(".", 1)[0] if "." in fn else fn
+    return base
+
+
 def kør_case(case, top_k: int):
     """Kør én case gennem RAG-pipelinen og returnér metrics."""
     query = case["query"]
-    expected = set(case["expected_filenames"])
+    expected_raw = list(case["expected_filenames"])
+    expected_sn = {_filnavn_til_sagsnummer(f) for f in expected_raw}
 
     chunks = _hent_relevante_chunks_med_rerank(query)
-    # Dedup på filnavn (samme afgørelse kan ramme flere chunks)
+    # Dedup på sagsnummer (samme afgørelse kan ligge som både .pdf og .docx
+    # i vidensbanken — vi vil ikke have begge til at fylde op i top-K).
     retrieved_filnavne = []
-    set_set = set()
+    seen_sn = set()
     for c in chunks or []:
         fn = c.get("filnavn")
-        if fn and fn not in set_set:
-            set_set.add(fn)
-            retrieved_filnavne.append(fn)
+        if not fn:
+            continue
+        sn = _filnavn_til_sagsnummer(fn)
+        if sn in seen_sn:
+            continue
+        seen_sn.add(sn)
+        retrieved_filnavne.append(fn)
         if len(retrieved_filnavne) >= top_k:
             break
 
-    retrieved_set = set(retrieved_filnavne)
-    intersect = retrieved_set & expected
+    retrieved_sn = {_filnavn_til_sagsnummer(f) for f in retrieved_filnavne}
+    intersect_sn = retrieved_sn & expected_sn
 
-    precision = len(intersect) / top_k if top_k > 0 else 0.0
-    recall = len(intersect) / len(expected) if expected else 0.0
+    precision = len(intersect_sn) / top_k if top_k > 0 else 0.0
+    recall = len(intersect_sn) / len(expected_sn) if expected_sn else 0.0
+
+    # For visning: vis hvilke filnavne der matchede (vis det retrievede filnavn,
+    # da det er det vi reelt fandt — selv hvis expected var .pdf og vi fandt .docx)
+    matched_filnavne = sorted([f for f in retrieved_filnavne
+                                if _filnavn_til_sagsnummer(f) in intersect_sn])
+    missing_sn = sorted(expected_sn - retrieved_sn)
 
     return {
         "id": case["id"],
         "description": case.get("description", ""),
-        "expected": sorted(expected),
+        "expected": sorted(expected_raw),
         "retrieved": retrieved_filnavne,
-        "matched": sorted(intersect),
-        "missing": sorted(expected - retrieved_set),
+        "matched": matched_filnavne,
+        "missing": missing_sn,
         "precision": precision,
         "recall": recall,
     }
