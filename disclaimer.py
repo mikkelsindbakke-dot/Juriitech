@@ -114,15 +114,17 @@ st.title("Disclaimer: læs inden brug")
 st.markdown(
     """
     **juriitech PAX** er et digitalt værktøj, der bruger kunstig intelligens
-    (AI) til at analysere klagesager fra Pakkerejse-Ankenævnet og foreslå
-    juridiske vurderinger og svarbreve. Programmet er bygget fra bunden som
-    et specialiseret værktøj til rejsebranchen.
+    (AI) til at håndtere alle elementer i klagesager fra
+    Pakkerejse-Ankenævnet. Programmet er bygget fra bunden som et
+    specialiseret værktøj til rejsebranchen, og bliver løbende klogere ved
+    brug.
 
     juriitech PAX er udviklet af **juriitech** — en virksomhed der bygger
-    specialiserede AI-værktøjer til juridiske nicheområder. "PAX" refererer
-    til at dette produkt er skræddersyet til pakkerejsesager. Fremtidige
-    produkter fra juriitech vil have deres egne modelnavne efter samme
-    princip.
+    specialiserede AI-værktøjer til juridiske og administrative
+    nicheområder. Selvom juriitechs værktøjer kan minimere juridisk risiko
+    og spare brugere for dagevis af arbejde, kan værktøjerne ikke
+    erstattes af en jurist. **Husk, at det endelige juridiske ansvar
+    altid ligger hos dig.**
     """
 )
 
