@@ -187,14 +187,87 @@ with tab_tenants:
                     else:
                         st.caption("_(intet logo)_")
 
-                # Edit-knap
-                if st.button(
-                    "Rediger",
-                    key=f"edit_{t['id']}",
-                    type="secondary",
-                ):
-                    st.session_state.admin_edit_tenant_id = t["id"]
-                    st.rerun()
+                # Aktion-knapper: Rediger + Scrape vilkår
+                kol_edit, kol_scrape = st.columns(2)
+                with kol_edit:
+                    if st.button(
+                        "Rediger",
+                        key=f"edit_{t['id']}",
+                        type="secondary",
+                        use_container_width=True,
+                    ):
+                        st.session_state.admin_edit_tenant_id = t["id"]
+                        st.rerun()
+                with kol_scrape:
+                    har_url = bool(t.get("rejsevilkaar_kilde_url"))
+                    if st.button(
+                        "🌍 Scrape vilkår nu",
+                        key=f"scrape_{t['id']}",
+                        type="secondary",
+                        use_container_width=True,
+                        disabled=not har_url,
+                        help=(
+                            "Scraper selskabets juridiske sider fra deres "
+                            "rejsevilkår-URL. Tilføjer kun nye sider — "
+                            "eksisterende dokumenter springes over (idempotent)."
+                            if har_url else
+                            "Sæt 'Rejsevilkår-kilde URL' under 'Rediger' "
+                            "først for at aktivere scraping."
+                        ),
+                    ):
+                        st.session_state.admin_scrape_tenant_id = t["id"]
+                        st.rerun()
+
+    # ── Scrape-handler ──
+    # Hvis brugeren netop har klikket 'Scrape vilkår nu' på en tenant,
+    # viser vi en progress-blok HER (over edit-formularen) og kører scraperen.
+    scrape_id = st.session_state.get("admin_scrape_tenant_id")
+    if scrape_id:
+        scrape_tenant = hent_tenant_by_id(scrape_id)
+        if scrape_tenant and scrape_tenant.get("rejsevilkaar_kilde_url"):
+            from vilkaar_scraper import scrape_vilkaar  # lazy import — kun ved klik
+
+            st.divider()
+            st.subheader(
+                f"🌍 Scraper vilkår for {scrape_tenant['navn']}"
+            )
+            st.caption(
+                f"Kilde: `{scrape_tenant['rejsevilkaar_kilde_url']}`  ·  "
+                f"tenant_id={scrape_tenant['id']}"
+            )
+
+            log_container = st.empty()
+            log_lines = []
+
+            def _log(msg):
+                log_lines.append(msg)
+                log_container.code(
+                    "\n".join(log_lines[-30:]),  # vis kun de seneste 30 linjer
+                    language="text",
+                )
+
+            with st.spinner("Scraper i gang — kan tage 1-3 min..."):
+                try:
+                    stats = scrape_vilkaar(
+                        tenant_id=scrape_tenant["id"],
+                        tenant_slug=scrape_tenant["slug"],
+                        kilde_url=scrape_tenant["rejsevilkaar_kilde_url"],
+                        progress_callback=_log,
+                    )
+                    st.success(
+                        f"✅ Scraping fuldført. "
+                        f"Besøgte {stats['besogte']} sider, "
+                        f"gemte {stats['gemt']} nye dokumenter "
+                        f"({stats['allerede_i_db']} var allerede i DB)."
+                    )
+                except Exception as e:
+                    st.error(f"❌ Scraping fejlede: {e}")
+
+            # Ryd state så vi ikke re-kører ved næste rerun
+            st.session_state.admin_scrape_tenant_id = None
+            if st.button("OK — luk scrape-output"):
+                st.rerun()
+            st.stop()  # Forhindr at edit-formular vises samtidig
 
     st.divider()
 
