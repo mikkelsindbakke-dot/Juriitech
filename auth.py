@@ -467,7 +467,12 @@ def admin_invite_user(email, tenant_id, role="jurist", fulde_navn=""):
         )
 
     try:
-        admin_client.auth.admin.invite_user_by_email(email)
+        # Sæt full_name i user_metadata så dashboard kan vise 'Velkommen,
+        # <fornavn>' uden at skulle slå op i vores users-tabel.
+        admin_client.auth.admin.invite_user_by_email(
+            email,
+            options={"data": {"full_name": fulde_navn or ""}},
+        )
         return True, None
     except Exception as e:
         msg = str(e).lower()
@@ -550,7 +555,10 @@ def admin_create_user(email, tenant_id, role="jurist", fulde_navn=""):
             "password": temp_pw,
             "email_confirm": True,  # Skip email-verifikation
             "user_metadata": {
-                "fulde_navn": fulde_navn or "",
+                # 'full_name' er Supabase-konvention (engelsk) og er hvad
+                # juriitech-portal-dashboard læser. Vi sætter det her så
+                # nye brugere ikke ser 'Velkommen, <email-prefix>'.
+                "full_name": fulde_navn or "",
             },
         })
         sup_user = result.user
