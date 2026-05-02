@@ -245,6 +245,62 @@ def login_with_password(email, password):
     return True, None
 
 
+def try_sso_login():
+    """
+    Engangs-login via refresh_token i URL'ens query-params (sso_token).
+
+    Bruges når brugeren klikker fra juriitech.com/dashboard ind i PAX.
+    Dashboard-siden konstruerer URL'en med session.refresh_token, og denne
+    handler bytter den til en lokal Streamlit-session.
+
+    Returnerer:
+        True hvis SSO-login lykkedes (caller bør kalde st.rerun())
+        False hvis ingen sso_token i URL eller validering fejlede
+    """
+    sso_token = st.query_params.get("sso_token")
+    if not sso_token:
+        return False
+
+    client = _get_supabase_client()
+    if client is None:
+        print("DEBUG: try_sso_login — Supabase-klient utilgængelig")
+        return False
+
+    try:
+        # Refresh-tokens validerer ved at få ny session ud af dem
+        result = client.auth.refresh_session(sso_token)
+        supabase_user = result.user if hasattr(result, "user") else None
+        if not supabase_user:
+            print("DEBUG: try_sso_login — refresh_session returnerede ingen user")
+            return False
+    except Exception as e:
+        print(f"DEBUG: try_sso_login — refresh_session fejlede: {e}")
+        return False
+
+    # Genbrug eksisterende DB-link-logik
+    db_user = _link_supabase_to_db_user(supabase_user)
+    if db_user is None:
+        print(
+            f"DEBUG: try_sso_login — bruger {supabase_user.email} er ikke "
+            "i users-tabellen. SSO afvist."
+        )
+        return False
+
+    # Set session_state — samme struktur som login_with_password
+    st.session_state.user = {
+        "id": db_user["id"],
+        "supabase_user_id": str(supabase_user.id),
+        "email": supabase_user.email,
+        "tenant_id": db_user["tenant_id"],
+        "role": db_user["role"],
+        "fulde_navn": db_user["fulde_navn"] or "",
+    }
+
+    # Fjern token fra URL af sikkerhedshensyn (browser-historik) + ren UX
+    st.query_params.clear()
+    return True
+
+
 def send_password_reset(email):
     """
     Sender en password-reset-mail via Supabase. Returnerer
