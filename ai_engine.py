@@ -596,19 +596,35 @@ def _hent_relevante_chunks_med_rerank(soge_tekst, udeluk_dokument_id=None):
         else:
             rerank_inputs.append(indhold)
 
-    reranket = rerank(soge_tekst, rerank_inputs, top_n=TOP_K_CHUNKS_FINAL)
+    # Bed reranker om FLERE kandidater end vi til sidst skal bruge — det
+    # giver headroom til dedup på dokument_id nedenfor. Voyage rerank-2 er
+    # billig nok at vi gerne tager top ~3x så vi efter dedup stadig har
+    # TOP_K_CHUNKS_FINAL distinkte dokumenter.
+    rerank_top_n = min(len(rerank_inputs), TOP_K_CHUNKS_FINAL * 3)
+    reranket = rerank(soge_tekst, rerank_inputs, top_n=rerank_top_n)
 
-    # ---- STAGE 3: format output ----
-    # reranket er liste af (input_index, score)-tuples, sorteret efter score
+    # ---- STAGE 3: dedup på dokument_id + format output ----
+    # Uden dedup kan top-K være chunks 0, 2 og 5 fra SAMME afgørelse — det
+    # spilder kontekst-tokens og giver Claude færre distinkte præcedens-
+    # eksempler. Vi beholder den HØJEST scorede chunk pr. dokument_id og
+    # stopper når vi har TOP_K_CHUNKS_FINAL distinkte dokumenter.
     resultat = []
+    sete_dokumenter = set()
     for input_idx, score in reranket:
         chunk = dict(kandidater[input_idx])  # kopi så vi ikke muterer
+        dok_id = chunk.get("dokument_id")
+        if dok_id is not None and dok_id in sete_dokumenter:
+            continue
+        if dok_id is not None:
+            sete_dokumenter.add(dok_id)
         chunk["rerank_score"] = score
         # Overskriv similarity med rerank-score så _byg_vidensbank_tekst
         # viser den mest meningsfulde score
         if score is not None:
             chunk["similarity"] = score
         resultat.append(chunk)
+        if len(resultat) >= TOP_K_CHUNKS_FINAL:
+            break
 
     return resultat
 
