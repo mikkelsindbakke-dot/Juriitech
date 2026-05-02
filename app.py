@@ -54,7 +54,7 @@ if st.query_params.get("sso_token"):
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont,
+            font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont,
                          'Segoe UI', sans-serif;
             animation: jt-fade-in 0.2s ease;
             overflow: hidden;
@@ -82,7 +82,7 @@ if st.query_params.get("sso_token"):
             position: relative;
             z-index: 1;
             font-size: clamp(3rem, 9vw, 6rem);
-            font-weight: 800;
+            font-weight: 700;
             letter-spacing: -0.055em;
             line-height: 0.95;
             color: #0A0B0F;
@@ -352,7 +352,7 @@ except Exception as _kritisk_fejl:
             margin: 40px auto; max-width: 640px;
             padding: 32px; border-radius: 16px;
             background: #FEF2F2; border: 1px solid #FCA5A5;
-            font-family: 'Inter', -apple-system, sans-serif;
+            font-family: 'Space Grotesk', -apple-system, sans-serif;
         ">
           <div style="font-size: 1.4rem; font-weight: 700;
             color: #991B1B; margin-bottom: 8px;">

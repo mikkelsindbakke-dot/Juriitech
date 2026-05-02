@@ -296,7 +296,7 @@ def vis_dashboard(svar_tekst, struktureret_data=None):
                      text-transform: uppercase; opacity: 0.9;">
                     {titel}
                 </div>
-                <div style="font-size: 1.9rem; font-weight: 900;
+                <div style="font-size: 1.9rem; font-weight: 700;
                      color: {farver['tekst']}; line-height: 1.1;
                      letter-spacing: -0.025em; margin-top: 4px;
                      font-variant-numeric: tabular-nums;">

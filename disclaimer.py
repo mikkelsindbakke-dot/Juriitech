@@ -39,9 +39,9 @@ if not ER_ADMIN:
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap');
     html, body, .stApp, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
     }
     h1 a, h2 a, h3 a, h4 a,
@@ -68,7 +68,7 @@ st.markdown(
     [data-testid="stSidebarNav"] a {
         display: flex !important; align-items: center !important; gap: 12px !important;
         padding: 9px 14px !important; border-radius: 10px !important;
-        font-family: 'Inter', sans-serif !important; font-size: 0.95rem !important;
+        font-family: 'Space Grotesk', sans-serif !important; font-size: 0.95rem !important;
         font-weight: 500 !important; color: #374151 !important;
         text-decoration: none !important; border: none !important;
         transition: background-color 0.12s ease, color 0.12s ease !important;

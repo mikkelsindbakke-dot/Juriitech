@@ -93,11 +93,11 @@ if not ER_ADMIN:
 st.markdown(
     """
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,500;8..60,600;8..60,700&display=swap');
 
     /* ========== TYPOGRAFI ========== */
     html, body, .stApp, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
     }
@@ -181,7 +181,7 @@ st.markdown(
         gap: 12px !important;
         padding: 9px 14px !important;
         border-radius: 10px !important;
-        font-family: 'Inter', sans-serif !important;
+        font-family: 'Space Grotesk', sans-serif !important;
         font-size: 0.95rem !important;
         font-weight: 500 !important;
         color: #374151 !important;
@@ -273,7 +273,7 @@ st.markdown(
         padding: 1px 6px !important;
         border-radius: 4px !important;
         font-size: 0.82em !important;
-        font-family: 'Inter', sans-serif !important;
+        font-family: 'Space Grotesk', sans-serif !important;
         font-weight: 500 !important;
         color: rgba(100, 116, 139, 1) !important;
     }
@@ -287,7 +287,7 @@ st.markdown(
         padding: 4px 11px;
         border-radius: 100px;
         font-size: 0.8rem;
-        font-weight: 800;
+        font-weight: 700;
         letter-spacing: 0.01em;
         line-height: 1.4;
         margin-right: 6px;
@@ -633,8 +633,8 @@ st.markdown(
         display: inline-flex;
         align-items: center;
         gap: 5px;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-        font-weight: 800;
+        font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-weight: 700;
         font-size: 1.35rem;
         letter-spacing: -0.035em;
         line-height: 1;
@@ -649,11 +649,11 @@ st.markdown(
     }
     .jp-j {
         color: #6E74F0;     /* mørkere indigo/lavendel — matcher logoet tættere */
-        font-weight: 800;
+        font-weight: 700;
     }
     .jp-rest {
         color: #0A0B0F;
-        font-weight: 800;
+        font-weight: 700;
     }
     /* Den gule taleboble */
     .jp-pax {
@@ -661,7 +661,7 @@ st.markdown(
         display: inline-block;
         background: #F5B53B;   /* gul/amber matchende logoet */
         color: #0A0B0F;
-        font-weight: 800;
+        font-weight: 700;
         font-size: 0.78em;
         letter-spacing: 0;
         padding: 3px 8px 3px 9px;
@@ -684,9 +684,9 @@ st.markdown(
     /* ========== PAX WORDMARK — juriitech-signatur øverst på siden ========== */
     /* Matcher landing-sidens wordmark (indigo 'j', sort resten) i kompakt format. */
     .pax-wordmark {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+        font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
         font-size: 1.45rem;
-        font-weight: 800;
+        font-weight: 700;
         letter-spacing: -0.035em;
         line-height: 1;
         margin: 0 0 0.75rem 0;
@@ -697,11 +697,11 @@ st.markdown(
     }
     .pax-wordmark-j {
         color: #6366F1;
-        font-weight: 800;
+        font-weight: 700;
     }
     .pax-wordmark-rest {
         color: #0A0B0F;
-        font-weight: 800;
+        font-weight: 700;
     }
 
     /* ========== BRUGERFEJL-BOKS — venlig fejl-UI med Sentry-info ========== */
@@ -775,7 +775,7 @@ st.markdown(
     }
     .videnstank-titel {
         color: rgba(71, 85, 105, 0.75);
-        font-family: 'Inter', sans-serif;
+        font-family: 'Space Grotesk', sans-serif;
         font-size: 0.68rem;
         font-weight: 600;
         letter-spacing: 0.18em;
@@ -797,7 +797,7 @@ st.markdown(
         box-shadow: 0 2px 10px -4px rgba(17, 24, 39, 0.08);
     }
     .videnstank-navn {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Space Grotesk', sans-serif;
         font-size: 0.92rem;
         font-weight: 600;
         line-height: 1.3;
@@ -811,9 +811,9 @@ st.markdown(
         justify-content: center;
         width: 22px;
         height: 22px;
-        font-family: 'Inter', sans-serif;
+        font-family: 'Space Grotesk', sans-serif;
         font-size: 1rem;
-        font-weight: 800;
+        font-weight: 700;
         color: var(--accent);
         flex-shrink: 0;
     }
@@ -834,7 +834,7 @@ st.markdown(
     /* Emne-linjen lige under pillar-overskriften — lidt større og
        fremhævet, men stadig lysere end selve overskriften. */
     .sagsresume-emne-in-pillar {
-        font-family: 'Inter', sans-serif;
+        font-family: 'Space Grotesk', sans-serif;
         font-size: 1.05rem;
         font-weight: 500;
         line-height: 1.45;
@@ -1648,7 +1648,7 @@ if not _har_aktiv_sag:
                 Analysér en sag fra <span style="color: #4F46E5;">Pakkerejse-Ankenævnet</span>
             </h1>
             <p style="
-                font-family: 'Inter', sans-serif;
+                font-family: 'Space Grotesk', sans-serif;
                 font-size: 0.96rem;
                 line-height: 1.5;
                 color: #4B5563;
@@ -1731,7 +1731,7 @@ if not _har_aktiv_sag:
             display: block;
             color: #6B7280;
             font-size: 0.88rem;
-            font-family: 'Inter', -apple-system, sans-serif;
+            font-family: 'Space Grotesk', -apple-system, sans-serif;
             text-align: center;
             margin-top: -4px;
             line-height: 1.4;

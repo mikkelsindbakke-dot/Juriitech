@@ -119,7 +119,7 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
 <head>
 <style>
   html, body {{ margin: 0; padding: 0; background: transparent;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; }}
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif; }}
   .wrap {{
     display: flex; align-items: center; gap: 14px;
     padding: 20px 24px; border-radius: 12px;
@@ -255,7 +255,7 @@ def thinking_fullpage(
   html, body {{
     margin: 0; padding: 0;
     background: transparent;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
   }}
   .vuepage {{
     display: flex;
