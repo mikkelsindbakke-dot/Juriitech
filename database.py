@@ -28,25 +28,49 @@ def _connect():
         # aktivere extensionen, og næste forbindelse registrerer fint.
         pass
 
-    # Sæt app.current_tenant_id for RLS-policies. Bruger lazy
-    # tenant-lookup: i Streamlit-kontekst læses fra session_state,
-    # i script-kontekst returneres TUI's id (fallback). Hvis det
-    # fejler (fx før hent_aktiv_tenant_id-funktionen er importeret
-    # ved meget tidlig boot), skipper vi — RLS vil så blokere
-    # private rækker, hvilket er den sikre default.
+    # Sæt app.current_tenant_id for RLS-policies. STILLE lookup —
+    # uden warnings — fordi _connect() kaldes mange steder før login
+    # (boot, opret_tabeller, scrapere). Vi vil ikke spamme logs.
+    # Stille fallback: hvis ingen logged-in user findes, sættes
+    # variablen til tom streng → RLS vil blokere private rækker
+    # (sikker default).
     try:
-        tid = hent_aktiv_tenant_id()
+        tid = _hent_tenant_id_silent()
         cur = conn.cursor()
         if tid is not None:
             cur.execute("SET app.current_tenant_id = %s", (str(tid),))
         else:
             cur.execute("SET app.current_tenant_id = ''")
         cur.close()
-    except Exception as e:
+    except Exception:
         # Stille fallback — vi vil ikke blokere boot pga. session-variable
-        print(f"DEBUG: kunne ikke sætte app.current_tenant_id: {e}")
+        pass
 
     return conn
+
+
+def _hent_tenant_id_silent():
+    """
+    Stille version af hent_aktiv_tenant_id() til brug i _connect().
+
+    Returnerer tenant_id fra Streamlit session, eller None hvis ikke
+    logget ind. Logger ALDRIG warnings — fordi _connect() kaldes mange
+    steder før login (boot, opret_tabeller, scripts).
+
+    Bruger ALDRIG DB-fallback — det ville give cyklisk dependency
+    (_connect → _hent_tenant_id_silent → hent_tenant_by_slug → _connect).
+    """
+    try:
+        import streamlit as st
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        if get_script_run_ctx() is None:
+            return None
+        user = st.session_state.get("user")
+        if user and user.get("tenant_id"):
+            return int(user["tenant_id"])
+    except Exception:
+        pass
+    return None
 
 
 def opret_tabeller():
