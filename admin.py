@@ -130,11 +130,12 @@ st.caption(
     "(administrator)"
 )
 
-tab_tenants, tab_brugere, tab_inviter, tab_gdpr = st.tabs([
+tab_tenants, tab_brugere, tab_inviter, tab_gdpr, tab_dokumenter = st.tabs([
     "Tenants (selskaber)",
     "Brugere",
     "Inviter ny bruger",
     "GDPR audit-log",
+    "Vigtige dokumenter",
 ])
 
 
@@ -935,3 +936,184 @@ with tab_gdpr:
             conn.close()
         except Exception:
             pass
+
+
+# ───────────────────────────────────────────────────────────────
+# TAB: VIGTIGE DOKUMENTER
+# ───────────────────────────────────────────────────────────────
+# Centralt arkiv for officielle juriitech-dokumenter (DPA, DPIA mv.).
+# Hvert dokument er en .md-fil i docs/legal/. Tilføj nye dokumenter
+# ved at appende til VIGTIGE_DOKUMENTER-listen — UI'en, downloads og
+# format-konvertering håndteres automatisk.
+
+DOCS_ROOT = Path(__file__).resolve().parent
+
+VIGTIGE_DOKUMENTER = [
+    {
+        "id": "dpa",
+        "titel": "Databehandleraftale (skabelon)",
+        "kategori": "Juridiske dokumenter",
+        "beskrivelse": (
+            "Skabelon til databehandleraftale (DPA) jf. GDPR art. 28. "
+            "Dækker behandlingens karakter, underdatabehandlere, "
+            "sikkerhed, breach-notification, audit-rettigheder. "
+            "Skal udfyldes per kunde og review'es af advokat før "
+            "første underskrift."
+        ),
+        "filsti": DOCS_ROOT / "docs" / "legal"
+        / "DPA-juriitech-PAX-skabelon.md",
+        "filnavn_base": "Databehandleraftale-juriitech-PAX",
+        "docx_titel": "Databehandleraftale",
+    },
+    {
+        "id": "dpia",
+        "titel": "DPIA — Konsekvensanalyse",
+        "kategori": "Juridiske dokumenter",
+        "beskrivelse": (
+            "Data Protection Impact Assessment for juriitech PAX. "
+            "Dokumenterer behandlingens risici og foranstaltninger. "
+            "Deles med kunders DPO ved købsforhandlinger som "
+            "dokumentation for compliance."
+        ),
+        "filsti": DOCS_ROOT / "docs" / "legal" / "DPIA-juriitech-PAX.md",
+        "filnavn_base": "DPIA-juriitech-PAX",
+        "docx_titel": "Data Protection Impact Assessment",
+    },
+]
+
+
+def _strip_foerste_h1(markdown_tekst):
+    """
+    Fjerner den første # H1 fra markdown så docx/pdf-genereringen
+    ikke får dobbelt titel — eksport-funktionerne tilføjer selv en
+    titel-overskrift.
+    """
+    linjer = markdown_tekst.split("\n")
+    i = 0
+    while i < len(linjer) and not linjer[i].strip():
+        i += 1
+    if i < len(linjer) and linjer[i].lstrip().startswith("# "):
+        linjer.pop(i)
+    return "\n".join(linjer)
+
+
+@st.cache_data(show_spinner=False)
+def _md_til_docx_bytes_cached(md_tekst, titel):
+    """Cached for at undgå at genparse markdown ved hver re-render."""
+    from eksport import markdown_til_docx_bytes
+    return markdown_til_docx_bytes(_strip_foerste_h1(md_tekst), titel=titel)
+
+
+@st.cache_data(show_spinner=False)
+def _md_til_pdf_bytes_cached(md_tekst, titel):
+    from eksport import markdown_til_pdf_bytes
+    return markdown_til_pdf_bytes(_strip_foerste_h1(md_tekst), titel=titel)
+
+
+with tab_dokumenter:
+    st.subheader("Vigtige dokumenter")
+    st.caption(
+        "Centralt arkiv for juriitech's officielle dokumenter. "
+        "Hvert dokument kan læses online eller hentes som Word eller PDF."
+    )
+
+    from collections import defaultdict
+    _grupper = defaultdict(list)
+    for _dok in VIGTIGE_DOKUMENTER:
+        _grupper[_dok["kategori"]].append(_dok)
+
+    for _kategori, _docs in _grupper.items():
+        st.markdown(f"#### {_kategori}")
+        for _dok in _docs:
+            with st.container(border=True):
+                if not _dok["filsti"].exists():
+                    st.warning(
+                        f"⚠️ **{_dok['titel']}** — fil mangler "
+                        f"({_dok['filsti']})"
+                    )
+                    continue
+
+                st.markdown(f"**{_dok['titel']}**")
+                st.caption(_dok["beskrivelse"])
+
+                _md_text = _dok["filsti"].read_text(encoding="utf-8")
+                _vis_key = f"vigtigt_dok_vis_{_dok['id']}"
+
+                kol_vis, kol_md, kol_docx, kol_pdf = st.columns(4)
+
+                with kol_vis:
+                    if st.button(
+                        "👁️ Vis tekst",
+                        key=f"vd_btn_vis_{_dok['id']}",
+                        use_container_width=True,
+                    ):
+                        st.session_state[_vis_key] = (
+                            not st.session_state.get(_vis_key, False)
+                        )
+
+                with kol_md:
+                    st.download_button(
+                        "📄 Markdown",
+                        data=_md_text.encode("utf-8"),
+                        file_name=f"{_dok['filnavn_base']}.md",
+                        mime="text/markdown",
+                        key=f"vd_dl_md_{_dok['id']}",
+                        use_container_width=True,
+                    )
+
+                with kol_docx:
+                    try:
+                        _docx_bytes = _md_til_docx_bytes_cached(
+                            _md_text, _dok["docx_titel"]
+                        )
+                        st.download_button(
+                            "📝 Word",
+                            data=_docx_bytes,
+                            file_name=f"{_dok['filnavn_base']}.docx",
+                            mime=(
+                                "application/vnd.openxmlformats-"
+                                "officedocument.wordprocessingml.document"
+                            ),
+                            key=f"vd_dl_docx_{_dok['id']}",
+                            use_container_width=True,
+                        )
+                    except Exception as _e_docx:
+                        st.button(
+                            "Word (fejl)",
+                            key=f"vd_err_docx_{_dok['id']}",
+                            disabled=True,
+                            use_container_width=True,
+                            help=f"Kunne ikke generere Word: {_e_docx}",
+                        )
+
+                with kol_pdf:
+                    try:
+                        _pdf_bytes = _md_til_pdf_bytes_cached(
+                            _md_text, _dok["docx_titel"]
+                        )
+                        st.download_button(
+                            "📕 PDF",
+                            data=_pdf_bytes,
+                            file_name=f"{_dok['filnavn_base']}.pdf",
+                            mime="application/pdf",
+                            key=f"vd_dl_pdf_{_dok['id']}",
+                            use_container_width=True,
+                        )
+                    except Exception as _e_pdf:
+                        st.button(
+                            "PDF (fejl)",
+                            key=f"vd_err_pdf_{_dok['id']}",
+                            disabled=True,
+                            use_container_width=True,
+                            help=f"Kunne ikke generere PDF: {_e_pdf}",
+                        )
+
+                if st.session_state.get(_vis_key, False):
+                    st.markdown("---")
+                    st.markdown(_md_text)
+
+    st.markdown("---")
+    st.caption(
+        "Nye dokumenter tilføjes ved at lægge .md-filen i `docs/legal/` "
+        "og udvide `VIGTIGE_DOKUMENTER`-listen i `admin.py`."
+    )
