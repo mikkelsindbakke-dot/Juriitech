@@ -456,6 +456,38 @@ with tab_tenants:
                         st.success(
                             f"✅ Tenant '{f_navn}' oprettet (id={ny_id})."
                         )
+
+                        # Auto-scrape rejsevilkår hvis URL er sat
+                        if f_rejsevilkaar_url.strip():
+                            with st.spinner(
+                                f"Henter rejsevilkår fra "
+                                f"{f_rejsevilkaar_url.strip()}..."
+                            ):
+                                try:
+                                    from vilkaar_scraper import (
+                                        scrape_vilkaar,
+                                    )
+                                    scrape_result = scrape_vilkaar(
+                                        tenant_id=ny_id,
+                                        tenant_slug=f_slug.strip(),
+                                        kilde_url=(
+                                            f_rejsevilkaar_url.strip()
+                                        ),
+                                    )
+                                    st.success(
+                                        f"📥 Vilkår hentet: "
+                                        f"{scrape_result.get('gemt', 0)} "
+                                        f"nye, "
+                                        f"{scrape_result.get('allerede_i_db', 0)} "
+                                        f"allerede i DB"
+                                    )
+                                except Exception as e:
+                                    st.warning(
+                                        f"⚠️ Kunne ikke hente vilkår "
+                                        f"automatisk: {e}. Tenant er "
+                                        "oprettet — du kan manuelt scrape "
+                                        "fra forsidens admin-panel."
+                                    )
                         st.rerun()
                     else:
                         st.error("Tenant kunne ikke oprettes.")
@@ -486,6 +518,35 @@ with tab_tenants:
                 ryd_profil_cache()
                 st.session_state.admin_edit_tenant_id = None
                 st.success(f"✅ Tenant '{f_navn}' opdateret.")
+
+                # Hvis rejsevilkaar_kilde_url er ændret, auto-scrape
+                gammel_url = (
+                    eksisterende.get("rejsevilkaar_kilde_url") or ""
+                ).strip()
+                ny_url = f_rejsevilkaar_url.strip()
+                if ny_url and ny_url != gammel_url:
+                    with st.spinner(
+                        f"Henter rejsevilkår fra ny URL: {ny_url}..."
+                    ):
+                        try:
+                            from vilkaar_scraper import scrape_vilkaar
+                            scrape_result = scrape_vilkaar(
+                                tenant_id=eksisterende["id"],
+                                tenant_slug=eksisterende["slug"],
+                                kilde_url=ny_url,
+                            )
+                            st.success(
+                                f"📥 Vilkår hentet: "
+                                f"{scrape_result.get('gemt', 0)} nye, "
+                                f"{scrape_result.get('allerede_i_db', 0)} "
+                                f"allerede i DB"
+                            )
+                        except Exception as e:
+                            st.warning(
+                                f"⚠️ Kunne ikke hente vilkår "
+                                f"automatisk: {e}. Du kan manuelt "
+                                "scrape fra forsidens admin-panel."
+                            )
                 st.rerun()
             else:
                 st.error("Opdatering fejlede.")
