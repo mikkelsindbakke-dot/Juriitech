@@ -807,3 +807,16 @@ def render_logout_button(placement="sidebar"):
     if target.button("Log ud", key="logout_btn", use_container_width=True):
         logout()
         st.rerun()
+
+    target.markdown(
+        "<div style='margin-top: 14px; font-size: 0.78rem; "
+        "color: #94A3B8; text-align: center; line-height: 1.6;'>"
+        "<a href='https://juriitech.com/privatlivspolitik.html' "
+        "target='_blank' rel='noopener' "
+        "style='color: #94A3B8; text-decoration: none; "
+        "border-bottom: 1px dotted #CBD5E1;'>"
+        "Privatlivspolitik"
+        "</a>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
