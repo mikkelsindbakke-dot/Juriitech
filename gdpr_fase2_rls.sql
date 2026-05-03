@@ -35,7 +35,7 @@ BEGIN;
 ALTER TABLE mine_dokumenter ENABLE ROW LEVEL SECURITY;
 ALTER TABLE analyse_arkiv   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE gemte_sager     ENABLE ROW LEVEL SECURITY;
-ALTER TABLE chunks          ENABLE ROW LEVEL SECURITY;
+ALTER TABLE dokument_chunks ENABLE ROW LEVEL SECURITY;
 
 -- ----------------------------------------------------------------------------
 -- 2. Helper-funktion: hent current_tenant_id sikkert
@@ -97,15 +97,16 @@ CREATE POLICY tenant_isolation ON gemte_sager
         tenant_id = current_tenant_id()
     );
 
--- chunks: følger parent-dokument
---   chunks har dokument_id der peger på mine_dokumenter, så vi kan ikke
---   filtrere direkte på tenant_id. Vi joiner via en EXISTS-subquery.
-DROP POLICY IF EXISTS tenant_isolation ON chunks;
-CREATE POLICY tenant_isolation ON chunks
+-- dokument_chunks: følger parent-dokument
+--   dokument_chunks har dokument_id der peger på mine_dokumenter, så vi
+--   kan ikke filtrere direkte på tenant_id. Vi joiner via en
+--   EXISTS-subquery.
+DROP POLICY IF EXISTS tenant_isolation ON dokument_chunks;
+CREATE POLICY tenant_isolation ON dokument_chunks
     USING (
         EXISTS (
             SELECT 1 FROM mine_dokumenter md
-            WHERE md.id = chunks.dokument_id
+            WHERE md.id = dokument_chunks.dokument_id
               AND (
                 md.is_public = TRUE
                 OR md.tenant_id IS NULL
@@ -113,8 +114,8 @@ CREATE POLICY tenant_isolation ON chunks
               )
         )
     );
--- chunks WITH CHECK undlades — chunks oprettes via INSERT INTO ... SELECT
--- og parent-dokumentets tenant_id allerede er valideret.
+-- dokument_chunks WITH CHECK undlades — chunks oprettes via INSERT INTO
+-- ... SELECT og parent-dokumentets tenant_id allerede er valideret.
 
 -- ----------------------------------------------------------------------------
 -- 4. Verifikation efter kørsel
@@ -146,10 +147,10 @@ COMMIT;
 -- DROP POLICY IF EXISTS tenant_isolation ON mine_dokumenter;
 -- DROP POLICY IF EXISTS tenant_isolation ON analyse_arkiv;
 -- DROP POLICY IF EXISTS tenant_isolation ON gemte_sager;
--- DROP POLICY IF EXISTS tenant_isolation ON chunks;
+-- DROP POLICY IF EXISTS tenant_isolation ON dokument_chunks;
 -- ALTER TABLE mine_dokumenter DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE analyse_arkiv   DISABLE ROW LEVEL SECURITY;
 -- ALTER TABLE gemte_sager     DISABLE ROW LEVEL SECURITY;
--- ALTER TABLE chunks          DISABLE ROW LEVEL SECURITY;
+-- ALTER TABLE dokument_chunks DISABLE ROW LEVEL SECURITY;
 -- DROP FUNCTION IF EXISTS current_tenant_id();
 -- COMMIT;
