@@ -53,6 +53,11 @@ eval/results-*.json
 *.backup
 *~
 
+# Database-backups indeholder persondata — må ALDRIG i git
+backups/
+*.sql.gz
+*.dump
+
 # Python distribution
 *.egg-info/
 build/
