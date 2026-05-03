@@ -1008,22 +1008,78 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
     elif is_public is None:
         is_public = False
 
+    # GDPR Fase 4: For private dokumenttyper (klage, bilag osv.) sættes
+    # anonymiseres_efter til 24 timer fra nu — så cron-pipelinen
+    # automatisk anonymiserer dem. Sliding-window-design: hver ny upload
+    # nulstiller 24-timers-uret (se forlaeng_anonymiserings_vindue() der
+    # kaldes ved aktivitet på sagen). Public typer (afgørelser, lov,
+    # regler) får ALDRIG anonymiseres_efter — de røres aldrig af pipelinen.
+    sa_anonymiseres_efter_24t = (
+        not is_public
+        and dokumenttype in ('klage', 'bilag', 'svarbrev', 'vilkaar')
+    )
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute(
-            "INSERT INTO mine_dokumenter "
-            "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
-            " tenant_id, is_public) "
-            "VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (filnavn, tekst, dokumenttype, embedding, kilde_url,
-             tenant_id, bool(is_public)),
-        )
+        if sa_anonymiseres_efter_24t:
+            cur.execute(
+                "INSERT INTO mine_dokumenter "
+                "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
+                " tenant_id, is_public, anonymiserings_status, "
+                " anonymiseres_efter) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, "
+                " 'aktiv', NOW() + INTERVAL '24 hours')",
+                (filnavn, tekst, dokumenttype, embedding, kilde_url,
+                 tenant_id, bool(is_public)),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO mine_dokumenter "
+                "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
+                " tenant_id, is_public) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                (filnavn, tekst, dokumenttype, embedding, kilde_url,
+                 tenant_id, bool(is_public)),
+            )
         conn.commit()
         cur.close()
         conn.close()
     except Exception as e:
         print(f"DEBUG: Kunne ikke gemme fil i databasen: {e}")
+
+
+def forlaeng_anonymiserings_vindue(filnavne, tenant_id=None):
+    """Forlæng anonymiserings-vinduet med 24 timer for de givne filer.
+
+    Kaldes når brugeren rør sagen aktivt (re-uploader, kører ny analyse).
+    Sliding-window-design — hver aktivitet nulstiller 24-timers-uret.
+
+    Public dokumenter og rækker hvor anonymiserings_status != 'aktiv'
+    røres ikke. Returnerer antal opdaterede rækker.
+    """
+    if not filnavne:
+        return 0
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("""
+            UPDATE mine_dokumenter
+            SET anonymiseres_efter = NOW() + INTERVAL '24 hours'
+            WHERE filnavn = ANY(%s)
+              AND tenant_id = %s
+              AND is_public = FALSE
+              AND anonymiserings_status = 'aktiv'
+        """, (list(filnavne), tenant_id))
+        antal = cur.rowcount
+        conn.commit()
+        cur.close()
+        conn.close()
+        return antal
+    except Exception as e:
+        print(f"DEBUG: Kunne ikke forlænge anonymiserings-vindue: {e}")
+        return 0
 
 
 def url_findes(kilde_url):
