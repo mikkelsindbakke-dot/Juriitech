@@ -130,10 +130,11 @@ st.caption(
     "(administrator)"
 )
 
-tab_tenants, tab_brugere, tab_inviter = st.tabs([
+tab_tenants, tab_brugere, tab_inviter, tab_gdpr = st.tabs([
     "Tenants (selskaber)",
     "Brugere",
     "Inviter ny bruger",
+    "GDPR audit-log",
 ])
 
 
@@ -727,3 +728,149 @@ with tab_inviter:
                     )
                 else:
                     st.error(fejl or "Oprettelse fejlede.")
+
+
+# ───────────────────────────────────────────────────────────────
+# TAB: GDPR AUDIT-LOG
+# ───────────────────────────────────────────────────────────────
+with tab_gdpr:
+    st.subheader("GDPR audit-trail")
+    st.caption(
+        "Dokumentation over alle GDPR-relevante handlinger pr. sag — "
+        "upload, analyse, anonymisering, sletning. Kan fremvises ved "
+        "kunde-revision."
+    )
+
+    from database import _connect
+
+    # ---- Sektion 1: Status-overblik ----
+    st.markdown("#### Status-overblik")
+
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT
+                anonymiserings_status,
+                COUNT(*) AS antal
+            FROM mine_dokumenter
+            WHERE is_public = FALSE
+            GROUP BY anonymiserings_status
+            ORDER BY anonymiserings_status
+        """)
+        status_data = cur.fetchall()
+
+        if status_data:
+            kolonner = st.columns(len(status_data))
+            label_map = {
+                'aktiv': '🟢 Aktive sager',
+                'anonymiseret': '🔒 Anonymiseret',
+                'pending': '⏳ Pending',
+                'public': '🌐 Public (irrelevant)',
+            }
+            for kol, (status, antal) in zip(kolonner, status_data):
+                with kol:
+                    st.metric(
+                        label_map.get(status, status),
+                        antal,
+                    )
+
+        cur.execute("""
+            SELECT COUNT(*) FROM mine_dokumenter
+            WHERE anonymiserings_status = 'aktiv'
+              AND anonymiseres_efter IS NOT NULL
+              AND anonymiseres_efter < NOW()
+        """)
+        klar_til_pipeline = cur.fetchone()[0]
+        if klar_til_pipeline > 0:
+            st.warning(
+                f"⚠️ **{klar_til_pipeline} sager** har "
+                f"anonymiseres_efter i fortiden — venter på cron-job. "
+                "Hvis cron ikke er aktiveret endnu, kan du køre "
+                "pipelinen manuelt: "
+                "`python3 -c 'from gdpr_pipeline import "
+                "trigger_auto_anonymisering; "
+                "print(trigger_auto_anonymisering())'`"
+            )
+
+        cur.execute("""
+            SELECT COUNT(*) FROM shared_patterns
+        """)
+        antal_shared = cur.fetchone()[0]
+        st.metric("📊 Mønstre i fælles cross-tenant pulje", antal_shared)
+
+        cur.close()
+    except Exception as e:
+        st.error(f"Kunne ikke hente status: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    st.divider()
+
+    # ---- Sektion 2: Seneste audit-events ----
+    st.markdown("#### Seneste audit-events")
+
+    antal_vis = st.slider(
+        "Antal events at vise", 10, 200, 50, step=10,
+    )
+
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT
+                gdpr_audit_log.tidspunkt,
+                tenants.navn AS tenant_navn,
+                gdpr_audit_log.sag_id,
+                gdpr_audit_log.handling,
+                gdpr_audit_log.metadata
+            FROM gdpr_audit_log
+            LEFT JOIN tenants ON tenants.id = gdpr_audit_log.tenant_id
+            ORDER BY gdpr_audit_log.tidspunkt DESC
+            LIMIT %s
+        """, (antal_vis,))
+        events = cur.fetchall()
+
+        if not events:
+            st.info(
+                "Ingen audit-events endnu. Pipelinen skriver til loggen "
+                "når den anonymiserer sager."
+            )
+        else:
+            handling_emoji = {
+                'upload': '📤',
+                'analyse': '🔍',
+                'anonymisering': '🔒',
+                'sletning': '🗑️',
+                'cross_tenant_share': '📊',
+                'tilbage_kald': '↩️',
+            }
+
+            for tidspunkt, tenant, sag_id, handling, metadata in events:
+                emoji = handling_emoji.get(handling, '•')
+                tid_str = (
+                    tidspunkt.strftime('%Y-%m-%d %H:%M:%S')
+                    if tidspunkt else '?'
+                )
+                with st.expander(
+                    f"{emoji} {tid_str} — {tenant or 'ukendt'} — "
+                    f"sag {sag_id} — **{handling}**",
+                    expanded=False,
+                ):
+                    if metadata:
+                        st.json(metadata)
+                    else:
+                        st.caption("(ingen metadata)")
+
+        cur.close()
+    except Exception as e:
+        st.error(f"Kunne ikke hente audit-events: {e}")
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
