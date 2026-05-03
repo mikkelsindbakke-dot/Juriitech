@@ -979,6 +979,36 @@ VIGTIGE_DOKUMENTER = [
         "filnavn_base": "DPIA-juriitech-PAX",
         "docx_titel": "Data Protection Impact Assessment",
     },
+    {
+        "id": "art30",
+        "titel": "Fortegnelse over behandlingsaktiviteter (Art. 30)",
+        "kategori": "Interne compliance-dokumenter",
+        "beskrivelse": (
+            "Lovpligtig intern fortegnelse for databehandler iht. "
+            "GDPR art. 30(2). Skal kunne fremvises ved tilsyn eller "
+            "kunde-audit. Opdateres ved nye kunder eller ændringer "
+            "i underdatabehandlere."
+        ),
+        "filsti": DOCS_ROOT / "docs" / "legal"
+        / "Fortegnelse-Art30-juriitech.md",
+        "filnavn_base": "Fortegnelse-behandlingsaktiviteter-juriitech",
+        "docx_titel": "Fortegnelse over behandlingsaktiviteter",
+    },
+    {
+        "id": "rettigheder",
+        "titel": "Procedure for de registreredes rettigheder",
+        "kategori": "Interne compliance-dokumenter",
+        "beskrivelse": (
+            "Intern procedure for hvordan juriitech som databehandler "
+            "håndterer anmodninger fra registrerede (indsigt, sletning, "
+            "berigtigelse mv.) der videreformidles fra den dataansvarlige. "
+            "Implementerer DPA pkt. 10 og GDPR art. 28(3)(e)."
+        ),
+        "filsti": DOCS_ROOT / "docs" / "legal"
+        / "Procedure-Registreredes-Rettigheder.md",
+        "filnavn_base": "Procedure-Registreredes-Rettigheder-juriitech",
+        "docx_titel": "Procedure for de registreredes rettigheder",
+    },
 ]
 
 
