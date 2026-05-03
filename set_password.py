@@ -28,6 +28,43 @@ import streamlit as st
 import auth
 
 
+# De 30 mest almindelige svage adgangskoder. Ren blacklist — bruges kun
+# ved oprettelse for at afvise åbenlyst usikre kombinationer.
+_SVAGE_PASSWORDS = {
+    "12345678", "123456789", "1234567890", "qwerty12", "qwertyui",
+    "qwerty123", "password", "password1", "password12", "password123",
+    "passw0rd", "passw0rd1", "abc12345", "abcd1234", "letmein1",
+    "welcome1", "welcome12", "welcome123", "admin123", "admin1234",
+    "test1234", "test12345", "iloveyou1", "monkey123", "dragon123",
+    "master123", "shadow123", "sunshine1", "princess1", "football1",
+}
+
+
+def _valider_password_styrke(pw):
+    """
+    Returnerer (ok: bool, fejlmeddelelse: str | None).
+    Mindste-krav til styrke: 8 tegn + både bogstav og tal + ikke i
+    blacklist over almindelige svage adgangskoder.
+    """
+    if len(pw) < 8:
+        return False, (
+            "Adgangskoden skal være mindst 8 tegn. Vælg gerne en længere "
+            "kode for ekstra sikkerhed."
+        )
+    if pw.lower() in _SVAGE_PASSWORDS:
+        return False, (
+            "Den adgangskode er på listen over almindelige svage "
+            "adgangskoder. Vælg en mere unik kombination."
+        )
+    har_bogstav = any(c.isalpha() for c in pw)
+    har_tal = any(c.isdigit() for c in pw)
+    if not (har_bogstav and har_tal):
+        return False, (
+            "Adgangskoden skal indeholde både bogstaver og tal."
+        )
+    return True, None
+
+
 def render():
     """Render set-password siden. Kaldes fra app.py."""
     qp = st.query_params
@@ -103,12 +140,9 @@ def render():
                     "adgangskode i begge felter."
                 )
                 return
-            if len(pw1) < 8:
-                st.error(
-                    "Adgangskoden skal være mindst 8 tegn. Vælg gerne "
-                    "en længere kode med blanding af bogstaver, tal og "
-                    "symboler for ekstra sikkerhed."
-                )
+            ok_styrke, styrke_fejl = _valider_password_styrke(pw1)
+            if not ok_styrke:
+                st.error(styrke_fejl)
                 return
 
             # Forsøg at sætte password via Supabase

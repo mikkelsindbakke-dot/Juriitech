@@ -389,19 +389,17 @@ Den Dataansvarlige er ansvarlig for, at behandlingsgrundlaget i medfør af GDPR 
 
 Den Dataansvarlige godkender ved Aftalens indgåelse Databehandlerens brug af følgende underdatabehandlere. Listen er udtømmende på datoen for Aftalens indgåelse og opdateres i overensstemmelse med Aftalens punkt 8.
 
-| Nr. | Underdatabehandler | Kategori af behandling | Behandlingslokation | Overførselsgrundlag |
-| --- | ------------------ | ---------------------- | ------------------- | ------------------- |
-| 1 | [Indsæt navn] | AI-baseret sprogmodel-behandling (tekst-analyse og -generering) | USA | EU-US Data Privacy Framework / SCC + TIA |
-| 2 | [Indsæt navn] | Vektorisering og semantisk søgning | USA | EU-US Data Privacy Framework / SCC + TIA |
-| 3 | [Indsæt navn] | Krypteret database og brugerautentificering | EU (Irland) | Inden for EØS — intet tredjelandsovergang |
-| 4 | [Indsæt navn] | Applikations-hosting og kørselsmiljø | EU (Tyskland) | Inden for EØS — intet tredjelandsovergang |
-| 5 | [Indsæt navn] | Fejlovervågning og driftsstabilitet | EU (Tyskland) | Inden for EØS — intet tredjelandsovergang |
+| Nr. | Underdatabehandler | Behandlingens karakter | Selskabsdomicil | Behandlingsregion | Overførselsgrundlag |
+| --- | ------------------ | ---------------------- | --------------- | ----------------- | ------------------- |
+| 1 | Anthropic, PBC | AI-baseret sprogmodel-behandling (tekst-analyse og generering) | USA | USA | EU-US Data Privacy Framework og/eller EU-Kommissionens standardkontraktbestemmelser (SCC) |
+| 2 | Voyage AI, Inc. | Vektor-embedding og semantisk søgning | USA | USA | SCC |
+| 3 | Supabase, Inc. | Krypteret databaseopbevaring og brugerautentificering | USA | EU (Irland) | SCC |
+| 4 | Fly.io, Inc. | Applikations-hosting og kørselsmiljø | USA | EU (Tyskland) | SCC |
+| 5 | Functional Software, Inc. (Sentry) | Fejl- og driftsovervågning | USA | EU (Tyskland) | SCC |
 
-For hver underdatabehandler har Databehandleren indgået en databehandleraftale, der pålægger underdatabehandleren databeskyttelsesforpligtelser svarende til dem, der er fastsat i Aftalens punkt 5–13.
+For hver underdatabehandler har Databehandleren indgået en databehandleraftale, der pålægger underdatabehandleren databeskyttelsesforpligtelser svarende til dem, der er fastsat i Aftalens punkt 5–13. Underdatabehandlerne har bekræftet, at personoplysninger overladt af Databehandleren ikke anvendes til træning af AI-modeller eller andre formål uden for levering af deres tjeneste til Databehandleren.
 
-På anmodning fremsendes dokumentation for hver underdatabehandlers DPA og overførselsgrundlag til den Dataansvarlige.
-
-**Note til skabelonen:** Konkrete underdatabehandler-navne udfyldes pr. kunde. Det anbefales, at Databehandleren har en udvendig liste, der opdateres løbende, og hvis aktuelle version henvises til via URL i Bilag B.
+Den aktuelle liste over underdatabehandlere kan til enhver tid rekvireres ved henvendelse til Databehandleren, jf. Bilag D, punkt D.4. Ændringer til listen sker i overensstemmelse med Aftalens punkt 8.
 
 ---
 ---
@@ -410,11 +408,11 @@ På anmodning fremsendes dokumentation for hver underdatabehandlers DPA og overf
 
 ## C.1 Adgangskontrol
 
-- Alle brugere autentificeres med e-mail og adgangskode med et minimumskrav til styrke.
+- Alle brugere autentificeres med e-mail og adgangskode på minimum 8 tegn, og adgangskoder valideres ved oprettelse for at undgå svage og let-gættelige kombinationer.
 - Adgang til den Dataansvarliges data er begrænset til brugere, som den Dataansvarliges udpegede administrator har tildelt adgang.
-- Logisk isolation sikrer, at brugere fra én kunde ikke har adgang til en anden kundes data — håndhævet i flere uafhængige kontrollag.
+- Logisk isolation sikrer, at brugere fra én kunde ikke har adgang til en anden kundes data. Isolation håndhæves systematisk via tenant-baseret filtrering på alle datalagsforespørgsler og verificeres via automatiserede tests.
 - Administrative handlinger (oprettelse, sletning af brugere) er begrænset til brugere med eksplicit administrator-rolle.
-- Administrativ adgang til underliggende systemer (database, applikations-runtime) er begrænset til Databehandlerens autoriserede personale og kræver multi-faktor autentificering.
+- Administrativ adgang til underliggende systemer (database, applikations-runtime, fejlovervågning) er begrænset til Databehandlerens autoriserede personale og er beskyttet med multi-faktor autentificering på alle leverandør-platforme, der understøtter dette.
 
 ## C.2 Kryptering
 
@@ -426,9 +424,10 @@ På anmodning fremsendes dokumentation for hver underdatabehandlers DPA og overf
 ## C.3 Logisk isolation af kundedata
 
 - Hver kundes data er tagget med en unik kunde-identifikator på alle private data-rækker.
-- Adgangskontrol håndhæves på flere kontrollag for at sikre, at en programmatisk fejl ikke kan eksponere data på tværs af kunder.
+- Tenant-baseret filtrering håndhæves systematisk i alle datalagsforespørgsler og verificeres løbende via automatiserede tests.
+- Database-niveau Row-Level Security er konfigureret som ekstra forsvarslag.
 - Offentligt tilgængelige data (fx anonymiserede afgørelser fra Pakkerejse-Ankenævnet, lovgivning) er klart adskilt fra kundespecifikke data.
-- Anonymiserede afledte data, der måtte deles på tværs af kunder, er underlagt k-anonymitet (k ≥ 5) og kan ikke spores tilbage til en konkret kunde eller registreret.
+- Anonymiserede afledte data, der måtte deles på tværs af kunder, er underlagt k-anonymitet (k ≥ 5) og kan ikke spores tilbage til en konkret kunde eller registreret. K-anonymitetsgrænsen er håndhævet både i applikations-laget og som CHECK-constraint på databaseniveau.
 
 ## C.4 Automatiseret anonymisering og sletning
 
@@ -440,15 +439,15 @@ På anmodning fremsendes dokumentation for hver underdatabehandlers DPA og overf
 
 ## C.5 Logning og overvågning
 
-- Alle GDPR-relevante handlinger (sagsoverladelse, anonymisering, sletning, eksport) logges med tidspunkt og brugeridentifikation.
-- Logfiler opbevares i mindst 12 måneder og er beskyttet mod uautoriseret ændring.
-- Driften overvåges 24/7 via fejlovervågnings-tjeneste i EU. Alle alarmer behandles af Databehandlerens autoriserede personale.
+- Alle GDPR-relevante handlinger (sagsoverladelse, anonymisering, sletning, eksport) logges med tidspunkt, sag-id og tenant-id. Audit-loggen er beskyttet mod uautoriseret ændring og opbevares i mindst 12 måneder.
+- Driftslogs (applikations- og fejlovervågning) opbevares i overensstemmelse med leverandørens standardpolitik og indeholder ikke selve klagedokumenters indhold.
+- Tjenesten er løbende overvåget af et fejlovervågnings-system med automatiske alarmer ved utilsigtede hændelser. Alarmer modtages af Databehandlerens autoriserede personale på et personligt monitoreret kontaktpunkt.
 
 ## C.6 Backup og driftsstabilitet
 
-- Daglige automatiske backups af produktionsdatabasen.
-- Backup-data opbevares i samme region som primær drift (EU).
-- Genoprettelses-test gennemføres mindst halvårligt for at sikre, at backup-data kan genskabes.
+- Produktionsdatabasen er omfattet af leverandørens automatiserede backup-tjeneste, der inkluderer point-in-time recovery.
+- Backup-data opbevares i samme geografiske region som primær drift (EU/EØS).
+- Procedurer for backup og genoprettelse afprøves periodisk for at sikre, at backup-data kan genskabes inden for rimelig tid.
 - Tjenesten har en tilsigtet oppe-tid på 99 % på månedsbasis.
 
 ## C.7 Dataresidency
@@ -459,16 +458,16 @@ På anmodning fremsendes dokumentation for hver underdatabehandlers DPA og overf
 
 ## C.8 Sikker softwareudvikling
 
-- Ændringer til kodebasen gennemgår peer-review før idriftsættelse.
-- Kritiske afhængigheder opdateres rutinemæssigt for at adressere kendte sårbarheder.
-- Adgang til produktionssystemer er begrænset, logges og kræver multi-faktor autentificering.
-- Hemmeligheder lagres aldrig i versionsstyrings-systemer.
+- Ændringer til kodebasen gennemgår systematisk gennemgang og automatiseret testning før idriftsættelse i produktion.
+- Kritiske afhængigheder overvåges løbende og opdateres rutinemæssigt for at adressere kendte sårbarheder.
+- Adgang til produktionssystemer (kodelager, hosting-platform, database) er begrænset, logges via leverandørernes standard-mekanismer, og er beskyttet med multi-faktor autentificering på alle leverandør-platforme, der understøtter dette.
+- Hemmeligheder, API-nøgler og adgangstokens lagres aldrig i versionsstyrings-systemer og opbevares i krypterede secret-stores hos hosting- og database-leverandøren.
 
 ## C.9 Personale
 
-- Medarbejdere og kontraktansatte med adgang til personoplysninger er underlagt skriftlig fortrolighedsforpligtelse.
-- Medarbejdere modtager løbende instruktion i databeskyttelse og sikkerhedsbevidsthed.
-- Adgangsrettigheder gennemgås mindst halvårligt og fjernes straks ved ophør af ansættelses- eller samarbejdsforhold.
+- Personer med adgang til personoplysninger på Databehandlerens vegne — herunder Databehandlerens indehaver, eventuelle medarbejdere og kontraktansatte — er underlagt skriftlig eller lovbestemt tavshedspligt.
+- Personer med adgang til personoplysninger er bekendt med Databehandlerens databeskyttelsesforpligtelser og holder sig løbende ajour med relevante regler og praksis.
+- Adgangsrettigheder gennemgås periodisk og fjernes straks ved ophør af ansættelses- eller samarbejdsforhold.
 
 ## C.10 Håndtering af brud på persondatasikkerheden
 
