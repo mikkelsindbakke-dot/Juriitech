@@ -365,22 +365,34 @@ def anonymiser_sag(sag_id, tenant_id):
         """, (anonym_tekst, ny_embedding, dok_id))
 
         # 5. Slet originale chunks for dokumentet, opret nye fra
-        # anonymiseret tekst
+        # anonymiseret tekst (tabellen hedder dokument_chunks med
+        # kolonnerne dokument_id, chunk_index, overskrift, indhold, embedding)
         cur.execute(
-            "DELETE FROM chunks WHERE dokument_id = %s", (dok_id,))
+            "DELETE FROM dokument_chunks WHERE dokument_id = %s",
+            (dok_id,))
 
         try:
             from embeddings import chunk_tekst, embed_batch
-            nye_chunks_tekst = chunk_tekst(anonym_tekst)
-            if nye_chunks_tekst:
-                nye_embeddings = embed_batch(nye_chunks_tekst)
-                for idx, (chunk_text, emb) in enumerate(
-                        zip(nye_chunks_tekst, nye_embeddings)):
+            # chunk_tekst returnerer liste af dicts:
+            # [{"overskrift": str, "indhold": str, "chunk_index": int}, ...]
+            nye_chunks = chunk_tekst(anonym_tekst)
+            if nye_chunks:
+                # embed_batch tager liste af strings — ekstraher 'indhold'
+                tekst_strings = [c.get("indhold", "") for c in nye_chunks]
+                nye_embeddings = embed_batch(tekst_strings)
+                for chunk_dict, emb in zip(nye_chunks, nye_embeddings):
                     cur.execute("""
-                        INSERT INTO chunks
-                        (dokument_id, chunk_index, chunk_tekst, embedding)
-                        VALUES (%s, %s, %s, %s::vector)
-                    """, (dok_id, idx, chunk_text, emb))
+                        INSERT INTO dokument_chunks
+                        (dokument_id, chunk_index, overskrift, indhold,
+                         embedding)
+                        VALUES (%s, %s, %s, %s, %s::vector)
+                    """, (
+                        dok_id,
+                        chunk_dict.get("chunk_index", 0),
+                        chunk_dict.get("overskrift", "") or "",
+                        chunk_dict.get("indhold", ""),
+                        emb,
+                    ))
         except Exception as e:
             # Chunk-genereringsfejl er ikke fatalt for anonymisering —
             # men log det. Hovedindholdet er allerede anonymiseret.
