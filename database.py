@@ -13,6 +13,11 @@ def _connect():
     Opretter en forbindelse til Supabase Postgres og registrerer
     pgvector-typen, så Python kan sende/modtage vector-kolonner som
     almindelige lister.
+
+    Sætter også app.current_tenant_id session-variable så Postgres
+    Row-Level Security (Fase 2) kan filtrere rækker per tenant uden
+    at app-koden skal huske WHERE-clauses. Hvis RLS ikke er aktiveret
+    i DB endnu, har dette ingen effekt — det er fremtidssikret.
     """
     conn = psycopg2.connect(DB_URL)
     try:
@@ -22,6 +27,25 @@ def _connect():
         # fejler register_vector. Vi ignorerer det — opret_tabeller() vil
         # aktivere extensionen, og næste forbindelse registrerer fint.
         pass
+
+    # Sæt app.current_tenant_id for RLS-policies. Bruger lazy
+    # tenant-lookup: i Streamlit-kontekst læses fra session_state,
+    # i script-kontekst returneres TUI's id (fallback). Hvis det
+    # fejler (fx før hent_aktiv_tenant_id-funktionen er importeret
+    # ved meget tidlig boot), skipper vi — RLS vil så blokere
+    # private rækker, hvilket er den sikre default.
+    try:
+        tid = hent_aktiv_tenant_id()
+        cur = conn.cursor()
+        if tid is not None:
+            cur.execute("SET app.current_tenant_id = %s", (str(tid),))
+        else:
+            cur.execute("SET app.current_tenant_id = ''")
+        cur.close()
+    except Exception as e:
+        # Stille fallback — vi vil ikke blokere boot pga. session-variable
+        print(f"DEBUG: kunne ikke sætte app.current_tenant_id: {e}")
+
     return conn
 
 
