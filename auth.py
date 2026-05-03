@@ -684,11 +684,45 @@ def admin_delete_user(user_id):
 # UI-KOMPONENTER
 # ───────────────────────────────────────────────────────────────
 
+def _inject_auth_chrome_css():
+    """
+    Skjuler Streamlits default chrome (sidebar + header) under login-
+    og set-password-rendering, og sætter juriitech-baggrund. Forhindrer
+    "tomt grå sidebar / mørk header"-flash når brugeren bliver kastet
+    tilbage til login fordi sessionen er udløbet (samme mønster som
+    SSO-overlay'et i app.py).
+    """
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"],
+        [data-testid="stSidebarCollapsedControl"],
+        [data-testid="stHeader"] {
+            display: none !important;
+        }
+        [data-testid="stAppViewContainer"] {
+            background: #FAF8F4 !important;
+        }
+        [data-testid="stAppViewContainer"] > .main,
+        section.main {
+            background: #FAF8F4 !important;
+        }
+        html, body, [class*="css"] {
+            font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont,
+                         'Segoe UI', sans-serif !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def render_login_page():
     """
     Renderer login-siden. Bruges som gate i app.py når brugeren
     ikke er logget ind.
     """
+    _inject_auth_chrome_css()
     # Centeret card-layout
     _, midt, _ = st.columns([1, 2, 1])
     with midt:

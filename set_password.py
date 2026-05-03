@@ -45,6 +45,7 @@ def render():
         st.error(f"Ukendt link-type: '{type_param}'. Kontakt support.")
         return
 
+    auth._inject_auth_chrome_css()
     # Centeret card-layout (samme stil som login-side)
     _, midt, _ = st.columns([1, 2, 1])
     with midt:
