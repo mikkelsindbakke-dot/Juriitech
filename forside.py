@@ -1614,6 +1614,15 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
                 f"{len(sprunget_over)} filer findes allerede i "
                 "vidensbanken — alle filer indgår dog i analysen."
             )
+        # GDPR sliding-window: når brugeren re-uploader filer der
+        # allerede findes i DB, forlæng deres anonymiseringsvindue.
+        # Forhindrer at en sag i aktiv genbrug bliver anonymiseret.
+        if sprunget_over:
+            try:
+                from database import forlaeng_anonymiserings_vindue as _forlaeng
+                _forlaeng(sprunget_over)
+            except Exception as _e:
+                print(f"DEBUG: forlaeng (re-upload) fejlede: {_e}")
 
     # Force rerun straks efter scan så hero-sektionen forsvinder og UI'et
     # skifter rent over i active state — uden den "transitions-flicker"
@@ -2073,6 +2082,22 @@ if st.session_state.get("aktuel_sag"):
                         "— enten som eget afsnit eller integreret i den "
                         "juridiske vurdering. Brug konkrete datoer.\n\n"
                     )
+
+                # GDPR sliding-window: forlæng anonymiseringsvinduet
+                # med 24 timer fordi sagen er i aktiv brug. Sikrer at
+                # sagen ikke bliver anonymiseret midt i en analyse.
+                # Safety-cap på 30 dage fra første upload.
+                try:
+                    from database import forlaeng_anonymiserings_vindue as _forlaeng
+                    _filnavne = [
+                        f.get("filnavn")
+                        for f in (st.session_state.aktuel_sag or {}).get("filer") or []
+                        if f.get("filnavn")
+                    ]
+                    if _filnavne:
+                        _forlaeng(_filnavne)
+                except Exception as _e:
+                    print(f"DEBUG: forlaeng (analyse) fejlede: {_e}")
 
                 # ---------- JSON-STRUKTURERET FØRSTEVURDERING ----------
                 # Bruger Anthropics tool-use til at TVINGE AI'en til at
@@ -4117,6 +4142,20 @@ if st.session_state.get("aktuel_sag"):
                 "Sikrer at klagerens navn er fuldt anonymiseret...",
             ],
         ):
+            # GDPR sliding-window: brugeren genererer svarbrev = aktiv
+            # brug. Forlæng anonymiseringsvinduet med 24 timer.
+            try:
+                from database import forlaeng_anonymiserings_vindue as _forlaeng
+                _filnavne = [
+                    f.get("filnavn")
+                    for f in (st.session_state.aktuel_sag or {}).get("filer") or []
+                    if f.get("filnavn")
+                ]
+                if _filnavne:
+                    _forlaeng(_filnavne)
+            except Exception as _e:
+                print(f"DEBUG: forlaeng (svarbrev) fejlede: {_e}")
+
             try:
                 # Genbrug både klagepunkter-liste og tidsforhold fra
                 # førstevurderingen hvis de findes — sparer to AI-kald

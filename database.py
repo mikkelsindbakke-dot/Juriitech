@@ -1054,6 +1054,11 @@ def forlaeng_anonymiserings_vindue(filnavne, tenant_id=None):
     Kaldes når brugeren rør sagen aktivt (re-uploader, kører ny analyse).
     Sliding-window-design — hver aktivitet nulstiller 24-timers-uret.
 
+    Safety-cap: maksimalt 30 dage fra oprettet_dato. Det betyder en sag
+    altid bliver anonymiseret senest 30 dage efter første upload, selv
+    hvis brugeren bliver ved med at rør den. Forhindrer misbrug hvor
+    sager holdes "varme" evigt for at undgå anonymisering.
+
     Public dokumenter og rækker hvor anonymiserings_status != 'aktiv'
     røres ikke. Returnerer antal opdaterede rækker.
     """
@@ -1064,9 +1069,17 @@ def forlaeng_anonymiserings_vindue(filnavne, tenant_id=None):
     try:
         conn = _connect()
         cur = conn.cursor()
+        # LEAST() vælger den tidligste af (NOW() + 24h) og
+        # (oprettet_dato + 30 dage). Det betyder:
+        # - Normal sag: forlænges til 24h fra nu
+        # - Sag der er >29 dage gammel: anonymiseres senest 30 dage
+        #   efter upload, uanset videre aktivitet
         cur.execute("""
             UPDATE mine_dokumenter
-            SET anonymiseres_efter = NOW() + INTERVAL '24 hours'
+            SET anonymiseres_efter = LEAST(
+                NOW() + INTERVAL '24 hours',
+                oprettet_dato + INTERVAL '30 days'
+            )
             WHERE filnavn = ANY(%s)
               AND tenant_id = %s
               AND is_public = FALSE
