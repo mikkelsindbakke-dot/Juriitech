@@ -242,6 +242,11 @@ def login_with_password(email, password):
             "access_token": getattr(sup_session, "access_token", None),
             "refresh_token": getattr(sup_session, "refresh_token", None),
         }
+        # Persistér refresh_token i browser-localStorage så auto-restore
+        # virker efter WebSocket-reconnect / Fly-suspend
+        _inject_save_refresh_token(
+            getattr(sup_session, "refresh_token", None)
+        )
     return True, None
 
 
@@ -296,6 +301,18 @@ def try_sso_login():
         "fulde_navn": db_user["fulde_navn"] or "",
     }
 
+    # Refresh-flowet returnerer ny session med nyt refresh_token —
+    # gem det i session_state OG i browser-localStorage så næste
+    # auto-restore har et frisk token (det gamle er typisk forbrugt)
+    sup_session = result.session if hasattr(result, "session") else None
+    if sup_session:
+        nyt_refresh = getattr(sup_session, "refresh_token", None)
+        st.session_state.supabase_session = {
+            "access_token": getattr(sup_session, "access_token", None),
+            "refresh_token": nyt_refresh,
+        }
+        _inject_save_refresh_token(nyt_refresh)
+
     # Fjern token fra URL af sikkerhedshensyn (browser-historik) + ren UX
     st.query_params.clear()
     return True
@@ -330,6 +347,103 @@ def logout():
     for key in ("user", "supabase_session"):
         if key in st.session_state:
             del st.session_state[key]
+    # Ryd browser-localStorage så auto-restore ikke prøver at logge
+    # brugeren ind igen
+    _inject_clear_persisted_token()
+
+
+# ───────────────────────────────────────────────────────────────
+# AUTH-PERSISTENCE VIA BROWSER LOCALSTORAGE
+# ───────────────────────────────────────────────────────────────
+# Streamlit's session_state er bundet til WebSocket-forbindelsen og
+# kan gå tabt ved reconnect (Fly-suspend, lang AI-analyse, server-
+# restart). Resultat: brugeren bliver kastet tilbage til login og
+# mister sin aktuelle sag.
+#
+# Fix: gem Supabase-refresh-tokenet i browser-localStorage på login.
+# Når login-siden render'es uden session_state.user (typisk
+# uventet efter reconnect), prøver vi automatisk at genoprette
+# sessionen via samme mekanisme som juriitech.com SSO bruger
+# (try_sso_login + ?sso_token=... query-param).
+
+_LOCALSTORAGE_KEY = "juriitech_pax_refresh_token"
+_RESTORE_FLAG = "juriitech_pax_restore_tried"
+
+
+def _inject_save_refresh_token(refresh_token):
+    """
+    Gem refresh_token i browser-localStorage så auto-restore kan bruge
+    det ved næste reconnect. Kaldes efter succesfuldt login.
+    """
+    if not refresh_token:
+        return
+    from streamlit.components.v1 import html as _components_html
+    # Bruger json.dumps til at undgå JS-injection via tokenet
+    import json as _json
+    token_js = _json.dumps(refresh_token)
+    js = f"""
+    <script>
+    try {{
+        window.parent.localStorage.setItem(
+            {_json.dumps(_LOCALSTORAGE_KEY)}, {token_js}
+        );
+        window.parent.sessionStorage.removeItem(
+            {_json.dumps(_RESTORE_FLAG)}
+        );
+    }} catch (e) {{ console.warn("Could not persist token:", e); }}
+    </script>
+    """
+    _components_html(js, height=0)
+
+
+def _inject_clear_persisted_token():
+    """Ryd localStorage + sessionStorage. Kaldes ved logout."""
+    from streamlit.components.v1 import html as _components_html
+    import json as _json
+    js = f"""
+    <script>
+    try {{
+        window.parent.localStorage.removeItem(
+            {_json.dumps(_LOCALSTORAGE_KEY)}
+        );
+        window.parent.sessionStorage.removeItem(
+            {_json.dumps(_RESTORE_FLAG)}
+        );
+    }} catch (e) {{}}
+    </script>
+    """
+    _components_html(js, height=0)
+
+
+def _inject_attempt_auto_restore():
+    """
+    Render'es på login-siden. Hvis localStorage har et gyldigt
+    refresh_token, redirect'er vi browseren til samme URL med
+    ?sso_token=... — det udløser try_sso_login() ved næste rerun.
+
+    sessionStorage-flag forhindrer infinite-loop hvis tokenet er
+    udløbet (én forsøg pr. browser-tab pr. session).
+    """
+    from streamlit.components.v1 import html as _components_html
+    import json as _json
+    js = f"""
+    <script>
+    (function() {{
+        try {{
+            var ls = window.parent.localStorage;
+            var ss = window.parent.sessionStorage;
+            if (ss.getItem({_json.dumps(_RESTORE_FLAG)}) === "1") return;
+            var token = ls.getItem({_json.dumps(_LOCALSTORAGE_KEY)});
+            if (!token) return;
+            ss.setItem({_json.dumps(_RESTORE_FLAG)}, "1");
+            var url = new URL(window.parent.location.href);
+            url.searchParams.set("sso_token", token);
+            window.parent.location.href = url.toString();
+        }} catch (e) {{ console.warn("Auto-restore fejlede:", e); }}
+    }})();
+    </script>
+    """
+    _components_html(js, height=0)
 
 
 # ───────────────────────────────────────────────────────────────
@@ -723,6 +837,12 @@ def render_login_page():
     ikke er logget ind.
     """
     _inject_auth_chrome_css()
+    # Forsøg automatisk genoprettelse af session via localStorage —
+    # virker når brugeren er blevet kastet tilbage til login pga. en
+    # WebSocket-reconnect, men har et gyldigt refresh_token gemt.
+    # Hvis JS finder et token, redirect'er den til ?sso_token=...
+    # som try_sso_login() i app.py opfanger.
+    _inject_attempt_auto_restore()
     # Centeret card-layout
     _, midt, _ = st.columns([1, 2, 1])
     with midt:

@@ -225,5 +225,10 @@ def _verify_and_set_password(token_hash, type_param, new_password):
             "access_token": getattr(sup_session, "access_token", None),
             "refresh_token": getattr(sup_session, "refresh_token", None),
         }
+        # Persistér til localStorage så auto-restore virker
+        # efter WebSocket-reconnect / Fly-suspend
+        auth._inject_save_refresh_token(
+            getattr(sup_session, "refresh_token", None)
+        )
 
     return True, None
