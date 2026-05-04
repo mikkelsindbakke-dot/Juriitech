@@ -1113,6 +1113,92 @@ if "aktuel_sag" not in st.session_state:
     st.session_state.aktuel_sag = None
 if "sidste_sagsfil_signatur" not in st.session_state:
     st.session_state.sidste_sagsfil_signatur = None
+
+
+def _persist_aktuel_sag_til_db():
+    """
+    Gemmer aktuel sags filnavne på brugerens users-row, så den kan
+    genoprettes hvis Streamlit-session nulstilles. Kaldes efter hver
+    mutation af aktuel_sag (scan, tilføj, ryd).
+    """
+    try:
+        from auth import current_user
+        from database import gem_aktiv_sag_state
+        u = current_user()
+        if not u or not u.get("id"):
+            return
+        sag = st.session_state.get("aktuel_sag")
+        filnavne = []
+        if sag:
+            filnavne = [
+                f.get("filnavn") for f in (sag.get("filer") or [])
+                if f.get("filnavn")
+            ]
+        gem_aktiv_sag_state(u["id"], filnavne or None)
+    except Exception as _e:
+        print(f"DEBUG: persist aktuel_sag fejlede: {_e}")
+
+
+def _genopret_aktuel_sag_fra_db():
+    """
+    Hvis session_state.aktuel_sag er tom OG brugeren har en gemt
+    aktiv-sag-pointer, så hent filnavnene fra DB og rekonstruér
+    aktuel_sag. Returnerer True hvis genoprettelse skete.
+
+    Note: PDF/billede-bytes kan ikke gendannes (de gemmes ikke i DB),
+    så scannede dokumenter får placeholder-tekst. Bruger kan re-uploade
+    hvis vision-baseret analyse er nødvendig.
+    """
+    if st.session_state.get("aktuel_sag"):
+        return False
+    try:
+        from auth import current_user
+        from database import (
+            hent_aktiv_sag_state,
+            hent_dokumenter_by_filnavne,
+        )
+        u = current_user()
+        if not u or not u.get("id"):
+            return False
+        filnavne = hent_aktiv_sag_state(u["id"])
+        if not filnavne:
+            return False
+        rows = hent_dokumenter_by_filnavne(filnavne, u.get("tenant_id"))
+        if not rows:
+            return False
+        # Rekonstruér aktuel_sag.filer i samme rækkefølge som gemt
+        navn_til_row = {r["filnavn"]: r for r in rows}
+        rekonstruerede_filer = []
+        for fn in filnavne:
+            r = navn_til_row.get(fn)
+            if not r:
+                continue
+            indhold = r["indhold"] or ""
+            er_scannet = indhold.startswith("[Scannet sagsbilag")
+            rekonstruerede_filer.append({
+                "filnavn": fn,
+                "type": "pdf_bytes" if er_scannet else "tekst",
+                "tekst": "" if er_scannet else indhold,
+                "bytes": None if er_scannet else None,
+                "rolle": "ukendt",
+                "_genoprettet_fra_db": True,
+            })
+        if not rekonstruerede_filer:
+            return False
+        st.session_state.aktuel_sag = {"filer": rekonstruerede_filer}
+        st.session_state.sidste_sagsfil_signatur = tuple(sorted(
+            (f["filnavn"], len(f.get("tekst") or ""))
+            for f in rekonstruerede_filer
+        ))
+        return True
+    except Exception as _e:
+        print(f"DEBUG: genopret aktuel_sag fejlede: {_e}")
+        return False
+
+
+# Forsøg at genoprette aktuel_sag fra DB hvis session_state er tom
+# (sker efter Streamlit-reconnect / Fly-suspend / OOM-restart)
+_genopret_aktuel_sag_fra_db()
 # Legacy state — bevares for bagudkompatibilitet hvis nogen bruger gammel flow
 if "aktuel_klage" not in st.session_state:
     st.session_state.aktuel_klage = None
@@ -1199,6 +1285,15 @@ def _udfor_rydning_af_sag():
     """
     st.session_state.aktuel_sag = None
     st.session_state.sidste_sagsfil_signatur = None
+    # Ryd aktiv-sag-pointer i DB så genoprettelse ikke kommer tilbage
+    try:
+        from auth import current_user
+        from database import ryd_aktiv_sag_state
+        u = current_user()
+        if u and u.get("id"):
+            ryd_aktiv_sag_state(u["id"])
+    except Exception as _e:
+        print(f"DEBUG: ryd aktiv_sag_state fejlede: {_e}")
     st.session_state.sagsakter = ""
     st.session_state.sagsakter_filer = []
     st.session_state.sagsakter_signatur = None
@@ -1575,6 +1670,8 @@ def _tilfoej_nye_filer_til_sag(nye_filer):
 
         st.toast(f"{len(nye_dicts)} nye filer tilføjet til sagen.")
 
+    # Persistér til DB så aktuel_sag overlever Streamlit-reconnect
+    _persist_aktuel_sag_til_db()
     st.rerun()
 
 
@@ -1646,6 +1743,9 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
                 _forlaeng(sprunget_over)
             except Exception as _e:
                 print(f"DEBUG: forlaeng (re-upload) fejlede: {_e}")
+
+    # Persistér til DB så aktuel_sag overlever Streamlit-reconnect
+    _persist_aktuel_sag_til_db()
 
     # Force rerun straks efter scan så hero-sektionen forsvinder og UI'et
     # skifter rent over i active state — uden den "transitions-flicker"

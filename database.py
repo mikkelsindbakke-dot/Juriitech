@@ -253,6 +253,18 @@ def opret_tabeller():
             ON users (tenant_id)
         """)
 
+        # Aktiv-sag-pointer: gemmer filnavne på den sag brugeren arbejder
+        # på lige nu, så vi kan genoprette den hvis Streamlit-session
+        # nulstilles (Fly-suspend, OOM, WebSocket-reconnect).
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS aktiv_sag_filnavne TEXT[]
+        """)
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS aktiv_sag_opdateret TIMESTAMPTZ
+        """)
+
         # 10. tenant_id + is_public på eksisterende tabeller
         # mine_dokumenter: tenant_id kan være NULL for offentlige dokumenter
         # (Ankenævn-afgørelser, lovgivning). is_public=TRUE gør dokumentet
@@ -858,6 +870,107 @@ def tael_admins():
         # Defensiv default: returnér 2 så last-admin-spærren ikke
         # blokerer ved transient DB-fejl
         return 2
+
+
+def gem_aktiv_sag_state(user_id, filnavne):
+    """
+    Gem listen af filnavne der udgør brugerens aktive sag. Bruges til
+    at genoprette aktuel_sag når Streamlit-session nulstilles
+    (Fly-suspend, OOM, WebSocket-reconnect).
+
+    filnavne: liste af strenge. Tom liste eller None rydder pointer.
+    """
+    if not user_id:
+        return
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        if filnavne:
+            cur.execute(
+                "UPDATE users SET aktiv_sag_filnavne = %s, "
+                "aktiv_sag_opdateret = NOW() WHERE id = %s",
+                (list(filnavne), int(user_id)),
+            )
+        else:
+            cur.execute(
+                "UPDATE users SET aktiv_sag_filnavne = NULL, "
+                "aktiv_sag_opdateret = NULL WHERE id = %s",
+                (int(user_id),),
+            )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        print(f"DEBUG: gem_aktiv_sag_state fejlede: {e}")
+
+
+def hent_aktiv_sag_state(user_id, max_alder_timer=24):
+    """
+    Returnerer liste af filnavne hvis brugeren har en aktiv sag der er
+    yngre end max_alder_timer. Ellers None.
+    """
+    if not user_id:
+        return None
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        # Bruger f-string for INTERVAL fordi psycopg2 ikke kan parametrisere
+        # interval-strenge — men casted til int først for at undgå injection
+        max_t = int(max_alder_timer)
+        cur.execute(
+            "SELECT aktiv_sag_filnavne, aktiv_sag_opdateret FROM users "
+            "WHERE id = %s "
+            "AND aktiv_sag_filnavne IS NOT NULL "
+            f"AND aktiv_sag_opdateret > NOW() - INTERVAL '{max_t} hours'",
+            (int(user_id),),
+        )
+        r = cur.fetchone()
+        cur.close()
+        conn.close()
+        if not r or not r[0]:
+            return None
+        return list(r[0])
+    except Exception as e:
+        print(f"DEBUG: hent_aktiv_sag_state fejlede: {e}")
+        return None
+
+
+def ryd_aktiv_sag_state(user_id):
+    """Ryd aktiv-sag-pointer. Kaldes ved Ryd sag eller logout."""
+    gem_aktiv_sag_state(user_id, None)
+
+
+def hent_dokumenter_by_filnavne(filnavne, tenant_id=None):
+    """
+    Henter en liste af dokument-rækker baseret på filnavne. Bruges af
+    aktuel_sag-restore-logikken til at genopbygge en sags filer fra DB.
+    Returnerer dicts med filnavn, indhold, dokumenttype.
+    """
+    if not filnavne:
+        return []
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT filnavn, indhold, dokumenttype "
+            "FROM mine_dokumenter "
+            "WHERE filnavn = ANY(%s) "
+            "AND (tenant_id = %s OR is_public = TRUE) "
+            "ORDER BY array_position(%s, filnavn)",
+            (list(filnavne), tenant_id, list(filnavne)),
+        )
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {"filnavn": r[0], "indhold": r[1] or "", "dokumenttype": r[2]}
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"DEBUG: hent_dokumenter_by_filnavne fejlede: {e}")
+        return []
 
 
 def hent_user_by_id(user_id):
