@@ -264,6 +264,10 @@ def opret_tabeller():
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS aktiv_sag_opdateret TIMESTAMPTZ
         """)
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS aktiv_sag_state JSONB
+        """)
 
         # Originale filbytes (for scannede PDF/billeder) så aktuel_sag
         # kan rekonstrueres fuldstændig efter Streamlit-reconnect, og
@@ -887,28 +891,38 @@ def tael_admins():
         return 2
 
 
-def gem_aktiv_sag_state(user_id, filnavne):
+def gem_aktiv_sag_state(user_id, filnavne, state_snapshot=None):
     """
-    Gem listen af filnavne der udgør brugerens aktive sag. Bruges til
-    at genoprette aktuel_sag når Streamlit-session nulstilles
-    (Fly-suspend, OOM, WebSocket-reconnect).
+    Gem listen af filnavne der udgør brugerens aktive sag, OG et
+    snapshot af relevant session-state (svarbrev, criteria, analyse-
+    resultater m.v.). Bruges til at genoprette aktuel_sag og
+    UI-tilstand når Streamlit-session nulstilles.
 
     filnavne: liste af strenge. Tom liste eller None rydder pointer.
+    state_snapshot: dict (JSON-serialiserbart) — kan være None for
+        bagudkompatibilitet hvis kun filnavne skal opdateres.
     """
     if not user_id:
         return
+    import json as _json
     try:
         conn = _connect()
         cur = conn.cursor()
         if filnavne:
+            snapshot_json = (
+                _json.dumps(state_snapshot, default=str)
+                if state_snapshot else None
+            )
             cur.execute(
                 "UPDATE users SET aktiv_sag_filnavne = %s, "
+                "aktiv_sag_state = %s::jsonb, "
                 "aktiv_sag_opdateret = NOW() WHERE id = %s",
-                (list(filnavne), int(user_id)),
+                (list(filnavne), snapshot_json, int(user_id)),
             )
         else:
             cur.execute(
                 "UPDATE users SET aktiv_sag_filnavne = NULL, "
+                "aktiv_sag_state = NULL, "
                 "aktiv_sag_opdateret = NULL WHERE id = %s",
                 (int(user_id),),
             )
@@ -921,20 +935,18 @@ def gem_aktiv_sag_state(user_id, filnavne):
 
 def hent_aktiv_sag_state(user_id, max_alder_timer=24):
     """
-    Returnerer liste af filnavne hvis brugeren har en aktiv sag der er
-    yngre end max_alder_timer. Ellers None.
+    Returnerer dict med {filnavne: [...], state: {...}} hvis brugeren
+    har en aktiv sag yngre end max_alder_timer. Ellers None.
     """
     if not user_id:
         return None
     try:
         conn = _connect()
         cur = conn.cursor()
-        # Bruger f-string for INTERVAL fordi psycopg2 ikke kan parametrisere
-        # interval-strenge — men casted til int først for at undgå injection
         max_t = int(max_alder_timer)
         cur.execute(
-            "SELECT aktiv_sag_filnavne, aktiv_sag_opdateret FROM users "
-            "WHERE id = %s "
+            "SELECT aktiv_sag_filnavne, aktiv_sag_state, aktiv_sag_opdateret "
+            "FROM users WHERE id = %s "
             "AND aktiv_sag_filnavne IS NOT NULL "
             f"AND aktiv_sag_opdateret > NOW() - INTERVAL '{max_t} hours'",
             (int(user_id),),
@@ -944,15 +956,18 @@ def hent_aktiv_sag_state(user_id, max_alder_timer=24):
         conn.close()
         if not r or not r[0]:
             return None
-        return list(r[0])
+        return {
+            "filnavne": list(r[0]),
+            "state": r[1] or {},
+        }
     except Exception as e:
         print(f"DEBUG: hent_aktiv_sag_state fejlede: {e}")
         return None
 
 
 def ryd_aktiv_sag_state(user_id):
-    """Ryd aktiv-sag-pointer. Kaldes ved Ryd sag eller logout."""
-    gem_aktiv_sag_state(user_id, None)
+    """Ryd aktiv-sag-pointer + state. Kaldes ved Ryd sag eller logout."""
+    gem_aktiv_sag_state(user_id, None, None)
 
 
 def hent_dokumenter_by_filnavne(filnavne, tenant_id=None):

@@ -1115,11 +1115,94 @@ if "sidste_sagsfil_signatur" not in st.session_state:
     st.session_state.sidste_sagsfil_signatur = None
 
 
+import hashlib as _hashlib
+
+
+def _stabil_hash(obj):
+    """
+    Deterministisk hash der overlever proces-restart. Bruges til
+    session-state-nøgler så genoprettelse efter Streamlit-reconnect
+    finder de gemte værdier igen. (Pythons indbyggede hash() er
+    process-local pga. PYTHONHASHSEED og ville bryde persistensen.)
+    """
+    return _hashlib.md5(repr(obj).encode("utf-8")).hexdigest()[:16]
+
+
+# Statiske session-state-nøgler der skal persistéres så svarbrev,
+# analyse, criteria mv. overlever Streamlit-reconnect. Alt skal være
+# JSON-serialiserbart (ingen bytes, ingen UploadedFile-objekter).
+_PERSISTED_STATIC_KEYS = [
+    "seneste_svar",
+    "seneste_svarbrev",
+    "seneste_tjekliste",
+    "seneste_anonymisering",
+    "sandsynligheder_dict",
+    "sagsresume",
+    "auto_vurdering_tekst",
+    "auto_vurdering_for_signatur",
+    "chat_historik",
+    "anon_resultater_per_fil",
+    "sidste_klage_filnavn",
+    "sidste_sagsfil_signatur",
+    "sagsakter",
+    "sagsakter_signatur",
+    "sagsakter_opdaterede_vurdering",
+    "aktiv_gemt_sag_id",
+]
+
+# Dynamiske key-præfikser der også skal persistéres (svarbrev-instrukser,
+# brevhoved-felter, kildehenvisnings-toggles osv. — alt user-skabt input
+# der hører til den aktuelle sag)
+_PERSISTED_DYNAMIC_PREFIXES = (
+    "svarbrev_instrukser_liste_",
+    "svarbrev_sagsnr_",
+    "svarbrev_klager_",
+    "svarbrev_hoeringssvar_",
+    "toggle_kildehenvisninger_",
+    "sagsmetadata_",
+)
+
+
+def _byg_session_state_snapshot():
+    """
+    Bygger et JSON-serialiserbart dict af relevante session-state
+    keys. Bruges til at gemme tilstanden så den kan genoprettes
+    efter Streamlit-reconnect.
+    """
+    snapshot = {}
+    for k in _PERSISTED_STATIC_KEYS:
+        v = st.session_state.get(k)
+        if v is None:
+            continue
+        snapshot[k] = v
+    for k in list(st.session_state.keys()):
+        if isinstance(k, str) and k.startswith(_PERSISTED_DYNAMIC_PREFIXES):
+            v = st.session_state.get(k)
+            if v is not None:
+                snapshot[k] = v
+    return snapshot
+
+
+def _restore_session_state_fra_snapshot(snapshot):
+    """Læs gemt snapshot tilbage i session_state — kun keys der ikke
+    allerede har en værdi (så user-input ikke overskrives)."""
+    if not snapshot:
+        return
+    for k, v in snapshot.items():
+        if k in st.session_state:
+            continue
+        # tuples bliver til lister via JSON — konvertér tilbage hvor
+        # det betyder noget for andre kodestier
+        if k == "sidste_sagsfil_signatur" and isinstance(v, list):
+            v = tuple(tuple(item) if isinstance(item, list) else item for item in v)
+        st.session_state[k] = v
+
+
 def _persist_aktuel_sag_til_db():
     """
-    Gemmer aktuel sags filnavne på brugerens users-row, så den kan
-    genoprettes hvis Streamlit-session nulstilles. Kaldes efter hver
-    mutation af aktuel_sag (scan, tilføj, ryd).
+    Gemmer aktuel sags filnavne + komplet session-state-snapshot på
+    brugerens users-row, så den kan genoprettes hvis Streamlit-session
+    nulstilles (Fly-suspend, OOM, WebSocket-reconnect).
     """
     try:
         from auth import current_user
@@ -1134,7 +1217,8 @@ def _persist_aktuel_sag_til_db():
                 f.get("filnavn") for f in (sag.get("filer") or [])
                 if f.get("filnavn")
             ]
-        gem_aktiv_sag_state(u["id"], filnavne or None)
+        snapshot = _byg_session_state_snapshot() if filnavne else None
+        gem_aktiv_sag_state(u["id"], filnavne or None, snapshot)
     except Exception as _e:
         print(f"DEBUG: persist aktuel_sag fejlede: {_e}")
 
@@ -1160,7 +1244,11 @@ def _genopret_aktuel_sag_fra_db():
         u = current_user()
         if not u or not u.get("id"):
             return False
-        filnavne = hent_aktiv_sag_state(u["id"])
+        gemt = hent_aktiv_sag_state(u["id"])
+        if not gemt:
+            return False
+        filnavne = gemt.get("filnavne") or []
+        state_snapshot = gemt.get("state") or {}
         if not filnavne:
             return False
         rows = hent_dokumenter_by_filnavne(filnavne, u.get("tenant_id"))
@@ -1198,6 +1286,9 @@ def _genopret_aktuel_sag_fra_db():
             (f["filnavn"], len(f.get("tekst") or ""))
             for f in rekonstruerede_filer
         ))
+        # Restorer også svarbrev, criteria, analyse-resultater m.v.
+        # så brugeren ikke mister sit arbejde
+        _restore_session_state_fra_snapshot(state_snapshot)
         return True
     except Exception as _e:
         print(f"DEBUG: genopret aktuel_sag fejlede: {_e}")
@@ -2494,6 +2585,10 @@ if st.session_state.get("aktuel_sag"):
                     klage_filnavn=klage_fn_for_arkiv,
                     spoergsmaal="Automatisk førstevurdering ved upload",
                 )
+                # Persistér analyse-resultater til DB så de overlever
+                # Streamlit-reconnect — særligt vigtigt for re-generation
+                # af svarbrev hvor brugeren bygger oven på analysen
+                _persist_aktuel_sag_til_db()
                 # Tving en ny render, så de skjulte sektioner (upload-felt,
                 # "Sag klar til analyse"-bjælken med Ryd sag-knappen og
                 # filoversigten) kommer tilbage nu, hvor analysen er færdig.
@@ -4129,7 +4224,7 @@ if st.session_state.get("aktuel_sag"):
     # fra én sag aldrig siver over i en anden.
     _aktiv_sag_id = st.session_state.get("aktiv_gemt_sag_id") or "ny_sag"
     _sag_sig = st.session_state.get("sidste_sagsfil_signatur") or ()
-    _instrukser_key = f"svarbrev_instrukser_liste_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    _instrukser_key = f"svarbrev_instrukser_liste_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
 
     if _instrukser_key not in st.session_state:
         st.session_state[_instrukser_key] = []
@@ -4141,7 +4236,7 @@ if st.session_state.get("aktuel_sag"):
         "åbner en anden sag."
     )
 
-    _ny_instruks_key = f"ny_instruks_input_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    _ny_instruks_key = f"ny_instruks_input_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
 
     def _tilfoej_instruks():
         ny = (st.session_state.get(_ny_instruks_key) or "").strip()
@@ -4149,6 +4244,8 @@ if st.session_state.get("aktuel_sag"):
             st.session_state[_instrukser_key].append(ny)
             # Ryd input-feltet — Streamlit kræver at vi sætter til ""
             st.session_state[_ny_instruks_key] = ""
+            # Persistér så criteria overlever Streamlit-reconnect
+            _persist_aktuel_sag_til_db()
 
     kol_input, kol_btn = st.columns([4, 1])
     with kol_input:
@@ -4167,7 +4264,7 @@ if st.session_state.get("aktuel_sag"):
             "Tilføj instruks",
             on_click=_tilfoej_instruks,
             use_container_width=True,
-            key=f"tilfoej_btn_{_aktiv_sag_id}_{hash(_sag_sig)}",
+            key=f"tilfoej_btn_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}",
         )
 
     # Vis tilføjede instrukser som små pille-kort med fjern-knap
@@ -4186,10 +4283,11 @@ if st.session_state.get("aktuel_sag"):
             with kol_fjern:
                 if st.button(
                     "✕",
-                    key=f"fjern_instruks_{_aktiv_sag_id}_{hash(_sag_sig)}_{_idx}",
+                    key=f"fjern_instruks_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}_{_idx}",
                     help="Fjern denne instruks",
                 ):
                     st.session_state[_instrukser_key].pop(_idx)
+                    _persist_aktuel_sag_til_db()
                     st.rerun()
 
     # Saml alle instrukser til én streng der sendes til AI'en
@@ -4206,7 +4304,7 @@ if st.session_state.get("aktuel_sag"):
     _inkluder_kildehenvisninger = st.toggle(
         "Vil du tilføje kildehenvisninger til dit svarbrev?",
         value=False,
-        key=f"toggle_kildehenvisninger_{_aktiv_sag_id}_{hash(_sag_sig)}",
+        key=f"toggle_kildehenvisninger_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}",
         help=(
             "Når slået TIL: Svarbrevet indeholder eksplicitte "
             "henvisninger til bilag (fx '[Bilag 04, s. 1]'), "
@@ -4222,7 +4320,7 @@ if st.session_state.get("aktuel_sag"):
     # Sagsnummer og klagers navn forsøges auto-udtrukket fra sagen via et
     # lille AI-kald (cached pr. sag-signatur så vi ikke kalder igen ved
     # hver rerender). Brugeren kan altid rette manuelt før download.
-    _meta_cache_key = f"sagsmetadata_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    _meta_cache_key = f"sagsmetadata_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
     if _meta_cache_key not in st.session_state:
         # Kør lazy auto-udtræk én gang pr. sag-signatur. Fejler stille.
         with st.spinner("Henter sagsdata til brevhoved…"):
@@ -4245,8 +4343,8 @@ if st.session_state.get("aktuel_sag"):
         "passer."
     )
 
-    _sagsnr_key = f"svarbrev_sagsnr_{_aktiv_sag_id}_{hash(_sag_sig)}"
-    _navn_key = f"svarbrev_klager_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    _sagsnr_key = f"svarbrev_sagsnr_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
+    _navn_key = f"svarbrev_klager_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
 
     # Initial-værdier sættes kun første gang feltet renderes — derefter
     # styrer Streamlits widget-state værdien (så brugerens redigeringer
@@ -4272,7 +4370,7 @@ if st.session_state.get("aktuel_sag"):
 
     # Høringssvar-nummer: 1, 2 eller 3 — vises som segmented control så
     # kun én værdi kan være valgt ad gangen. Default = 1.
-    _hoer_key = f"svarbrev_hoeringssvar_{_aktiv_sag_id}_{hash(_sag_sig)}"
+    _hoer_key = f"svarbrev_hoeringssvar_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
     if _hoer_key not in st.session_state:
         st.session_state[_hoer_key] = 1
     st.segmented_control(
@@ -4368,6 +4466,10 @@ if st.session_state.get("aktuel_sag"):
                 sagsakter=st.session_state.get("sagsakter", "") or None,
                 ekstra_instrukser=ekstra_instrukser or None,
             )
+            # Persistér til DB så svarbrev + criteria overlever
+            # Streamlit-reconnect (re-generation skal ikke kunne miste
+            # arbejdet hvis sessionen dør midt i AI-kaldet)
+            _persist_aktuel_sag_til_db()
 
     if st.session_state.seneste_svarbrev:
         st.markdown("---")
