@@ -492,7 +492,7 @@ st.markdown(
     .tf-tidslinje::before {
         content: '';
         position: absolute;
-        left: 152px;
+        left: 187px;
         top: 12px;
         bottom: 12px;
         width: 2px;
@@ -511,13 +511,14 @@ st.markdown(
         margin-bottom: 0;
     }
     .tf-tidslinje-dato-kolonne {
-        flex: 0 0 130px;
-        width: 130px;
-        max-width: 130px;
+        flex: 0 0 165px;
+        width: 165px;
+        max-width: 165px;
         text-align: right;
         padding-right: 22px;
         padding-top: 10px;
         box-sizing: border-box;
+        overflow: hidden;
     }
     .tf-tidslinje-dato {
         display: block;
@@ -564,7 +565,7 @@ st.markdown(
     }
     .tf-tidslinje-dot {
         position: absolute;
-        left: 145px;
+        left: 180px;
         top: 12px;
         width: 14px;
         height: 14px;
@@ -599,12 +600,12 @@ st.markdown(
         font-weight: 600;
     }
     @media (max-width: 640px) {
-        .tf-tidslinje::before { left: 88px; }
-        .tf-tidslinje-dot { left: 81px; }
+        .tf-tidslinje::before { left: 118px; }
+        .tf-tidslinje-dot { left: 111px; }
         .tf-tidslinje-dato-kolonne {
-            flex: 0 0 70px;
-            width: 70px;
-            max-width: 70px;
+            flex: 0 0 100px;
+            width: 100px;
+            max-width: 100px;
             padding-right: 14px;
         }
         .tf-tidslinje-dato { font-size: 0.82rem; }
@@ -1525,7 +1526,18 @@ def _tilfoej_nye_filer_til_sag(nye_filer):
         st.toast("Disse filer er allerede i sagen.")
         return
 
-    with st.spinner(f"Læser {len(rene_nye)} nye filer..."):
+    _filer_faser = [
+        f"Læser {len(rene_nye)} nye filer fra dit upload",
+        "Ekstraherer tekst fra dokumenter",
+        "Genkender sagsstruktur og indhold",
+        "Beregner embeddings til vidensbanken",
+        "Gemmer i database og forlænger anonymiseringsvindue",
+        "Klargør de nye filer til analyse",
+    ]
+    with thinking(
+        tekst="juriitech PAX behandler dine filer",
+        faser=_filer_faser,
+    ):
         ny_data = laes_sag_fra_filer(rene_nye)
         nye_dicts = ny_data.get("filer", []) if ny_data else []
 
@@ -1573,7 +1585,18 @@ def _tilfoej_nye_filer_til_sag(nye_filer):
 def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
     """Læs uploadede filer, gem i database, opdatér session state.
     Kaldes når brugeren trykker Scan filer / Opdatér filer."""
-    with st.spinner(f"Læser {len(uploadede_filer)} filer..."):
+    _scan_faser = [
+        f"Læser {len(uploadede_filer)} filer fra dit upload",
+        "Ekstraherer tekst fra dokumenter",
+        "Genkender sagsstruktur og bilags-numre",
+        "Beregner embeddings til vidensbanken",
+        "Gemmer i database og opretter sagen",
+        "Klargør sagen til førstevurdering",
+    ]
+    with thinking(
+        tekst="juriitech PAX behandler dine sagsfiler",
+        faser=_scan_faser,
+    ):
         sag_data = laes_sag_fra_filer(uploadede_filer)
         st.session_state.aktuel_sag = sag_data
         st.session_state.sidste_sagsfil_signatur = ny_signatur
