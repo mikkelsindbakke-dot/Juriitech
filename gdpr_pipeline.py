@@ -354,12 +354,16 @@ def anonymiser_sag(sag_id, tenant_id):
                 "fejl": f"Embedding fejlede: {e}",
             }
 
-        # 4. Erstat indhold + embedding i mine_dokumenter
+        # 4. Erstat indhold + embedding i mine_dokumenter, og ryd
+        #    fil_bytes — vi holder ikke originale PDF/billede-bytes i
+        #    hvile efter anonymisering (GDPR Art. 5 datasparsommelighed)
         cur.execute("""
             UPDATE mine_dokumenter
             SET indhold = %s,
                 embedding = %s::vector,
                 anonymiserings_status = 'anonymiseret',
+                fil_bytes = NULL,
+                fil_mime = NULL,
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = %s
         """, (anonym_tekst, ny_embedding, dok_id))

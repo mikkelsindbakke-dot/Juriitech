@@ -265,6 +265,21 @@ def opret_tabeller():
             ADD COLUMN IF NOT EXISTS aktiv_sag_opdateret TIMESTAMPTZ
         """)
 
+        # Originale filbytes (for scannede PDF/billeder) så aktuel_sag
+        # kan rekonstrueres fuldstændig efter Streamlit-reconnect, og
+        # vision-baseret anonymisering kan køres på de oprindelige
+        # bytes. Bytes ryddes automatisk af GDPR-pipelinen ved
+        # anonymisering så vi ikke holder personoplysninger i hvile
+        # længere end nødvendigt.
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS fil_bytes BYTEA
+        """)
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS fil_mime TEXT
+        """)
+
         # 10. tenant_id + is_public på eksisterende tabeller
         # mine_dokumenter: tenant_id kan være NULL for offentlige dokumenter
         # (Ankenævn-afgørelser, lovgivning). is_public=TRUE gør dokumentet
@@ -944,7 +959,12 @@ def hent_dokumenter_by_filnavne(filnavne, tenant_id=None):
     """
     Henter en liste af dokument-rækker baseret på filnavne. Bruges af
     aktuel_sag-restore-logikken til at genopbygge en sags filer fra DB.
-    Returnerer dicts med filnavn, indhold, dokumenttype.
+    Returnerer dicts med filnavn, indhold, dokumenttype, fil_bytes,
+    fil_mime, anonymiserings_status.
+
+    fil_bytes og fil_mime er kun udfyldt for scannede dokumenter
+    (PDF/billede) der ikke er anonymiserede endnu — de NULL'es ud af
+    GDPR-pipelinen ved anonymisering.
     """
     if not filnavne:
         return []
@@ -954,7 +974,8 @@ def hent_dokumenter_by_filnavne(filnavne, tenant_id=None):
         conn = _connect()
         cur = conn.cursor()
         cur.execute(
-            "SELECT filnavn, indhold, dokumenttype "
+            "SELECT filnavn, indhold, dokumenttype, fil_bytes, fil_mime, "
+            "anonymiserings_status "
             "FROM mine_dokumenter "
             "WHERE filnavn = ANY(%s) "
             "AND (tenant_id = %s OR is_public = TRUE) "
@@ -965,7 +986,14 @@ def hent_dokumenter_by_filnavne(filnavne, tenant_id=None):
         cur.close()
         conn.close()
         return [
-            {"filnavn": r[0], "indhold": r[1] or "", "dokumenttype": r[2]}
+            {
+                "filnavn": r[0],
+                "indhold": r[1] or "",
+                "dokumenttype": r[2],
+                "fil_bytes": bytes(r[3]) if r[3] else None,
+                "fil_mime": r[4],
+                "anonymiserings_status": r[5],
+            }
             for r in rows
         ]
     except Exception as e:
@@ -1092,7 +1120,8 @@ def hent_aktiv_tenant_id():
 
 
 def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
-                 kilde_url=None, tenant_id=None, is_public=None):
+                 kilde_url=None, tenant_id=None, is_public=None,
+                 fil_bytes=None, fil_mime=None):
     """
     Gemmer en sag i databasen.
     dokumenttype skal være enten 'afgoerelse' (tidligere kendelse), 'klage'
@@ -1134,25 +1163,27 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
     try:
         conn = _connect()
         cur = conn.cursor()
+        # psycopg2.Binary wrapper for BYTEA — None hvis der ikke er bytes
+        bytes_param = psycopg2.Binary(fil_bytes) if fil_bytes else None
         if sa_anonymiseres_efter_24t:
             cur.execute(
                 "INSERT INTO mine_dokumenter "
                 "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
                 " tenant_id, is_public, anonymiserings_status, "
-                " anonymiseres_efter) "
+                " anonymiseres_efter, fil_bytes, fil_mime) "
                 "VALUES (%s, %s, %s, %s, %s, %s, %s, "
-                " 'aktiv', NOW() + INTERVAL '24 hours')",
+                " 'aktiv', NOW() + INTERVAL '24 hours', %s, %s)",
                 (filnavn, tekst, dokumenttype, embedding, kilde_url,
-                 tenant_id, bool(is_public)),
+                 tenant_id, bool(is_public), bytes_param, fil_mime),
             )
         else:
             cur.execute(
                 "INSERT INTO mine_dokumenter "
                 "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
-                " tenant_id, is_public) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                " tenant_id, is_public, fil_bytes, fil_mime) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (filnavn, tekst, dokumenttype, embedding, kilde_url,
-                 tenant_id, bool(is_public)),
+                 tenant_id, bool(is_public), bytes_param, fil_mime),
             )
         conn.commit()
         cur.close()

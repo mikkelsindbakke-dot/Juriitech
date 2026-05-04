@@ -1175,11 +1175,19 @@ def _genopret_aktuel_sag_fra_db():
                 continue
             indhold = r["indhold"] or ""
             er_scannet = indhold.startswith("[Scannet sagsbilag")
+            mime = r.get("fil_mime") or ""
+            er_billede = er_scannet and mime.startswith("image/")
+            # Bestem korrekt type baseret på MIME (eller default til pdf_bytes)
+            if er_scannet:
+                fil_type = "image_bytes" if er_billede else "pdf_bytes"
+            else:
+                fil_type = "tekst"
             rekonstruerede_filer.append({
                 "filnavn": fn,
-                "type": "pdf_bytes" if er_scannet else "tekst",
+                "type": fil_type,
                 "tekst": "" if er_scannet else indhold,
-                "bytes": None if er_scannet else None,
+                "bytes": r.get("fil_bytes"),
+                "media_type": mime or None,
                 "rolle": "ukendt",
                 "_genoprettet_fra_db": True,
             })
@@ -1661,11 +1669,18 @@ def _tilfoej_nye_filer_til_sag(nye_filer):
                     dokumenttype="klage", embedding=emb,
                 )
             else:
+                # Scannede PDF/billeder: gem også bytes så aktuel_sag
+                # kan rekonstrueres efter Streamlit-reconnect og
+                # vision-baseret anonymisering kan køres på originalen
+                _bytes = fil.get("bytes")
+                _mime = fil.get("media_type") or _gæt_mime(fil)
                 gem_sag_i_db(
                     fil["filnavn"],
                     f"[Scannet sagsbilag — analyseres via vision. "
                     f"Filnavn: {fil['filnavn']}]",
                     dokumenttype="klage",
+                    fil_bytes=_bytes,
+                    fil_mime=_mime,
                 )
 
         st.toast(f"{len(nye_dicts)} nye filer tilføjet til sagen.")
@@ -1673,6 +1688,20 @@ def _tilfoej_nye_filer_til_sag(nye_filer):
     # Persistér til DB så aktuel_sag overlever Streamlit-reconnect
     _persist_aktuel_sag_til_db()
     st.rerun()
+
+
+def _gæt_mime(fil):
+    """Gæt MIME-type for en upload-fil-dict baseret på type + endelse."""
+    typ = fil.get("type")
+    fn = (fil.get("filnavn") or "").lower()
+    if typ == "pdf_bytes" or fn.endswith(".pdf"):
+        return "application/pdf"
+    if typ == "image_bytes":
+        if fn.endswith(".png"):
+            return "image/png"
+        if fn.endswith(".jpg") or fn.endswith(".jpeg"):
+            return "image/jpeg"
+    return None
 
 
 # ---------- HJÆLPER: Scan og gem filer ----------
@@ -1713,12 +1742,17 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
                     dokumenttype="klage", embedding=emb,
                 )
             else:
-                # Scannet PDF — gem placeholder
+                # Scannet PDF/billede — gem placeholder + originale bytes
+                # så aktuel_sag kan rekonstrueres efter reconnect
+                _bytes = fil.get("bytes")
+                _mime = fil.get("media_type") or _gæt_mime(fil)
                 gem_sag_i_db(
                     fil["filnavn"],
                     f"[Scannet sagsbilag — analyseres via vision. "
                     f"Filnavn: {fil['filnavn']}]",
                     dokumenttype="klage",
+                    fil_bytes=_bytes,
+                    fil_mime=_mime,
                 )
             gemt_nu.append(fil["filnavn"])
 
