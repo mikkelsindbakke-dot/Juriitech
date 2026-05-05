@@ -1200,307 +1200,36 @@ def _restore_session_state_fra_snapshot(snapshot):
 
 def _persist_aktuel_sag_til_db():
     """
-    Gemmer aktuel sags filnavne + komplet session-state-snapshot på
-    brugerens users-row, så den kan genoprettes hvis Streamlit-session
-    nulstilles (Fly-suspend, OOM, WebSocket-reconnect).
-    """
-    try:
-        from auth import current_user
-        from database import gem_aktiv_sag_state
-        u = current_user()
-        if not u or not u.get("id"):
-            return
-        sag = st.session_state.get("aktuel_sag")
-        filnavne = []
-        if sag:
-            filnavne = [
-                f.get("filnavn") for f in (sag.get("filer") or [])
-                if f.get("filnavn")
-            ]
-        snapshot = _byg_session_state_snapshot() if filnavne else None
-        gem_aktiv_sag_state(u["id"], filnavne or None, snapshot)
-    except Exception as _e:
-        print(f"DEBUG: persist aktuel_sag fejlede: {_e}")
+    No-op. Tidligere persistede vi en kopi af analyse + svarbrev i
+    users.aktiv_sag_state JSONB så vi kunne genoprette ved Streamlit-
+    reconnect. Det er fjernet per brugerønske: når browseren lukkes
+    er sessionen forbi, og der er derfor ingen grund til at gemme en
+    skygge-kopi af personrelaterede data uden for det normale
+    24-timers-anonymiseringsvindue.
 
-
-def _genopret_aktuel_sag_fra_db():
+    Funktionen beholdes som no-op så de ~6 eksisterende kaldssites i
+    forside.py stadig virker uden at vi skal redigere alle steder.
     """
-    Hvis session_state.aktuel_sag er tom OG brugeren har en gemt
-    aktiv-sag-pointer, så hent filnavnene fra DB og rekonstruér
-    aktuel_sag. Returnerer True hvis genoprettelse skete.
-
-    Note: PDF/billede-bytes kan ikke gendannes (de gemmes ikke i DB),
-    så scannede dokumenter får placeholder-tekst. Bruger kan re-uploade
-    hvis vision-baseret analyse er nødvendig.
-    """
-    if st.session_state.get("aktuel_sag"):
-        return False
-    try:
-        from auth import current_user
-        from database import (
-            hent_aktiv_sag_state,
-            hent_dokumenter_by_filnavne,
-        )
-        u = current_user()
-        if not u or not u.get("id"):
-            return False
-        gemt = hent_aktiv_sag_state(u["id"])
-        if not gemt:
-            return False
-        filnavne = gemt.get("filnavne") or []
-        state_snapshot = gemt.get("state") or {}
-        if not filnavne:
-            return False
-        rows = hent_dokumenter_by_filnavne(filnavne, u.get("tenant_id"))
-        if not rows:
-            return False
-        # Rekonstruér aktuel_sag.filer i samme rækkefølge som gemt
-        navn_til_row = {r["filnavn"]: r for r in rows}
-        rekonstruerede_filer = []
-        for fn in filnavne:
-            r = navn_til_row.get(fn)
-            if not r:
-                continue
-            indhold = r["indhold"] or ""
-            er_scannet = indhold.startswith("[Scannet sagsbilag")
-            mime = r.get("fil_mime") or ""
-            er_billede = er_scannet and mime.startswith("image/")
-            # Bestem korrekt type baseret på MIME (eller default til pdf_bytes)
-            if er_scannet:
-                fil_type = "image_bytes" if er_billede else "pdf_bytes"
-            else:
-                fil_type = "tekst"
-            rekonstruerede_filer.append({
-                "filnavn": fn,
-                "type": fil_type,
-                "tekst": "" if er_scannet else indhold,
-                "bytes": r.get("fil_bytes"),
-                "media_type": mime or None,
-                "rolle": "ukendt",
-                "_genoprettet_fra_db": True,
-            })
-        if not rekonstruerede_filer:
-            return False
-        st.session_state.aktuel_sag = {"filer": rekonstruerede_filer}
-        st.session_state.sidste_sagsfil_signatur = tuple(sorted(
-            (f["filnavn"], len(f.get("tekst") or ""))
-            for f in rekonstruerede_filer
-        ))
-        # Restorer også svarbrev, criteria, analyse-resultater m.v.
-        # så brugeren ikke mister sit arbejde
-        _restore_session_state_fra_snapshot(state_snapshot)
-        return True
-    except Exception as _e:
-        print(f"DEBUG: genopret aktuel_sag fejlede: {_e}")
-        return False
+    return
 
 
 # ───────────────────────────────────────────────────────────────
-# DETEKTÉR FRISK BROWSER-TAB
+# BROWSER-LUK = LOGUD + FRISK FORSIDE
 # ───────────────────────────────────────────────────────────────
-# Kollegaen bemærkede at "lukke faken og åbne PAX igen" førte til
-# auto-restore af tidligere sag. Vi skal kun auto-restore inden for
-# samme browser-tab (efter Streamlit-reconnect, Fly-suspend, OOM mv.)
-# — IKKE når brugeren har lukket fanen og åbner en ny.
+# Designvalg per brugerønske: når browseren lukkes er sessionen forbi.
+# Ingen auto-restore af tidligere sag, ingen "Genoptager session"-
+# placeholder. Refresh-tokenet ligger i sessionStorage (ikke
+# localStorage) så det også forsvinder ved browser-luk — så brugeren
+# logger ind på ny næste gang.
 #
-# Diskriminator: sessionStorage er per-tab og forsvinder når fanen
-# lukkes. localStorage overlever (det bruges af auto-relogin).
-#
-# Flow:
-#  1. Første render i en Streamlit-session: injecter JS der tjekker
-#     sessionStorage["pax_tab_active"]
-#     - Findes: samme tab — gør intet
-#     - Findes ikke: ny tab — sæt flag + redirect med ?_pax_fresh_tab=1
-#  2. Hvis ?_pax_fresh_tab=1 set: ryd DB-state, slet param, ingen
-#     restore — brugeren ser frisk forside
-#  3. Ellers: normal restore-flow
+# Bivirkning: F5 i samme tab beholder Streamlit-session_state og
+# fungerer som forventet (samme tab = samme sessionStorage). Dvs.
+# brugere mister ikke deres arbejde ved reconnect/refresh.
 
-def _check_fresh_tab():
-    """
-    Detekterer om PAX er åbnet i en frisk tab (browser-close/reopen)
-    vs. samme tab (F5 refresh, Streamlit-reconnect).
-
-    Bruger to uafhængige signaler:
-      1. sessionStorage 'pax_tab_active' — clearet af browseren når
-         tabben lukkes. Pålideligt for ren tab-luk, men kan overleve
-         hvis browseren har 'Genoptag tabs'-funktion.
-      2. localStorage 'pax_heartbeat_ms' — timestamp der opdateres
-         hvert 5. sek. mens PAX er åben (via _start_heartbeat).
-         Hvis ældre end 12 sek. → ingen PAX-tab har været aktiv for
-         nylig → frisk tab uanset hvad sessionStorage siger.
-
-    KRITISK: blokerer rendering med st.stop() indtil JS har svaret
-    via redirect med ?_pax_tab_check=fresh|same. Det forhindrer en
-    race-condition hvor auto-restore allerede har vist loading-
-    skærmen før JS når at redirecte.
-
-    Returnerer True hvis frisk tab (DB-state skal ryddes), False ellers.
-    """
-    check = st.query_params.get("_pax_tab_check")
-
-    if check == "fresh":
-        # JS har bekræftet at det er en frisk tab → ryd DB-state
-        try:
-            from auth import current_user
-            from database import ryd_aktiv_sag_state
-            u = current_user()
-            if u and u.get("id"):
-                ryd_aktiv_sag_state(u["id"])
-        except Exception as _e:
-            print(f"DEBUG: ryd ved frisk tab fejlede: {_e}")
-        try:
-            del st.query_params["_pax_tab_check"]
-        except Exception:
-            pass
-        st.session_state["_pax_tab_verified"] = True
-        return True
-
-    if check == "same":
-        # JS har bekræftet samme tab → fortsæt med restore
-        try:
-            del st.query_params["_pax_tab_check"]
-        except Exception:
-            pass
-        st.session_state["_pax_tab_verified"] = True
-        return False
-
-    if st.session_state.get("_pax_tab_verified"):
-        # Allerede verificeret i denne Streamlit-session
-        return False
-
-    # Første render — vis neutralt mini-loader mens JS-tjekket kører,
-    # injicer JS-tjekket, og st.stop() så ingen anden UI vises.
-    # Brugeren ser typisk denne skærm i <500ms før redirect fyrer.
-    st.markdown(
-        """
-        <div style="
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            min-height: 60vh;
-            color: #6B7280;
-            font-family: 'Space Grotesk', -apple-system, sans-serif;
-            font-size: 0.95rem;
-            letter-spacing: 0.01em;
-        ">
-            <span style="
-                width: 8px; height: 8px; border-radius: 50%;
-                background: #6366F1;
-                margin-right: 12px;
-                animation: paxLoad 1.4s ease-in-out infinite;
-            "></span>
-            Genoptager session…
-        </div>
-        <style>
-        @keyframes paxLoad {
-            0%, 100% { opacity: 0.35; transform: scale(0.85); }
-            50%      { opacity: 1; transform: scale(1.15); }
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    from streamlit.components.v1 import html as _components_html
-    _components_html(
-        """
-        <script>
-        (function() {
-            try {
-                var ss = window.parent.sessionStorage;
-                var ls = window.parent.localStorage;
-                var TAB_KEY = 'pax_tab_active';
-                var HB_KEY = 'pax_heartbeat_ms';
-                var FRESH_MS = 12000;  // 12 sek tærskel
-                var url = new URL(window.parent.location.href);
-                if (url.searchParams.has('_pax_tab_check')) return;
-
-                var hasTabMark = ss.getItem(TAB_KEY) === '1';
-                var lastHB = parseInt(ls.getItem(HB_KEY) || '0', 10);
-                var hbRecent = (Date.now() - lastHB) < FRESH_MS;
-
-                if (hasTabMark && hbRecent) {
-                    // Samme tab — har været aktiv inden for 12 sek
-                    url.searchParams.set('_pax_tab_check', 'same');
-                } else {
-                    // Frisk tab — enten ny tab eller heartbeat er stale
-                    ss.setItem(TAB_KEY, '1');
-                    ls.setItem(HB_KEY, String(Date.now()));
-                    url.searchParams.set('_pax_tab_check', 'fresh');
-                }
-                window.parent.location.href = url.toString();
-            } catch (e) {
-                console.warn('Tab-check fejlede:', e);
-                // Fail-safe: hvis tjekket fejler (fx 3rd-party storage
-                // disabled), lad rendering fortsætte som same-tab så
-                // brugeren ikke sidder fast på 'Genoptager session…'
-                try {
-                    var url = new URL(window.parent.location.href);
-                    url.searchParams.set('_pax_tab_check', 'same');
-                    window.parent.location.href = url.toString();
-                } catch (e2) {}
-            }
-        })();
-        </script>
-        """,
-        height=0,
-    )
-    st.stop()
-
-
-def _start_heartbeat():
-    """
-    Skriver løbende et timestamp til localStorage så _check_fresh_tab
-    kan se om PAX har været aktiv for nylig. Uden heartbeat'en kan vi
-    ikke skelne mellem 'samme tab efter F5' og 'gammel sessionStorage
-    overlevet via browser-restore'.
-
-    Kører kun én gang pr. Streamlit-session (idempotent via flag).
-    """
-    if st.session_state.get("_pax_heartbeat_started"):
-        return
-    from streamlit.components.v1 import html as _components_html
-    _components_html(
-        """
-        <script>
-        (function() {
-            try {
-                var ls = window.parent.localStorage;
-                var KEY = 'pax_heartbeat_ms';
-                ls.setItem(KEY, String(Date.now()));
-                // Ryd evt. eksisterende interval fra tidligere render
-                if (window.parent.__pax_hb) {
-                    clearInterval(window.parent.__pax_hb);
-                }
-                window.parent.__pax_hb = setInterval(function() {
-                    try {
-                        ls.setItem(KEY, String(Date.now()));
-                    } catch(e) {}
-                }, 5000);
-            } catch (e) {}
-        })();
-        </script>
-        """,
-        height=0,
-    )
-    st.session_state["_pax_heartbeat_started"] = True
-
-
-# Hvis frisk browser-tab → ryd state og spring restore over.
-# _check_fresh_tab() st.stop()'er på første render indtil JS har
-# bekræftet tab-state, så vi aldrig kommer hertil med usikker state.
-if _check_fresh_tab():
-    pass  # Frisk forside — ingen restore
-else:
-    # Forsøg at genoprette aktuel_sag fra DB hvis session_state er tom
-    # (sker efter Streamlit-reconnect / Fly-suspend / OOM-restart i
-    # samme browser-tab)
-    _genopret_aktuel_sag_fra_db()
-
-# Start heartbeat NU så fremtidige renders kan se at PAX er aktiv.
-# Skal stå EFTER _check_fresh_tab så vi ikke fejlagtigt opdaterer
-# heartbeat på en frisk tab inden state er ryddet.
-_start_heartbeat()
+# Ingen DB-restore. Ingen browser-tab-detection. Når brugeren lukker
+# browseren forsvinder Streamlit-session_state OG sessionStorage-
+# tokenet — så hun starter helt på en frisk PAX næste gang. Det er
+# præcis det ønskede flow: "lukker hun ned, så er hun færdig".
 # Legacy state — bevares for bagudkompatibilitet hvis nogen bruger gammel flow
 if "aktuel_klage" not in st.session_state:
     st.session_state.aktuel_klage = None

@@ -390,8 +390,13 @@ _RESTORE_FLAG = "juriitech_pax_restore_tried"
 
 def _inject_save_refresh_token(refresh_token):
     """
-    Gem refresh_token i browser-localStorage så auto-restore kan bruge
-    det ved næste reconnect. Kaldes efter succesfuldt login.
+    Gem refresh_token i browser-sessionStorage så auto-restore virker
+    inden for samme browser-tab (efter Streamlit-reconnect, F5 osv.)
+    men IKKE overlever browser-luk. Det er det ønskede design: når
+    brugeren lukker browseren er hun logget ud.
+
+    Vi rydder også eventuelle gamle localStorage-tokens fra tidligere
+    versioner af PAX, så ingen gammel session-rest hænger ved.
     """
     if not refresh_token:
         return
@@ -402,11 +407,16 @@ def _inject_save_refresh_token(refresh_token):
     js = f"""
     <script>
     try {{
-        window.parent.localStorage.setItem(
+        window.parent.sessionStorage.setItem(
             {_json.dumps(_LOCALSTORAGE_KEY)}, {token_js}
         );
         window.parent.sessionStorage.removeItem(
             {_json.dumps(_RESTORE_FLAG)}
+        );
+        // Migration: ryd evt. token gemt i localStorage af tidligere
+        // PAX-version, så browser-luk faktisk logger brugeren ud
+        window.parent.localStorage.removeItem(
+            {_json.dumps(_LOCALSTORAGE_KEY)}
         );
     }} catch (e) {{ console.warn("Could not persist token:", e); }}
     </script>
@@ -415,17 +425,21 @@ def _inject_save_refresh_token(refresh_token):
 
 
 def _inject_clear_persisted_token():
-    """Ryd localStorage + sessionStorage. Kaldes ved logout."""
+    """Ryd både sessionStorage og evt. legacy localStorage. Kaldes ved logout."""
     from streamlit.components.v1 import html as _components_html
     import json as _json
     js = f"""
     <script>
     try {{
-        window.parent.localStorage.removeItem(
+        window.parent.sessionStorage.removeItem(
             {_json.dumps(_LOCALSTORAGE_KEY)}
         );
         window.parent.sessionStorage.removeItem(
             {_json.dumps(_RESTORE_FLAG)}
+        );
+        // Ryd også gamle localStorage-tokens fra tidligere version
+        window.parent.localStorage.removeItem(
+            {_json.dumps(_LOCALSTORAGE_KEY)}
         );
     }} catch (e) {{}}
     </script>
@@ -435,12 +449,20 @@ def _inject_clear_persisted_token():
 
 def _inject_attempt_auto_restore():
     """
-    Render'es på login-siden. Hvis localStorage har et gyldigt
-    refresh_token, redirect'er vi browseren til samme URL med
-    ?sso_token=... — det udløser try_sso_login() ved næste rerun.
+    Render'es på login-siden. Hvis sessionStorage har et gyldigt
+    refresh_token (samme tab som tidligere), redirect'er vi browseren
+    til samme URL med ?sso_token=... — det udløser try_sso_login()
+    ved næste rerun.
 
-    sessionStorage-flag forhindrer infinite-loop hvis tokenet er
-    udløbet (én forsøg pr. browser-tab pr. session).
+    Bruger sessionStorage (ikke localStorage) så browser-luk =
+    fuldstændig logud. Et gem-flag forhindrer infinite-loop hvis
+    tokenet er udløbet (én forsøg pr. browser-tab pr. session).
+
+    Vi flytter også evt. legacy-token fra localStorage over til
+    sessionStorage og rydder localStorage. Det giver én pæn migration
+    uden at brugere bliver tvangsmæssigt logget ud — men efter
+    første browser-luk er localStorage tomt og fremtidige logud følger
+    den nye logik.
     """
     from streamlit.components.v1 import html as _components_html
     import json as _json
@@ -451,7 +473,17 @@ def _inject_attempt_auto_restore():
             var ls = window.parent.localStorage;
             var ss = window.parent.sessionStorage;
             if (ss.getItem({_json.dumps(_RESTORE_FLAG)}) === "1") return;
-            var token = ls.getItem({_json.dumps(_LOCALSTORAGE_KEY)});
+            // Hent token fra sessionStorage; ellers migrér fra
+            // localStorage (engangs-overgang fra forrige PAX-version).
+            var token = ss.getItem({_json.dumps(_LOCALSTORAGE_KEY)});
+            if (!token) {{
+                var legacy = ls.getItem({_json.dumps(_LOCALSTORAGE_KEY)});
+                if (legacy) {{
+                    ss.setItem({_json.dumps(_LOCALSTORAGE_KEY)}, legacy);
+                    ls.removeItem({_json.dumps(_LOCALSTORAGE_KEY)});
+                    token = legacy;
+                }}
+            }}
             if (!token) return;
             ss.setItem({_json.dumps(_RESTORE_FLAG)}, "1");
             var url = new URL(window.parent.location.href);
