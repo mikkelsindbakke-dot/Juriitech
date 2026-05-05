@@ -1317,11 +1317,29 @@ def _genopret_aktuel_sag_fra_db():
 
 def _check_fresh_tab():
     """
-    Returnerer True hvis det er en frisk tab (DB-state skal ryddes,
-    ingen restore). False hvis samme tab (restore som normalt).
+    Detekterer om PAX er åbnet i en frisk tab (browser-close/reopen)
+    vs. samme tab (F5 refresh, Streamlit-reconnect).
+
+    Bruger to uafhængige signaler:
+      1. sessionStorage 'pax_tab_active' — clearet af browseren når
+         tabben lukkes. Pålideligt for ren tab-luk, men kan overleve
+         hvis browseren har 'Genoptag tabs'-funktion.
+      2. localStorage 'pax_heartbeat_ms' — timestamp der opdateres
+         hvert 5. sek. mens PAX er åben (via _start_heartbeat).
+         Hvis ældre end 12 sek. → ingen PAX-tab har været aktiv for
+         nylig → frisk tab uanset hvad sessionStorage siger.
+
+    KRITISK: blokerer rendering med st.stop() indtil JS har svaret
+    via redirect med ?_pax_tab_check=fresh|same. Det forhindrer en
+    race-condition hvor auto-restore allerede har vist loading-
+    skærmen før JS når at redirecte.
+
+    Returnerer True hvis frisk tab (DB-state skal ryddes), False ellers.
     """
-    if st.query_params.get("_pax_fresh_tab") == "1":
-        # JS har redirected hertil → frisk tab bekræftet
+    check = st.query_params.get("_pax_tab_check")
+
+    if check == "fresh":
+        # JS har bekræftet at det er en frisk tab → ryd DB-state
         try:
             from auth import current_user
             from database import ryd_aktiv_sag_state
@@ -1330,21 +1348,59 @@ def _check_fresh_tab():
                 ryd_aktiv_sag_state(u["id"])
         except Exception as _e:
             print(f"DEBUG: ryd ved frisk tab fejlede: {_e}")
-        # Ryd param fra URL så vi ikke ser det igen
         try:
-            del st.query_params["_pax_fresh_tab"]
+            del st.query_params["_pax_tab_check"]
         except Exception:
             pass
+        st.session_state["_pax_tab_verified"] = True
         return True
 
-    # Hvis vi allerede har verificeret tabben i denne Streamlit-session,
-    # springer vi JS-tjekket over
-    if st.session_state.get("_pax_tab_verified"):
+    if check == "same":
+        # JS har bekræftet samme tab → fortsæt med restore
+        try:
+            del st.query_params["_pax_tab_check"]
+        except Exception:
+            pass
+        st.session_state["_pax_tab_verified"] = True
         return False
 
-    # Inject JS der tjekker sessionStorage. Kun ved FØRSTE render —
-    # subsequent renders i samme Streamlit-session er per definition
-    # samme tab.
+    if st.session_state.get("_pax_tab_verified"):
+        # Allerede verificeret i denne Streamlit-session
+        return False
+
+    # Første render — vis neutralt mini-loader mens JS-tjekket kører,
+    # injicer JS-tjekket, og st.stop() så ingen anden UI vises.
+    # Brugeren ser typisk denne skærm i <500ms før redirect fyrer.
+    st.markdown(
+        """
+        <div style="
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 60vh;
+            color: #6B7280;
+            font-family: 'Space Grotesk', -apple-system, sans-serif;
+            font-size: 0.95rem;
+            letter-spacing: 0.01em;
+        ">
+            <span style="
+                width: 8px; height: 8px; border-radius: 50%;
+                background: #6366F1;
+                margin-right: 12px;
+                animation: paxLoad 1.4s ease-in-out infinite;
+            "></span>
+            Genoptager session…
+        </div>
+        <style>
+        @keyframes paxLoad {
+            0%, 100% { opacity: 0.35; transform: scale(0.85); }
+            50%      { opacity: 1; transform: scale(1.15); }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     from streamlit.components.v1 import html as _components_html
     _components_html(
         """
@@ -1352,29 +1408,87 @@ def _check_fresh_tab():
         (function() {
             try {
                 var ss = window.parent.sessionStorage;
-                var KEY = 'pax_tab_active';
+                var ls = window.parent.localStorage;
+                var TAB_KEY = 'pax_tab_active';
+                var HB_KEY = 'pax_heartbeat_ms';
+                var FRESH_MS = 12000;  // 12 sek tærskel
                 var url = new URL(window.parent.location.href);
-                if (url.searchParams.get('_pax_fresh_tab')) return;
-                if (ss.getItem(KEY)) {
-                    // Samme tab — gør intet
-                    return;
+                if (url.searchParams.has('_pax_tab_check')) return;
+
+                var hasTabMark = ss.getItem(TAB_KEY) === '1';
+                var lastHB = parseInt(ls.getItem(HB_KEY) || '0', 10);
+                var hbRecent = (Date.now() - lastHB) < FRESH_MS;
+
+                if (hasTabMark && hbRecent) {
+                    // Samme tab — har været aktiv inden for 12 sek
+                    url.searchParams.set('_pax_tab_check', 'same');
+                } else {
+                    // Frisk tab — enten ny tab eller heartbeat er stale
+                    ss.setItem(TAB_KEY, '1');
+                    ls.setItem(HB_KEY, String(Date.now()));
+                    url.searchParams.set('_pax_tab_check', 'fresh');
                 }
-                // Frisk tab — markér og redirect
-                ss.setItem(KEY, '1');
-                url.searchParams.set('_pax_fresh_tab', '1');
                 window.parent.location.href = url.toString();
-            } catch (e) { console.warn('Tab-check fejlede:', e); }
+            } catch (e) {
+                console.warn('Tab-check fejlede:', e);
+                // Fail-safe: hvis tjekket fejler (fx 3rd-party storage
+                // disabled), lad rendering fortsætte som same-tab så
+                // brugeren ikke sidder fast på 'Genoptager session…'
+                try {
+                    var url = new URL(window.parent.location.href);
+                    url.searchParams.set('_pax_tab_check', 'same');
+                    window.parent.location.href = url.toString();
+                } catch (e2) {}
+            }
         })();
         </script>
         """,
         height=0,
     )
-    st.session_state["_pax_tab_verified"] = True
-    return False  # Behandl som same-tab i denne render; JS redirect'er
-                   # hvis det er frisk tab og næste render håndterer det
+    st.stop()
 
 
-# Hvis frisk browser-tab → ryd state og spring restore over
+def _start_heartbeat():
+    """
+    Skriver løbende et timestamp til localStorage så _check_fresh_tab
+    kan se om PAX har været aktiv for nylig. Uden heartbeat'en kan vi
+    ikke skelne mellem 'samme tab efter F5' og 'gammel sessionStorage
+    overlevet via browser-restore'.
+
+    Kører kun én gang pr. Streamlit-session (idempotent via flag).
+    """
+    if st.session_state.get("_pax_heartbeat_started"):
+        return
+    from streamlit.components.v1 import html as _components_html
+    _components_html(
+        """
+        <script>
+        (function() {
+            try {
+                var ls = window.parent.localStorage;
+                var KEY = 'pax_heartbeat_ms';
+                ls.setItem(KEY, String(Date.now()));
+                // Ryd evt. eksisterende interval fra tidligere render
+                if (window.parent.__pax_hb) {
+                    clearInterval(window.parent.__pax_hb);
+                }
+                window.parent.__pax_hb = setInterval(function() {
+                    try {
+                        ls.setItem(KEY, String(Date.now()));
+                    } catch(e) {}
+                }, 5000);
+            } catch (e) {}
+        })();
+        </script>
+        """,
+        height=0,
+    )
+    st.session_state["_pax_heartbeat_started"] = True
+
+
+# Hvis frisk browser-tab → ryd state og spring restore over.
+# _check_fresh_tab() st.stop()'er på første render indtil JS har
+# bekræftet tab-state, så vi aldrig kommer hertil med usikker state.
 if _check_fresh_tab():
     pass  # Frisk forside — ingen restore
 else:
@@ -1382,6 +1496,11 @@ else:
     # (sker efter Streamlit-reconnect / Fly-suspend / OOM-restart i
     # samme browser-tab)
     _genopret_aktuel_sag_fra_db()
+
+# Start heartbeat NU så fremtidige renders kan se at PAX er aktiv.
+# Skal stå EFTER _check_fresh_tab så vi ikke fejlagtigt opdaterer
+# heartbeat på en frisk tab inden state er ryddet.
+_start_heartbeat()
 # Legacy state — bevares for bagudkompatibilitet hvis nogen bruger gammel flow
 if "aktuel_klage" not in st.session_state:
     st.session_state.aktuel_klage = None
