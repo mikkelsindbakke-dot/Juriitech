@@ -823,6 +823,11 @@ def _inject_auth_chrome_css():
     "tomt grå sidebar / mørk header"-flash når brugeren bliver kastet
     tilbage til login fordi sessionen er udløbet (samme mønster som
     SSO-overlay'et i app.py).
+
+    Override'er også SSO-overlay'ets visibility:hidden — for hvis
+    SSO-tokenet var i URL'en MEN fejlede validering, blev overlay'et
+    injectet i samme render som login-formen, og dets CSS skjulte
+    formen. Vi forcerer login-formen synlig igen og fjerner overlay'et.
     """
     st.markdown(
         """
@@ -834,10 +839,18 @@ def _inject_auth_chrome_css():
         }
         [data-testid="stAppViewContainer"] {
             background: #FAF8F4 !important;
+            visibility: visible !important;
         }
         [data-testid="stAppViewContainer"] > .main,
         section.main {
             background: #FAF8F4 !important;
+            visibility: visible !important;
+        }
+        /* Hvis SSO-overlay'et blev injectet samme render fordi
+           ?sso_token=... var i URL'en, fjern det nu så login-formen
+           er det eneste synlige element */
+        #jt-sso-overlay {
+            display: none !important;
         }
         html, body, [class*="css"] {
             font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont,
