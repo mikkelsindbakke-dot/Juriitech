@@ -2331,6 +2331,16 @@ if st.session_state.get("aktuel_sag"):
                 "minutter. +20 dokumenter tager typisk 4-5 min., men "
                 "vær opmærksom på, at det kan variere fra sag til sag."
             ),
+            faser=[
+                "Gennemgår sagsmaterialet",
+                "Identificerer alle klagepunkter",
+                "Vurderer rettidighed af reklamation",
+                "Søger i vidensbanken efter lignende afgørelser",
+                "Sammenholder argumenter med praksis",
+                "Bygger juridisk førstevurdering",
+                "Vurderer sandsynligheder for udfald",
+                "Strukturerer analysen og krydstjekker",
+            ],
         ):
             try:
                 # FØRST: Udtræk udtømmende liste over ALLE klagepunkter

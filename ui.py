@@ -228,11 +228,17 @@ def thinking_fullpage(
         "2-3 minutter. +20 dokumenter tager typisk 4-5 min. "
         "Dette kan variere fra sag til sag afhængig af indhold."
     ),
+    faser=None,
 ):
     """
     Stor centreret loading-view med animeret cirkulær spinner, timer
     i midten, heading, beskrivelse og en rød 'Ryd sag'-knap der lader
     brugeren afbryde og vende tilbage til forsiden.
+
+    Hvis 'faser' er en liste af strenge, vises en neutral status-linje
+    under beskrivelsen der cykler igennem dem hver ~4 sek. Det hjælper
+    brugeren med at se at PAX faktisk arbejder, selvom Python er
+    blokeret af et AI-kald — på samme måde som thinking() med faser.
 
     Ligesom thinking() bruger vi streamlit.components.v1.html til at
     embede en iframe med JS-drevet timer — det er den eneste pålidelige
@@ -246,9 +252,16 @@ def thinking_fullpage(
     i baggrunden — resultatet smides væk når siden renderer empty
     state).
     """
+    import json as _json
     from streamlit.components.v1 import html as _components_html
 
     placeholder = st.empty()
+
+    faser_json = _json.dumps(list(faser) if faser else [])
+    fase_html = (
+        f'<div class="fase-status" id="faseStatus">{faser[0]}</div>'
+        if faser else ""
+    )
 
     # HTML+CSS+JS-widget — selvstændig i iframen, så styling og JS
     # ikke arver fra parent-siden.
@@ -325,7 +338,37 @@ def thinking_fullpage(
     font-size: 0.95rem;
     line-height: 1.55;
     max-width: 540px;
-    margin: 0 0 36px 0;
+    margin: 0 0 18px 0;
+  }}
+  /* Roterende status-linje — neutral, diskret, med pulserende
+     prik-indikator så det er tydeligt at noget arbejder lige nu */
+  .fase-status {{
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    color: rgba(71, 85, 105, 0.92);
+    font-size: 0.9rem;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    background: rgba(99, 102, 241, 0.06);
+    border: 1px solid rgba(99, 102, 241, 0.14);
+    padding: 9px 18px;
+    border-radius: 999px;
+    margin: 0 0 28px 0;
+    transition: opacity 0.35s ease;
+    max-width: 540px;
+  }}
+  .fase-status::before {{
+    content: "";
+    width: 8px; height: 8px; border-radius: 50%;
+    background: #6366F1;
+    box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55);
+    animation: faseDotPulse 1.6s ease-in-out infinite;
+    flex-shrink: 0;
+  }}
+  @keyframes faseDotPulse {{
+    0%, 100% {{ box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); }}
+    50%      {{ box-shadow: 0 0 0 6px rgba(99, 102, 241, 0); }}
   }}
   /* Lille rød Ryd sag-knap */
   .ryd-knap {{
@@ -425,6 +468,8 @@ def thinking_fullpage(
     <h2 class="titel">{titel}</h2>
     <p class="beskrivelse">{beskrivelse}</p>
 
+    {fase_html}
+
     <button class="ryd-knap" onclick="visBekraeftelse()">
       Ryd sag
     </button>
@@ -457,6 +502,23 @@ def thinking_fullpage(
         if (sek.length < 2) sek = "0" + sek;
         timerEl.textContent = m + ":" + sek;
       }}, 1000);
+
+      // Roterende fase-status. Hver fase vises i 4 sek og fade'r
+      // blødt over til den næste — neutralt nok til at virke som en
+      // status-linje, ikke et tids-løfte.
+      var faser = {faser_json};
+      var faseEl = document.getElementById("faseStatus");
+      if (faseEl && faser.length > 1) {{
+        var idx = 0;
+        setInterval(function() {{
+          idx = (idx + 1) % faser.length;
+          faseEl.style.opacity = "0";
+          setTimeout(function() {{
+            faseEl.textContent = faser[idx];
+            faseEl.style.opacity = "1";
+          }}, 350);
+        }}, 4000);
+      }}
     }})();
 
     function visBekraeftelse() {{
@@ -484,7 +546,7 @@ def thinking_fullpage(
 """
 
     with placeholder:
-        _components_html(widget_html, height=620)
+        _components_html(widget_html, height=680 if faser else 620)
 
     try:
         yield
