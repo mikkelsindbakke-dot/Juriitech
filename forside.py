@@ -1295,9 +1295,93 @@ def _genopret_aktuel_sag_fra_db():
         return False
 
 
-# Forsøg at genoprette aktuel_sag fra DB hvis session_state er tom
-# (sker efter Streamlit-reconnect / Fly-suspend / OOM-restart)
-_genopret_aktuel_sag_fra_db()
+# ───────────────────────────────────────────────────────────────
+# DETEKTÉR FRISK BROWSER-TAB
+# ───────────────────────────────────────────────────────────────
+# Kollegaen bemærkede at "lukke faken og åbne PAX igen" førte til
+# auto-restore af tidligere sag. Vi skal kun auto-restore inden for
+# samme browser-tab (efter Streamlit-reconnect, Fly-suspend, OOM mv.)
+# — IKKE når brugeren har lukket fanen og åbner en ny.
+#
+# Diskriminator: sessionStorage er per-tab og forsvinder når fanen
+# lukkes. localStorage overlever (det bruges af auto-relogin).
+#
+# Flow:
+#  1. Første render i en Streamlit-session: injecter JS der tjekker
+#     sessionStorage["pax_tab_active"]
+#     - Findes: samme tab — gør intet
+#     - Findes ikke: ny tab — sæt flag + redirect med ?_pax_fresh_tab=1
+#  2. Hvis ?_pax_fresh_tab=1 set: ryd DB-state, slet param, ingen
+#     restore — brugeren ser frisk forside
+#  3. Ellers: normal restore-flow
+
+def _check_fresh_tab():
+    """
+    Returnerer True hvis det er en frisk tab (DB-state skal ryddes,
+    ingen restore). False hvis samme tab (restore som normalt).
+    """
+    if st.query_params.get("_pax_fresh_tab") == "1":
+        # JS har redirected hertil → frisk tab bekræftet
+        try:
+            from auth import current_user
+            from database import ryd_aktiv_sag_state
+            u = current_user()
+            if u and u.get("id"):
+                ryd_aktiv_sag_state(u["id"])
+        except Exception as _e:
+            print(f"DEBUG: ryd ved frisk tab fejlede: {_e}")
+        # Ryd param fra URL så vi ikke ser det igen
+        try:
+            del st.query_params["_pax_fresh_tab"]
+        except Exception:
+            pass
+        return True
+
+    # Hvis vi allerede har verificeret tabben i denne Streamlit-session,
+    # springer vi JS-tjekket over
+    if st.session_state.get("_pax_tab_verified"):
+        return False
+
+    # Inject JS der tjekker sessionStorage. Kun ved FØRSTE render —
+    # subsequent renders i samme Streamlit-session er per definition
+    # samme tab.
+    from streamlit.components.v1 import html as _components_html
+    _components_html(
+        """
+        <script>
+        (function() {
+            try {
+                var ss = window.parent.sessionStorage;
+                var KEY = 'pax_tab_active';
+                var url = new URL(window.parent.location.href);
+                if (url.searchParams.get('_pax_fresh_tab')) return;
+                if (ss.getItem(KEY)) {
+                    // Samme tab — gør intet
+                    return;
+                }
+                // Frisk tab — markér og redirect
+                ss.setItem(KEY, '1');
+                url.searchParams.set('_pax_fresh_tab', '1');
+                window.parent.location.href = url.toString();
+            } catch (e) { console.warn('Tab-check fejlede:', e); }
+        })();
+        </script>
+        """,
+        height=0,
+    )
+    st.session_state["_pax_tab_verified"] = True
+    return False  # Behandl som same-tab i denne render; JS redirect'er
+                   # hvis det er frisk tab og næste render håndterer det
+
+
+# Hvis frisk browser-tab → ryd state og spring restore over
+if _check_fresh_tab():
+    pass  # Frisk forside — ingen restore
+else:
+    # Forsøg at genoprette aktuel_sag fra DB hvis session_state er tom
+    # (sker efter Streamlit-reconnect / Fly-suspend / OOM-restart i
+    # samme browser-tab)
+    _genopret_aktuel_sag_fra_db()
 # Legacy state — bevares for bagudkompatibilitet hvis nogen bruger gammel flow
 if "aktuel_klage" not in st.session_state:
     st.session_state.aktuel_klage = None
