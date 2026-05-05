@@ -170,8 +170,13 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
     <span class="timer" id="timer">0:00</span>
   </div>
   <div class="kvalitet-note">
-    Det kan tage et par minutter, da vi serverer det hele samlet.
-    Kvalitet tager tid, og vi arbejder ikke med halve svar.
+    Det kan tage nogle minutter, da vi serverer det hele samlet.
+    PAX er kodet til at krydstjekke ændringer for at minimere risiko
+    for fejl. Klagers fulde navn anonymiseres ikke, da det ikke er
+    et krav. Identificerbare oplysninger om ansatte og
+    samarbejdspartnere anonymiseres efter princippet om
+    &ldquo;funktionel anonymisering&rdquo;, så dataen bevarer sin
+    brugbarhed i Nævnet.
   </div>
   <script>
     (function() {{
