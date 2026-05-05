@@ -31,9 +31,19 @@ st.set_page_config(
 # og at try_sso_login() har valideret tokenet + redirected, ser brugeren
 # default Streamlit-shell + JWT-tokenet i URL'en. Vi inject'er et
 # juriitech-brandet fuldskærms-overlay der dækker hele viewport indtil
-# SSO er færdig (st.rerun() rydder URL'en → overlay vises ikke længere).
-# Ren CSS, ingen JS — virker uanset om Streamlit-frontenden er færdig.
-if st.query_params.get("sso_token"):
+# SSO er færdig (try_sso_login rydder URL'en → overlay vises ikke
+# længere). Ren CSS, ingen JS — virker uanset om Streamlit-frontenden
+# er færdig.
+#
+# Vises KUN hvis vi faktisk er ved at processere SSO-token — ikke hvis
+# brugeren allerede er logget ind, og ikke hvis et tidligere SSO-forsøg
+# fejlede (i så fald har try_sso_login allerede ryddet URL'en og sat
+# _sso_fejl_besked, og brugeren skal se login-form'en, ikke overlay'et).
+if (
+    st.query_params.get("sso_token")
+    and "user" not in st.session_state
+    and not st.session_state.get("_sso_fejl_besked")
+):
     st.markdown(
         """
         <style>

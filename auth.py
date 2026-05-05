@@ -266,30 +266,48 @@ def try_sso_login():
     if not sso_token:
         return False
 
+    # Hjælper: rens URL'en og sæt en fejlmarker som login-siden kan
+    # vise til brugeren. Forhindrer infinite-loop hvor SSO-overlay'et
+    # bliver hængende fordi ?sso_token aldrig forsvandt fra URL'en.
+    def _afbryd_med_fejl(grund):
+        print(f"DEBUG: try_sso_login — afbrudt: {grund}")
+        try:
+            if "sso_token" in st.query_params:
+                del st.query_params["sso_token"]
+        except Exception:
+            pass
+        st.session_state["_sso_fejl_besked"] = grund
+        return False
+
     client = _get_supabase_client()
     if client is None:
-        print("DEBUG: try_sso_login — Supabase-klient utilgængelig")
-        return False
+        return _afbryd_med_fejl(
+            "Login-systemet kunne ikke kontakte autentificerings-tjenesten. "
+            "Prøv igen om et øjeblik."
+        )
 
     try:
         # Refresh-tokens validerer ved at få ny session ud af dem
         result = client.auth.refresh_session(sso_token)
         supabase_user = result.user if hasattr(result, "user") else None
         if not supabase_user:
-            print("DEBUG: try_sso_login — refresh_session returnerede ingen user")
-            return False
+            return _afbryd_med_fejl(
+                "Dit single-sign-on-link kunne ikke valideres. "
+                "Log venligst ind manuelt nedenfor."
+            )
     except Exception as e:
-        print(f"DEBUG: try_sso_login — refresh_session fejlede: {e}")
-        return False
+        return _afbryd_med_fejl(
+            f"Single-sign-on fejlede ({type(e).__name__}). "
+            "Log venligst ind manuelt nedenfor."
+        )
 
     # Genbrug eksisterende DB-link-logik
     db_user = _link_supabase_to_db_user(supabase_user)
     if db_user is None:
-        print(
-            f"DEBUG: try_sso_login — bruger {supabase_user.email} er ikke "
-            "i users-tabellen. SSO afvist."
+        return _afbryd_med_fejl(
+            f"Din konto ({supabase_user.email}) er ikke knyttet til "
+            "et selskab i juriitech PAX. Kontakt din administrator."
         )
-        return False
 
     # Set session_state — samme struktur som login_with_password
     st.session_state.user = {
@@ -837,14 +855,20 @@ def render_login_page():
     ikke er logget ind.
     """
     _inject_auth_chrome_css()
-    # Forsøg automatisk genoprettelse af session via localStorage —
-    # virker når brugeren er blevet kastet tilbage til login pga. en
-    # WebSocket-reconnect, men har et gyldigt refresh_token gemt.
-    # Hvis JS finder et token, redirect'er den til ?sso_token=...
-    # som try_sso_login() i app.py opfanger.
-    _inject_attempt_auto_restore()
+    # Hvis et tidligere SSO-forsøg fejlede, så vis fejlbeskeden til
+    # brugeren OG spring auto-restore over (ellers ville vi prøve at
+    # auto-relogge med samme dårlige token og få samme fejl igen).
+    sso_fejl = st.session_state.pop("_sso_fejl_besked", None)
+    if not sso_fejl:
+        # Forsøg automatisk genoprettelse af session via localStorage —
+        # virker når brugeren er blevet kastet tilbage til login pga. en
+        # WebSocket-reconnect, men har et gyldigt refresh_token gemt.
+        _inject_attempt_auto_restore()
     # Centeret card-layout
     _, midt, _ = st.columns([1, 2, 1])
+    if sso_fejl:
+        with midt:
+            st.warning(sso_fejl, icon="⚠️")
     with midt:
         st.markdown("# juriitech PAX")
         st.markdown(
