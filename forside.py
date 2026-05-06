@@ -2490,6 +2490,7 @@ if st.session_state.get("aktuel_sag"):
                     _resume = udled_sagsresume_strukturelt(
                         analyse_tekst=auto_svar,
                         sagsakter_tekst=st.session_state.get("sagsakter", ""),
+                        tidsforhold=st.session_state.get("tidsforhold"),
                     )
                 st.session_state.sagsresume = _resume
 

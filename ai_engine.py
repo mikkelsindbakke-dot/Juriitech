@@ -3032,12 +3032,18 @@ def udled_bilag_overskrifter(filer):
         }
 
 
-def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
+def udled_sagsresume_strukturelt(
+    analyse_tekst, sagsakter_tekst="", tidsforhold=None
+):
     """
     Udtrækker et struktureret resume af sagen baseret på den allerede
     genererede førstevurdering (og evt. sagsakter). Giver brugeren et
     lynhurtigt overblik over hvad sagen handler om, klagepunkter, krav
     og hvordan rejseselskabet har håndteret den indtil videre.
+
+    tidsforhold (valgfri): dict med 'rejseperiode'-felt. Hvis sat og
+        nætter kan udledes via _beregn_antal_naetter, beriges 'emne'-
+        feltet med en sætning om rejsedatoer + antal nætter.
 
     Returnerer en dict:
       {
@@ -3138,6 +3144,18 @@ def udled_sagsresume_strukturelt(analyse_tekst, sagsakter_tekst=""):
         # at boksen aldrig står tom.
         if not udfald or len(udfald) < 5:
             udfald = _udled_forventet_udfald_separat(analyse_tekst) or ""
+
+        # Berig emne med antal nætter hvis tidsforhold + parserbar
+        # rejseperiode er tilgængelig.
+        if tidsforhold and isinstance(tidsforhold, dict):
+            _rp = (tidsforhold.get("rejseperiode") or "").strip()
+            _naetter = _beregn_antal_naetter(_rp) if _rp else None
+            if _naetter and _naetter >= 1 and _rp:
+                _emne_basis = emne.rstrip(".").rstrip()
+                emne = (
+                    f"{_emne_basis}. Rejseperiode: {_rp}, "
+                    f"svarende til {_naetter} nætter."
+                )
 
         return {
             "emne": emne,
