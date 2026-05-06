@@ -4411,10 +4411,18 @@ if st.session_state.get("aktuel_sag"):
             if not klage_fn and sag_filer:
                 klage_fn = sag_filer[0]["filnavn"]
 
+            # Gem forrige udkast hvis det findes — bruges til diff-
+            # visning i UI når brugeren genererer en revideret version.
+            _eksisterende = st.session_state.seneste_svarbrev or {}
+            _forrige_svarbrev = _eksisterende.get("svarbrev")
+            _udkast_nr = (_eksisterende.get("udkast_nr") or 0) + 1
+
             st.session_state.seneste_svarbrev = {
                 "klage_filnavn": klage_fn,
                 "ekstra_instrukser": ekstra_instrukser,
                 "svarbrev": svarbrev,
+                "forrige_svarbrev": _forrige_svarbrev,
+                "udkast_nr": _udkast_nr,
             }
             # Auto-gem i arkivet
             gem_i_arkiv(

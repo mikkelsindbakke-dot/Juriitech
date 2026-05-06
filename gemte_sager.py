@@ -184,6 +184,13 @@ def _gendan_state_fra_json(state):
         if navn in state:
             st.session_state[navn] = state[navn]
 
+    # Defensiv: fyld defaults ind for nye felter hvis sagen er gemt
+    # før diff-feature blev tilføjet (Task 11 svarbrev-syv-aendringer)
+    sb = st.session_state.get("seneste_svarbrev")
+    if sb and isinstance(sb, dict):
+        sb.setdefault("forrige_svarbrev", None)
+        sb.setdefault("udkast_nr", 1)
+
     # aktuel_sag — base64-decodede bytes-felter
     if "aktuel_sag" in state and state["aktuel_sag"]:
         sag = state["aktuel_sag"]
