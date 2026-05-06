@@ -24,6 +24,9 @@ python-docx>=1.1.0
 # PDF-generering (anonymiserede bilag som download)
 reportlab>=4.0.0
 
+# PDF-redaction (sort-bjælke-anonymisering med bevaret layout)
+pymupdf>=1.24.0
+
 # Web scraping (Ankenævn + TUI)
 requests>=2.31.0
 beautifulsoup4>=4.12.0
