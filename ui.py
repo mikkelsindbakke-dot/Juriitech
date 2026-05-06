@@ -1371,7 +1371,8 @@ def render_svarbrev_forside_preview(
       • Selskabs-logo i top-højre (hvis logo_b64 er angivet)
       • Højrejusteret 'By, DD-MM-YYYY' nedenunder
       • 'Vedr.: Sag nr. X – Klagernavn, N. høringssvar' med vandret streg
-      • 'Bilag:'-overskrift + 2-kolonne-liste (hvis bilag_liste er udfyldt)
+      • 'Bilag:'-overskrift + 2-kolonne-liste (hvis bilag_liste er udfyldt) — vises
+        EFTER preview-noten i bunden (matcher Word-eksportens placering)
 
     Parametre:
       sagsnummer       — fx "25-109-8024327" (kan være tom)
@@ -1439,7 +1440,7 @@ def render_svarbrev_forside_preview(
                 f'</tr>'
             )
         bilag_html = (
-            '<div style="margin-top: 24px;">'
+            '<div style="margin-top: 40px;">'
             '<div style="font-weight: 700; font-size: 1rem; '
             'color: #1F2937; margin-bottom: 8px;">Bilag:</div>'
             '<table style="border-collapse: collapse; width: 100%;">'
@@ -1494,7 +1495,6 @@ def render_svarbrev_forside_preview(
                 padding-bottom: 6px;
                 border-bottom: 1px solid #111827;
             ">{vedr_html}</div>
-            {bilag_html}
             <div style="
                 margin-top: 22px;
                 color: #6B7280;
@@ -1507,6 +1507,7 @@ def render_svarbrev_forside_preview(
                 Forside-preview — sådan vil headeren se ud i den
                 downloadede Word-fil. Brødteksten vises nedenunder.
             </div>
+            {bilag_html}
         </div>
         """,
         unsafe_allow_html=True,

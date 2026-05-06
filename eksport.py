@@ -383,15 +383,12 @@ def _byg_svarbrev_header(
     vedr_run.font.size = Pt(11)
     _saet_paragraf_under_streg(vedr_p)
 
-    # Lidt ekstra luft før bilag-listen / brødteksten
+    # Lidt ekstra luft før brødteksten
     doc.add_paragraph()
 
-    # ---------- BILAG-LISTE (lige under Vedr-linjen) ----------
-    # Vises KUN hvis bilag_liste indeholder mindst én post. Bilag A er
-    # altid svarbrevet selv (det første element); resten er medsendte
-    # filer.
-    if bilag_liste:
-        _byg_bilag_liste(doc, bilag_liste)
+    # NOTE: Bilag-listen rendres IKKE længere her. Den er flyttet til
+    # bunden af svarbrevet (efter "Med venlig hilsen" + signatur).
+    # Se svarbrev_til_docx for placeringen.
 
 
 def svarbrev_til_docx(
@@ -513,6 +510,14 @@ def svarbrev_til_docx(
         p = doc.add_paragraph()
         _tilfoej_formateret_linje(p, tekst)
         i = j
+
+    # ---------- BILAG-LISTE I BUNDEN ----------
+    # Bilag-listen rendres som det allersidste i brevet — efter
+    # "Med venlig hilsen" og signaturen som AI'en har skrevet i selve
+    # brødteksten. Ekstra spacer-paragraph for visuel separation.
+    if bilag_liste:
+        doc.add_paragraph()  # spacer
+        _byg_bilag_liste(doc, bilag_liste)
 
     buf = BytesIO()
     doc.save(buf)
