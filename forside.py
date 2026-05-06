@@ -51,6 +51,17 @@ from selskab_profiler import (
 )
 
 
+def _beregn_antal_naetter_safe(rejseperiode_str):
+    """Defensiv wrapper — fanger evt. ImportError hvis ai_engine ikke
+    er fuldt initialiseret. Returnerer None ved enhver fejl."""
+    try:
+        from ai_engine import _beregn_antal_naetter
+        return _beregn_antal_naetter(rejseperiode_str)
+    except Exception as e:
+        print(f"DEBUG: _beregn_antal_naetter_safe fejlede: {e}")
+        return None
+
+
 # ---------- OPSÆTNING ----------
 # st.set_page_config sættes nu i app.py øverst, så page_title er korrekt
 # fra første render — ikke først efter auth-gate.
@@ -2950,10 +2961,15 @@ if st.session_state.get("aktuel_sag"):
 
         # Lille "Rejseperiode"-chip øverst, så man hurtigt ser hvilke
         # datoer destinationen dækker (gør timing-vurderingen lettere).
+        # Beriges med antal nætter når datoerne kan parses.
         _rejseperiode = (_tf or {}).get("rejseperiode") or ""
         _rejseperiode_html = ""
         if _rejseperiode and _tf_har_observationer:
-            _rp_safe = _html_tf.escape(_rejseperiode)
+            _n_naetter = _beregn_antal_naetter_safe(_rejseperiode)
+            _rp_visning = _rejseperiode
+            if _n_naetter and _n_naetter >= 1:
+                _rp_visning = f"{_rejseperiode} ({_n_naetter} nætter)"
+            _rp_safe = _html_tf.escape(_rp_visning)
             _rejseperiode_html = (
                 '<div style="display: inline-flex; align-items: center; '
                 'gap: 8px; padding: 6px 14px; border-radius: 100px; '
