@@ -455,14 +455,25 @@ def _inject_attempt_auto_restore():
     ved næste rerun.
 
     Bruger sessionStorage (ikke localStorage) så browser-luk =
-    fuldstændig logud. Et gem-flag forhindrer infinite-loop hvis
-    tokenet er udløbet (én forsøg pr. browser-tab pr. session).
+    fuldstændig logud.
+
+    INGEN sticky restore-flag. Tidligere brugte vi en sessionStorage-
+    flag som "1" der skulle forhindre infinite-loop. Men flag'en blev
+    aldrig nulstillet hvis redirect-forsøget fejlede stille (fx pga.
+    iframe-sandbox der blokerer top-navigation), og brugeren kunne ende
+    permanent fanget på login-siden. Infinite-loops er allerede
+    forhindret server-side via _sso_fejl_besked: hvis try_sso_login
+    fejler sættes en fejlbesked i session_state, og render_login_page
+    springer auto-restore over på næste render.
+
+    Robust redirect: vi prøver to metoder i rækkefølge — først
+    window.top.location.replace, derefter en form-submission med
+    target=_top som fallback (virker selv hvis sandbox ikke tillader
+    direkte top-navigation, så længe allow-forms er sat).
 
     Vi flytter også evt. legacy-token fra localStorage over til
     sessionStorage og rydder localStorage. Det giver én pæn migration
-    uden at brugere bliver tvangsmæssigt logget ud — men efter
-    første browser-luk er localStorage tomt og fremtidige logud følger
-    den nye logik.
+    uden at brugere bliver tvangsmæssigt logget ud.
     """
     from streamlit.components.v1 import html as _components_html
     import json as _json
@@ -472,7 +483,6 @@ def _inject_attempt_auto_restore():
         try {{
             var ls = window.parent.localStorage;
             var ss = window.parent.sessionStorage;
-            if (ss.getItem({_json.dumps(_RESTORE_FLAG)}) === "1") return;
             // Hent token fra sessionStorage; ellers migrér fra
             // localStorage (engangs-overgang fra forrige PAX-version).
             var token = ss.getItem({_json.dumps(_LOCALSTORAGE_KEY)});
@@ -485,10 +495,48 @@ def _inject_attempt_auto_restore():
                 }}
             }}
             if (!token) return;
-            ss.setItem({_json.dumps(_RESTORE_FLAG)}, "1");
-            var url = new URL(window.parent.location.href);
+
+            // Byg target-URL med sso_token query-param
+            var parentUrl = window.parent.location.href;
+            var url = new URL(parentUrl);
             url.searchParams.set("sso_token", token);
-            window.parent.location.href = url.toString();
+            var targetUrl = url.toString();
+
+            // Metode 1: direkte top-navigation (virker hvis sandbox
+            // tillader det — og hvis ikke fejler den synligt så vi kan
+            // skifte til metode 2).
+            try {{
+                window.top.location.replace(targetUrl);
+                return;
+            }} catch (e1) {{
+                console.warn("Direkte top-navigation blokeret:", e1);
+            }}
+
+            // Metode 2: form-submission med target=_top (virker så
+            // længe iframe har allow-forms i sandbox, hvilket
+            // Streamlit-components har som standard).
+            try {{
+                var form = document.createElement("form");
+                form.method = "GET";
+                var split = targetUrl.split("?");
+                form.action = split[0];
+                form.target = "_top";
+                if (split.length > 1) {{
+                    var pairs = split[1].split("&");
+                    for (var i = 0; i < pairs.length; i++) {{
+                        var kv = pairs[i].split("=");
+                        var input = document.createElement("input");
+                        input.type = "hidden";
+                        input.name = decodeURIComponent(kv[0]);
+                        input.value = decodeURIComponent(kv[1] || "");
+                        form.appendChild(input);
+                    }}
+                }}
+                document.body.appendChild(form);
+                form.submit();
+            }} catch (e2) {{
+                console.warn("Form-submission auto-restore fejlede:", e2);
+            }}
         }} catch (e) {{ console.warn("Auto-restore fejlede:", e); }}
     }})();
     </script>
