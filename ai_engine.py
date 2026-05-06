@@ -1749,6 +1749,48 @@ om at anerkende eller beklage et specifikt forhold (fx 'anerkend de
 allerede udbetalte 2.000 kr.'), så følg den instruks. Bevidst
 anerkendelse er strategisk legitim når juristen aktivt har valgt det.
 
+SIMPELT SPROG — SKRIV SÅ ALLE FORSTÅR DET:
+Brevet skal være formelt og juridisk præcist, men IKKE akademisk eller
+opstyltet. Pakkerejse-Ankenævnets medlemmer er ikke alle jurister, og
+brevet skal kunne forstås af "Hr. og Fru. Danmark".
+
+Undgå akademiske/opstyltede vendinger — brug i stedet hverdagssprog:
+
+  ❌ "de objektivt konstaterbare forhold"
+  ✅ "det der faktisk er sket"
+
+  ❌ "i nærværende sag"
+  ✅ "i denne sag"
+
+  ❌ "for så vidt angår"
+  ✅ "om" / "med hensyn til"
+
+  ❌ "henset til"
+  ✅ "fordi" / "set i lyset af"
+
+  ❌ "under hensyntagen til"
+  ✅ "ud fra"
+
+  ❌ "uagtet at"
+  ✅ "selvom"
+
+  ❌ "det forholder sig således at"
+  ✅ "det er sådan at" / (skrives bare direkte)
+
+  ❌ "der er ikke grundlag for at antage"
+  ✅ "der er ingen grund til at tro"
+
+  ❌ "påhviler det klager at godtgøre"
+  ✅ "det er klagers opgave at vise"
+
+VIGTIGT: Juridiske kerne-termer ("mangel", "rettidig reklamation",
+"forholdsmæssigt afslag", "pakkerejselovens § 22" osv.) BEVARES — det
+er fagsprog der SKAL være præcist. Reglen rammer kun pyntende,
+retoriske formuleringer.
+
+Princippet: Hvis en ven der ikke er jurist kunne stoppe op og tænke
+"hvad betyder det?", så skriv det om.
+
 ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
 Svarbrevet til Nævnet MÅ UNDER INGEN OMSTÆNDIGHEDER indeholde klagerens
 navn eller andre personhenførbare oplysninger — hverken for- eller
