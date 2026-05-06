@@ -1724,6 +1724,31 @@ SKAL behandles.
 {klagepunkter_blok}
 {tidsforhold_blok}
 
+NEUTRAL TONE — UNDGÅ ANERKENDELSER OG UNDSKYLDNINGER:
+{REJSESELSKAB_NAVN} udarbejder dette svarbrev fordi selskabet er UENIG
+med klagers krav. Brug derfor IKKE formuleringer der lyder som en
+indrømmelse — Pakkerejse-Ankenævnet kan tolke dem som anerkendelse
+af ansvar og hæve den tilkendte erstatning.
+
+Undgå disse vendinger som default:
+  • "anerkender at ..."
+  • "beklager at ..."
+  • "finder det beklageligt at ..."
+  • "erkender at ..."
+  • "er enig i at ..."
+  • "vi forstår klagers frustration"
+  • "vi tager kritikken til efterretning"
+
+Beskriv i stedet faktuelt hvad der er sket — UDEN følelsesladede ord.
+Eksempel:
+  ❌ "Vi beklager at klager oplevede problemer med poolen."
+  ✅ "Klager har anført at poolen ikke var åben i hele perioden."
+
+UNDTAGELSE: Hvis brugerens særlige instrukser ovenfor EKSPLICIT beder
+om at anerkende eller beklage et specifikt forhold (fx 'anerkend de
+allerede udbetalte 2.000 kr.'), så følg den instruks. Bevidst
+anerkendelse er strategisk legitim når juristen aktivt har valgt det.
+
 ABSOLUT ANONYMISERING AF KLAGER (ufravigeligt krav):
 Svarbrevet til Nævnet MÅ UNDER INGEN OMSTÆNDIGHEDER indeholde klagerens
 navn eller andre personhenførbare oplysninger — hverken for- eller
