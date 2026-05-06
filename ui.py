@@ -81,7 +81,7 @@ def vis_brugerfejl(handling, exception=None, kort_ekstra=None):
 
 
 @contextmanager
-def thinking(tekst="juriitech PAX arbejder...", faser=None):
+def thinking(tekst="juriitech PAX arbejder...", faser=None, kvalitet_note=None):
     """
     Context manager der viser en Claude-inspireret pulsende gradient-prik
     med tekst ved siden af, mens kode i with-blokken kører. Forsvinder
@@ -93,6 +93,12 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
     ~4 sekunder. Samtidig kører en elapsed-timer der viser mm:ss så det
     er tydeligt for brugeren hvor langt processen er nået uden at lovne
     et urealistisk tidsestimat.
+
+    'kvalitet_note' er en valgfri italic gråtekst der vises NEDENUNDER
+    selve loaderen. Tidligere stod der hardcodet en tekst om
+    anonymiseringsprincipper — det var forkert at vise på fx
+    "Generér tjekliste"-flowet hvor anonymisering ikke er relevant.
+    Hvis None vises ingen note. Anonymiseringsflowet sætter den.
 
     Til JS-drevet version bruger vi streamlit.components.v1.html — det
     er nødvendigt fordi st.markdown af sikkerhedsgrunde fjerner
@@ -109,6 +115,19 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
         from streamlit.components.v1 import html as _components_html
 
         faser_json = _json.dumps(list(faser))
+
+        # Byg kvalitet-note kun hvis kalderen har sat den. Default ingen
+        # note — undgår at vise anonymiserings-tekst på fx tjekliste-flow.
+        if kvalitet_note:
+            # Lille HTML-escape så ingen kan injecte tags via parameteret
+            from html import escape as _html_escape
+            kvalitet_note_html = (
+                f'<div class="kvalitet-note">'
+                f'{_html_escape(kvalitet_note)}'
+                f'</div>'
+            )
+        else:
+            kvalitet_note_html = ""
 
         # Hele widgetten er selvstændig i iframen — CSS skal derfor være
         # inline her (kan ikke arve fra sidens CSS, da det er en isoleret
@@ -169,15 +188,7 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
     </div>
     <span class="timer" id="timer">0:00</span>
   </div>
-  <div class="kvalitet-note">
-    Det kan tage nogle minutter, da vi serverer det hele samlet.
-    PAX er kodet til at krydstjekke ændringer for at minimere risiko
-    for fejl. Klagers fulde navn anonymiseres ikke, da det ikke er
-    et krav. Identificerbare oplysninger om ansatte og
-    samarbejdspartnere anonymiseres efter princippet om
-    &ldquo;funktionel anonymisering&rdquo;, så dataen bevarer sin
-    brugbarhed i Nævnet.
-  </div>
+  {kvalitet_note_html}
   <script>
     (function() {{
       var faser = {faser_json};

@@ -3772,16 +3772,33 @@ if st.session_state.get("aktuel_sag"):
                 with kol_status:
                     if filnavn in st.session_state.anon_resultater_per_fil:
                         res = st.session_state.anon_resultater_per_fil[filnavn]
-                        if res.get("status") == "ok":
+                        _status = res.get("status")
+                        _bemaerkning = res.get("bemaerkning", "")
+                        if _status == "ok":
                             st.markdown(
                                 "<span style='color:#15803D;font-size:0.82rem;"
                                 "font-weight:500;'>✓ Anonymiseret</span>",
                                 unsafe_allow_html=True,
                             )
-                        elif res.get("status") == "fejl":
+                        elif _status == "sprunget_over":
+                            # Ikke en fejl — bare en case vi ikke kan
+                            # anonymisere automatisk (typisk billed-PDF
+                            # uden tekst-lag). Vis neutral besked.
+                            st.markdown(
+                                "<span style='color:rgba(100,116,139,0.85);"
+                                "font-size:0.78rem;font-style:italic;' "
+                                f"title='{_bemaerkning}'>"
+                                "— Sprunget over</span>",
+                                unsafe_allow_html=True,
+                            )
+                        elif _status == "fejl":
+                            # Vis bemærkning som tooltip så bruger
+                            # kan se hvorfor uden at åbne logs
                             st.markdown(
                                 "<span style='color:#B91C1C;"
-                                "font-size:0.82rem;'>Fejl</span>",
+                                "font-size:0.82rem;' "
+                                f"title='{_bemaerkning}'>"
+                                "Fejl</span>",
                                 unsafe_allow_html=True,
                             )
                     elif not _kan_anonymiseres(fil):
@@ -3849,6 +3866,16 @@ if st.session_state.get("aktuel_sag"):
                         "Maskerer email-lokaldele og telefon-cifre...",
                         "Tjekker hver fil igennem for missede oplysninger...",
                     ],
+                    kvalitet_note=(
+                        "Det kan tage nogle minutter, da vi serverer det "
+                        "hele samlet. PAX er kodet til at krydstjekke "
+                        "ændringer for at minimere risiko for fejl. "
+                        "Klagers fulde navn anonymiseres ikke, da det "
+                        "ikke er et krav. Identificerbare oplysninger om "
+                        "ansatte og samarbejdspartnere anonymiseres efter "
+                        "princippet om \"funktionel anonymisering\", så "
+                        "dataen bevarer sin brugbarhed i Nævnet."
+                    ),
                 ):
                     nye_resultater = []
 
@@ -3856,12 +3883,27 @@ if st.session_state.get("aktuel_sag"):
                     if pdf_filer:
                         try:
                             from anonymisering_pdf import anonymiser_pdf_fil
+                            import traceback as _tb
                             for fil in pdf_filer:
                                 filnavn = fil.get("filnavn", "ukendt.pdf")
                                 pdf_bytes_input = fil.get("bytes")
-                                output_pdf, status = anonymiser_pdf_fil(
-                                    pdf_bytes_input, klager_navne
-                                )
+                                try:
+                                    output_pdf, status = anonymiser_pdf_fil(
+                                        pdf_bytes_input, klager_navne
+                                    )
+                                except Exception as _e:
+                                    # Print traceback til fly logs så vi
+                                    # kan diagnosticere konkrete PDF-fejl.
+                                    print(
+                                        f"DEBUG: anonymiser_pdf_fil "
+                                        f"crashede på {filnavn}:",
+                                        flush=True,
+                                    )
+                                    print(_tb.format_exc(), flush=True)
+                                    output_pdf, status = (
+                                        None, "fejl_redaction"
+                                    )
+
                                 if status == "ok":
                                     nye_resultater.append({
                                         "filnavn": filnavn,
@@ -3875,45 +3917,70 @@ if st.session_state.get("aktuel_sag"):
                                     })
                                 elif status == "scannet":
                                     # Scannet PDF — fald tilbage til bracket-
-                                    # flow på tekst-feltet hvis tilgængelig
+                                    # flow på tekst-feltet hvis tilgængelig.
+                                    # Hvis ikke, status='sprunget_over' (IKKE
+                                    # 'fejl') — det er en begrænsning, ikke
+                                    # et nedbrud.
                                     if (fil.get("tekst") or "").strip():
                                         try:
                                             fallback = (
                                                 anonymiser_valgte_filer([fil])
                                             )
                                             nye_resultater.extend(fallback)
-                                        except Exception as e:
+                                        except Exception as _e:
+                                            print(
+                                                f"DEBUG: bracket-fallback "
+                                                f"fejlede på {filnavn}:",
+                                                flush=True,
+                                            )
+                                            print(
+                                                _tb.format_exc(), flush=True
+                                            )
                                             nye_resultater.append({
                                                 "filnavn": filnavn,
                                                 "status": "fejl",
                                                 "anonymiseret_tekst": "",
                                                 "_format": "tekst",
                                                 "bemaerkning": (
-                                                    "Scannet PDF — bracket-"
-                                                    f"fallback fejlede: {e}"
+                                                    f"Bracket-fallback "
+                                                    f"fejlede: {_e}"
                                                 ),
                                             })
                                     else:
                                         nye_resultater.append({
                                             "filnavn": filnavn,
-                                            "status": "fejl",
+                                            "status": "sprunget_over",
                                             "anonymiseret_tekst": "",
                                             "_format": "tekst",
                                             "bemaerkning": (
                                                 "Scannet PDF uden tekst-lag "
-                                                "— kan ikke anonymiseres "
-                                                "automatisk"
+                                                "— ikke nødvendigt at "
+                                                "anonymisere automatisk "
+                                                "(billed-PDF)"
                                             ),
                                         })
-                                else:
+                                elif status == "fejl_aaben":
                                     nye_resultater.append({
                                         "filnavn": filnavn,
                                         "status": "fejl",
                                         "anonymiseret_tekst": "",
                                         "_format": "tekst",
                                         "bemaerkning": (
-                                            f"Sort-bjælke-flow fejlede "
-                                            f"({status})"
+                                            "PDF kunne ikke åbnes "
+                                            "(muligvis korrupt eller "
+                                            "krypteret)"
+                                        ),
+                                    })
+                                else:
+                                    # fejl_redaction eller ukendt status
+                                    nye_resultater.append({
+                                        "filnavn": filnavn,
+                                        "status": "fejl",
+                                        "anonymiseret_tekst": "",
+                                        "_format": "tekst",
+                                        "bemaerkning": (
+                                            "Sort-bjælke-redaction fejlede "
+                                            "— se fly logs for traceback"
                                         ),
                                     })
                         except Exception as e:
