@@ -234,6 +234,128 @@ def _trim(tekst):
     return tekst
 
 
+def _beregn_antal_naetter(rejseperiode_str):
+    """
+    Parser en rejseperiode-streng og returnerer antal nætter mellem
+    udrejse og hjemrejse. Returnerer None hvis parsing fejler eller
+    perioden er ugyldig.
+
+    Understøtter danske formater:
+      "8.-22. juni 2025"
+      "8. juni - 22. juni 2025"
+      "8. juni 2025 - 22. juni 2025"
+      "08-06-2025 til 22-06-2025"
+      "08-06-2025 - 22-06-2025"
+      "4. februar - 10. februar"  (uden årstal — antager nuværende år)
+    """
+    import re as _re
+    from datetime import date as _date
+
+    if not rejseperiode_str or not isinstance(rejseperiode_str, str):
+        return None
+
+    s = rejseperiode_str.strip().lower()
+
+    DANSKE_MAANEDER = {
+        "januar": 1, "februar": 2, "marts": 3, "april": 4,
+        "maj": 5, "juni": 6, "juli": 7, "august": 8,
+        "september": 9, "oktober": 10, "november": 11, "december": 12,
+        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "jun": 6, "jul": 7,
+        "aug": 8, "sep": 9, "okt": 10, "nov": 11, "dec": 12,
+    }
+
+    def _parse_dato(dag, maaned, aar):
+        try:
+            return _date(int(aar), int(maaned), int(dag))
+        except (ValueError, TypeError):
+            return None
+
+    # Format A: "8.-22. juni 2025" (fælles måned + årstal)
+    m = _re.match(
+        r"(\d{1,2})\.\s*[-–—]\s*(\d{1,2})\.\s*(\w+)\s+(\d{4})",
+        s,
+    )
+    if m:
+        d1, d2, mn, yr = m.group(1), m.group(2), m.group(3), m.group(4)
+        mnum = DANSKE_MAANEDER.get(mn)
+        if mnum:
+            ud = _parse_dato(d1, mnum, yr)
+            hj = _parse_dato(d2, mnum, yr)
+            if ud and hj and hj > ud:
+                return (hj - ud).days
+
+    # Format B: "8. juni - 22. juni 2025" (samme måned + årstal til sidst)
+    m = _re.match(
+        r"(\d{1,2})\.\s*(\w+)\s*[-–—]\s*(\d{1,2})\.\s*(\w+)\s+(\d{4})",
+        s,
+    )
+    if m:
+        d1, mn1, d2, mn2, yr = (
+            m.group(1), m.group(2), m.group(3), m.group(4), m.group(5),
+        )
+        mnum1 = DANSKE_MAANEDER.get(mn1)
+        mnum2 = DANSKE_MAANEDER.get(mn2)
+        if mnum1 and mnum2:
+            ud = _parse_dato(d1, mnum1, yr)
+            hj = _parse_dato(d2, mnum2, yr)
+            if ud and hj and hj > ud:
+                return (hj - ud).days
+
+    # Format C: "8. juni 2025 - 22. juni 2025" (eget årstal pr. dato)
+    m = _re.match(
+        r"(\d{1,2})\.\s*(\w+)\s+(\d{4})\s*[-–—]\s*(\d{1,2})\.\s*(\w+)\s+(\d{4})",
+        s,
+    )
+    if m:
+        d1, mn1, yr1, d2, mn2, yr2 = (
+            m.group(1), m.group(2), m.group(3),
+            m.group(4), m.group(5), m.group(6),
+        )
+        mnum1 = DANSKE_MAANEDER.get(mn1)
+        mnum2 = DANSKE_MAANEDER.get(mn2)
+        if mnum1 and mnum2:
+            ud = _parse_dato(d1, mnum1, yr1)
+            hj = _parse_dato(d2, mnum2, yr2)
+            if ud and hj and hj > ud:
+                return (hj - ud).days
+
+    # Format D: "08-06-2025 til 22-06-2025" eller "08-06-2025 - 22-06-2025"
+    m = _re.match(
+        r"(\d{1,2})[-./](\d{1,2})[-./](\d{4})\s*(?:til|[-–—])\s*"
+        r"(\d{1,2})[-./](\d{1,2})[-./](\d{4})",
+        s,
+    )
+    if m:
+        d1, mn1, yr1, d2, mn2, yr2 = (
+            m.group(1), m.group(2), m.group(3),
+            m.group(4), m.group(5), m.group(6),
+        )
+        ud = _parse_dato(d1, mn1, yr1)
+        hj = _parse_dato(d2, mn2, yr2)
+        if ud and hj and hj > ud:
+            return (hj - ud).days
+
+    # Format E: "4. februar - 10. februar" (intet årstal — antag nuværende år)
+    m = _re.match(
+        r"(\d{1,2})\.\s*(\w+)\s*[-–—]\s*(\d{1,2})\.\s*(\w+)\s*$",
+        s,
+    )
+    if m:
+        d1, mn1, d2, mn2 = (
+            m.group(1), m.group(2), m.group(3), m.group(4),
+        )
+        mnum1 = DANSKE_MAANEDER.get(mn1)
+        mnum2 = DANSKE_MAANEDER.get(mn2)
+        if mnum1 and mnum2:
+            yr = _date.today().year
+            ud = _parse_dato(d1, mnum1, yr)
+            hj = _parse_dato(d2, mnum2, yr)
+            if ud and hj and hj > ud:
+                return (hj - ud).days
+
+    return None
+
+
 def udtraek_sagen_angaar(tekst, max_chars=2000):
     """
     Trækker den juridisk MEST sigende del af en Pakkerejse-Ankenævn-
