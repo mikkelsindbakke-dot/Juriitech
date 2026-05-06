@@ -202,7 +202,11 @@ def thinking(tekst="juriitech PAX arbejder...", faser=None):
 </html>
 """
         with placeholder:
-            _components_html(widget_html, height=140)
+            # Iframe-højden skal kunne rumme BÅDE wrap-boksen (~70px) og
+            # kvalitet-note'en (italic forklaring, op til ~7 linjer ≈ 160px).
+            # 240 giver lidt margin så teksten aldrig klippes — tidligere
+            # 140 klippede de sidste 3-4 linjer af kvalitet-note.
+            _components_html(widget_html, height=240)
     else:
         placeholder.markdown(
             f"""

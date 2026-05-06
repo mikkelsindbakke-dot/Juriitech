@@ -1744,7 +1744,18 @@ def _gæt_mime(fil):
 # kode-duplikation.
 def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
     """Læs uploadede filer, gem i database, opdatér session state.
-    Kaldes når brugeren trykker Scan filer / Opdatér filer."""
+    Kaldes når brugeren trykker Scan filer / Opdatér filer.
+
+    Bruger thinking_fullpage så loaderen er prominent fra første øjeblik
+    — tidligere brugte vi den lille thinking()-inline-loader, men den
+    sidder inde i upload-kolonnen og er let at overse. Brugeren kunne
+    derfor opleve at det 'tog 30 sekunder før loading-viewet kom frem'
+    (de ventede på den næste fullpage-loader for førstevurdering, fordi
+    de ikke registrerede den lille inline-loader).
+
+    Skal kaldes fra TOP-LEVEL (ikke inde i en st.columns-blok), ellers
+    rendres thinking_fullpage inde i kolonnen og bliver smal i stedet for
+    page-bred. Se _scan_filer_pending-håndtering nedenfor."""
     _scan_faser = [
         f"Læser {len(uploadede_filer)} filer fra dit upload",
         "Ekstraherer tekst fra dokumenter",
@@ -1753,8 +1764,13 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
         "Gemmer i database og opretter sagen",
         "Klargør sagen til førstevurdering",
     ]
-    with thinking(
-        tekst="juriitech PAX behandler dine sagsfiler",
+    with thinking_fullpage(
+        titel="juriitech PAX behandler dine sagsfiler",
+        beskrivelse=(
+            "Læser dokumenter, ekstraherer tekst og opretter sagen i din "
+            "vidensbank. Tager typisk 15-45 sekunder afhængigt af antal "
+            "og størrelse på filerne."
+        ),
         faser=_scan_faser,
     ):
         sag_data = laes_sag_fra_filer(uploadede_filer)
@@ -1819,6 +1835,33 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
     # skifter rent over i active state — uden den "transitions-flicker"
     # hvor hero + grøn bar + loading vises samtidigt.
     st.rerun()
+
+
+# ---------- EARLY DETECTION: SCAN FILER PENDING ----------
+# Når brugeren klikker 'Scan filer'/'Opdatér filer', sætter knappen et
+# flag og kører st.rerun(). Her ved toppen af siden detekterer vi
+# flaget FØR upload-UI rendres — så thinking_fullpage'en er det første
+# brugeren ser, ikke gemt nederst i upload-kolonnen.
+#
+# Filerne hentes fra file_uploader'ens session_state-key (Streamlit
+# bevarer UploadedFile-objekterne mellem reruns så længe widget'en har
+# samme key).
+if st.session_state.get("_scan_filer_pending"):
+    st.session_state._scan_filer_pending = False
+    _pending_files = (
+        st.session_state.get("sag_uploader")
+        or st.session_state.get("sag_uploader_active")
+        or []
+    )
+    if _pending_files:
+        _pending_sig = tuple(sorted(
+            (f.name, f.size) for f in _pending_files
+        ))
+        _udfor_scan_filer_og_gem(_pending_files, _pending_sig)
+        # _udfor_scan_filer_og_gem kalder st.rerun() til sidst — denne
+        # st.stop() er belt-and-suspenders hvis rerun-kaldet skulle
+        # mangle (f.eks. hvis en bug fanger exception inde i scanningen).
+        st.stop()
 
 
 # Empty state: stor hero-sektion med Apple Health-lavendel-baggrund
@@ -1986,9 +2029,11 @@ if not _har_aktiv_sag:
                     "analysen starter. Du kan uploade flere filer først."
                 ),
             ):
-                _udfor_scan_filer_og_gem(
-                    uploadede_sagsfiler, _aktuel_sig_inline
-                )
+                # Sæt flag og rerun — early-detection-blokken øverst i
+                # filen fanger flaget og kører scanningen FØR upload-UI
+                # rendres, så thinking_fullpage er det første brugeren ser.
+                st.session_state._scan_filer_pending = True
+                st.rerun()
 else:
     # Active state: brug en SEPARAT file_uploader med eget key.
     # Tidligere genbrugte vi 'sag_uploader' fra empty state, men det
