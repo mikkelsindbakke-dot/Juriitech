@@ -1496,9 +1496,10 @@ def find_navne_til_redaction(tekst, klager_navne):
     Returnerer dict med 'navne' og 'adresser' lister. Tom liste hvis
     intet fundet eller hvis AI-kaldet fejler (graceful fall-back).
     """
-    klient = _get_client()
-    if klient is None:
-        print("DEBUG: anonymisering AI-klient ikke tilgængelig — returnerer tom")
+    if client is None:
+        print(
+            "DEBUG: anonymisering AI-klient ikke tilgængelig — returnerer tom"
+        )
         return {"navne": [], "adresser": []}
 
     klager_liste_str = (
@@ -1534,8 +1535,8 @@ VIGTIGE REGLER:
 """
 
     try:
-        response = klient.messages.create(
-            model="claude-sonnet-4-6",
+        response = client.messages.create(
+            model=MODEL,
             max_tokens=4096,
             temperature=0,
             system=system_prompt,
