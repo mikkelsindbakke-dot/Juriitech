@@ -62,3 +62,6 @@ backups/
 *.egg-info/
 build/
 dist/
+
+# Git worktrees (skill superpowers:using-git-worktrees opretter dem her)
+.worktrees/
