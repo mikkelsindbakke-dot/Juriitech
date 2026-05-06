@@ -345,6 +345,12 @@ _pg = st.navigation(_pages)
 try:
     _pg.run()
 except Exception as _kritisk_fejl:
+    # Print fuld traceback til stdout så fly logs viser fejlen direkte
+    # — vi har ikke altid Sentry-adgang under feltdebugging.
+    import traceback as _traceback
+    print("KRITISK FEJL i _pg.run():", flush=True)
+    print(_traceback.format_exc(), flush=True)
+
     # Send til Sentry hvis muligt (ikke-blokkerende)
     try:
         import sentry_sdk

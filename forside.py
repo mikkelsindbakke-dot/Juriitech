@@ -1304,7 +1304,7 @@ def _skal_vise_loading_view():
          len(f.get("tekst") or ""))
         for f in sagsakter_filer
     )
-    kombineret_sig = (sag_sig, hash(sagsakter_tekst), sagsakter_sig)
+    kombineret_sig = (sag_sig, _stabil_hash(sagsakter_tekst), sagsakter_sig)
     return (
         st.session_state.get("auto_vurdering_for_signatur")
         != kombineret_sig
@@ -1696,7 +1696,7 @@ def _tilfoej_nye_filer_til_sag(nye_filer):
         for fil in nye_dicts:
             if sag_findes(fil["filnavn"]):
                 continue
-            if fil["type"] == "tekst" and fil.get("tekst", "").strip():
+            if fil.get("type") == "tekst" and fil.get("tekst", "").strip():
                 emb = embed_dokument(fil["tekst"])
                 gem_sag_i_db(
                     fil["filnavn"], fil["tekst"],
@@ -1785,7 +1785,7 @@ def _udfor_scan_filer_og_gem(uploadede_filer, ny_signatur):
             if sag_findes(fil["filnavn"]):
                 sprunget_over.append(fil["filnavn"])
                 continue
-            if fil["type"] == "tekst" and fil.get("tekst", "").strip():
+            if fil.get("type") == "tekst" and fil.get("tekst", "").strip():
                 emb = embed_dokument(fil["tekst"])
                 gem_sag_i_db(
                     fil["filnavn"], fil["tekst"],
@@ -2142,8 +2142,8 @@ if _har_aktiv_sag and uploadede_sagsfiler:
 if st.session_state.get("aktuel_sag"):
     sag = st.session_state.aktuel_sag
     filer = sag.get("filer") or []
-    antal_tekst = sum(1 for f in filer if f["type"] == "tekst")
-    antal_scannet = sum(1 for f in filer if f["type"] == "pdf_bytes")
+    antal_tekst = sum(1 for f in filer if f.get("type") == "tekst")
+    antal_scannet = sum(1 for f in filer if f.get("type") == "pdf_bytes")
 
     # SKJUL alt sag-info (success-bar, Ryd sag, file-expander)
     # under loading så cirkel-spinneren med timer er synlig
@@ -2213,7 +2213,7 @@ if st.session_state.get("aktuel_sag"):
                 rolle = fil.get("rolle", "ukendt").replace("_", " ")
                 tegn_info = (
                     f" — {len(fil.get('tekst') or '')} tegn læst"
-                    if fil["type"] == "tekst" else " — scannet PDF"
+                    if fil.get("type") == "tekst" else " — scannet PDF"
                 )
                 st.markdown(f"**{i}. {fil['filnavn']}** · *{rolle}*{tegn_info}")
 
@@ -2229,7 +2229,7 @@ if st.session_state.get("aktuel_sag"):
             (f["filnavn"], len(f.get("bytes") or b""), len(f.get("tekst") or ""))
             for f in sagsakter_filer
         )
-        return (sag_sig, hash(sagsakter_tekst), sagsakter_sig)
+        return (sag_sig, _stabil_hash(sagsakter_tekst), sagsakter_sig)
 
     kombineret_sig = _beregn_kombineret_signatur()
     skal_auto_vurdere = (
@@ -3491,19 +3491,20 @@ if st.session_state.get("aktuel_sag"):
                 # Normal visning: filnavn + (rename, fjern)-knapper
                 kol_a, kol_b, kol_c = st.columns([10, 1, 1])
                 with kol_a:
+                    _fil_type = fil.get("type") or "tekst"
                     ikon = {
                         "image_bytes": "🖼",
                         "pdf_bytes": "📄",
                         "tekst": "📄",
-                    }.get(fil["type"], "📄")
+                    }.get(_fil_type, "📄")
                     laengde_info = ""
-                    if fil["type"] == "tekst" and fil.get("tekst"):
+                    if _fil_type == "tekst" and fil.get("tekst"):
                         laengde_info = (
                             f" — {len(fil['tekst'])} tegn læst"
                         )
-                    elif fil["type"] == "image_bytes":
+                    elif _fil_type == "image_bytes":
                         laengde_info = " — scannes via vision"
-                    elif fil["type"] == "pdf_bytes":
+                    elif _fil_type == "pdf_bytes":
                         laengde_info = (
                             " — scannet PDF (læses via vision)"
                         )
@@ -4522,21 +4523,39 @@ if st.session_state.get("aktuel_sag"):
     # Sagsnummer og klagers navn forsøges auto-udtrukket fra sagen via et
     # lille AI-kald (cached pr. sag-signatur så vi ikke kalder igen ved
     # hver rerender). Brugeren kan altid rette manuelt før download.
-    _meta_cache_key = f"sagsmetadata_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
-    if _meta_cache_key not in st.session_state:
-        # Kør lazy auto-udtræk én gang pr. sag-signatur. Fejler stille.
-        with st.spinner("Henter sagsdata til brevhoved…"):
-            try:
-                _meta = udled_sagsmetadata(
-                    sag=st.session_state.aktuel_sag,
-                    sagsakter_tekst=st.session_state.get("sagsakter", "") or "",
-                )
-            except Exception as _meta_e:
-                print(f"DEBUG: udled_sagsmetadata UI-kald fejlede: {_meta_e}")
-                _meta = {"sagsnummer": "", "klagers_navn": ""}
-        st.session_state[_meta_cache_key] = _meta
-
-    _meta_default = st.session_state[_meta_cache_key]
+    # Wrap HELE blokken (inkl. _stabil_hash + cache-opslag) i try/except.
+    # Hvis _sag_sig indeholder ikke-serialiserbare objekter efter en
+    # gemt-sag-restore, kan _stabil_hash(...) selv kaste — og det skal
+    # IKKE boble op til _pg.run() og udløse den røde fallback-fejlboks.
+    try:
+        _meta_cache_key = (
+            f"sagsmetadata_{_aktiv_sag_id}_{_stabil_hash(_sag_sig)}"
+        )
+        if _meta_cache_key not in st.session_state:
+            # Kør lazy auto-udtræk én gang pr. sag-signatur. Fejler stille.
+            with st.spinner("Henter sagsdata til brevhoved…"):
+                try:
+                    _meta = udled_sagsmetadata(
+                        sag=st.session_state.aktuel_sag,
+                        sagsakter_tekst=(
+                            st.session_state.get("sagsakter", "") or ""
+                        ),
+                    )
+                except Exception as _meta_e:
+                    print(
+                        f"DEBUG: udled_sagsmetadata UI-kald fejlede: "
+                        f"{_meta_e}"
+                    )
+                    _meta = {"sagsnummer": "", "klagers_navn": ""}
+            st.session_state[_meta_cache_key] = _meta
+        _meta_default = st.session_state[_meta_cache_key]
+    except Exception as _meta_blok_e:
+        print(
+            f"DEBUG: meta-cache-blok fejlede: {_meta_blok_e}. "
+            f"Bruger tomme defaults."
+        )
+        _meta_cache_key = f"sagsmetadata_{_aktiv_sag_id}_fallback"
+        _meta_default = {"sagsnummer": "", "klagers_navn": ""}
 
     st.markdown("**Brevhoved**")
     st.caption(

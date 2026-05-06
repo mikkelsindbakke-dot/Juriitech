@@ -4,11 +4,22 @@ Brugeren kan klikke på en sag for at genoptage arbejdet på den.
 """
 
 import base64
+import hashlib
 import json
 
 import streamlit as st
 
 from database import hent_gemte_sager, hent_gemt_sag, slet_gemt_sag
+
+
+def _stabil_hash(obj):
+    """
+    Deterministisk hash der overlever proces-restart. Kopi af den
+    samme funktion i forside.py — vi duplikerer for at undgå cyklisk
+    import. Skal matche forside._stabil_hash bit-for-bit, ellers vil
+    gemt-sag-restore aldrig finde sin auto_vurdering_for_signatur.
+    """
+    return hashlib.md5(repr(obj).encode("utf-8")).hexdigest()[:16]
 
 
 ER_ADMIN = st.session_state.get("er_admin", False)
@@ -234,7 +245,7 @@ def _gendan_state_fra_json(state):
         )
         for f in sagsakter_filer
     )
-    kombineret_sig = (sag_sig, hash(sagsakter_tekst), sagsakter_sig)
+    kombineret_sig = (sag_sig, _stabil_hash(sagsakter_tekst), sagsakter_sig)
 
     # Sæt BEGGE signaturer til samme værdi — så når forsiden rendres,
     # ser den at 'auto_vurdering_for_signatur == kombineret_sig' og
