@@ -1859,30 +1859,92 @@ SKAL behandles.
 {klagepunkter_blok}
 {tidsforhold_blok}
 
-NEUTRAL TONE — UNDGÅ ANERKENDELSER OG UNDSKYLDNINGER:
+NEUTRAL TONE — ABSOLUT FORBUD MOD ANERKENDELSER OG UNDSKYLDNINGER:
 {REJSESELSKAB_NAVN} udarbejder dette svarbrev fordi selskabet er UENIG
-med klagers krav. Brug derfor IKKE formuleringer der lyder som en
-indrømmelse — Pakkerejse-Ankenævnet kan tolke dem som anerkendelse
-af ansvar og hæve den tilkendte erstatning.
+med klagers krav. Pakkerejse-Ankenævnet kan tolke ord som "beklager",
+"anerkender" og lignende som indrømmelse af ansvar og hæve den
+tilkendte erstatning. Der er INGEN gyldige undtagelser.
 
-Undgå disse vendinger som default:
-  • "anerkender at ..."
-  • "beklager at ..."
-  • "finder det beklageligt at ..."
-  • "erkender at ..."
-  • "er enig i at ..."
-  • "vi forstår klagers frustration"
-  • "vi tager kritikken til efterretning"
+ABSOLUT FORBUDTE ORD/VENDINGER (må ALDRIG forekomme i svarbrevet —
+ikke i indledningen, ikke i fakta-afsnittet, ikke i konklusionen,
+ikke i nogen sammenhæng overhovedet):
 
-Beskriv i stedet faktuelt hvad der er sket — UDEN følelsesladede ord.
-Eksempel:
+  ❌ "beklager"           (alle bøjninger: beklager, beklagede,
+                           beklageligt, beklagelse osv.)
+  ❌ "anerkender"          (alle bøjninger: anerkender, anerkendt,
+                           anerkendelse osv.)
+  ❌ "erkender"            (alle bøjninger)
+  ❌ "indrømmer"           (alle bøjninger)
+  ❌ "undskylder"          (alle bøjninger)
+  ❌ "finder det beklageligt"
+  ❌ "vi forstår klagers frustration"
+  ❌ "vi tager kritikken til efterretning"
+  ❌ "er enig i at" (medmindre om en faktum)
+
+KONKRETE REWRITES — beskriv FAKTUELT uden følelsesladede ord:
+
+  ❌ "{REJSESELSKAB_NAVN} beklager at dette ikke kunne ske samme dag"
+  ✅ "Det var ikke muligt at gennemføre det samme dag"
+       (eller hvis relevant: "Det skete dagen efter, fordi ...")
+
   ❌ "Vi beklager at klager oplevede problemer med poolen."
   ✅ "Klager har anført at poolen ikke var åben i hele perioden."
 
-UNDTAGELSE: Hvis brugerens særlige instrukser ovenfor EKSPLICIT beder
-om at anerkende eller beklage et specifikt forhold (fx 'anerkend de
-allerede udbetalte 2.000 kr.'), så følg den instruks. Bevidst
-anerkendelse er strategisk legitim når juristen aktivt har valgt det.
+  ❌ "{REJSESELSKAB_NAVN} anerkender at hotellet ikke levede op til
+       beskrivelsen"
+  ✅ "Hotellet havde de mangler klager beskriver"
+       (eller: "Det er rigtigt at hotellet havde [mangel]")
+
+  ❌ "Vi anerkender klagers utilfredshed"
+  ✅ (slet sætningen — utilfredshed er ikke et juridisk forhold)
+
+VIGTIGT — bemærk forskellen:
+  - At KONSTATERE et faktum er OK: "Hotellet havde lukket poolen"
+  - At BEKLAGE eller ANERKENDE er FORBUDT: "Vi beklager at hotellet..."
+
+Skriv altid i tredje person og uden følelser. Lad fakta tale for sig selv.
+
+KUN FAKTA — INGEN VURDERINGER DER MEDGIVER ANSVAR:
+{REJSESELSKAB_NAVN} medgiver ALDRIG noget i svarbrevet. Hvis du
+konstaterer et faktum, så STOP der — tilbygninger der vurderer
+faktummet kan tolkes som indrømmelse af ansvar.
+
+KONKRETE REGLER:
+
+  ❌ "Vi har ikke dokumentation for at mailen er besvaret, og dette
+       er ikke tilfredsstillende"
+  ✅ "Vi har ikke dokumentation for at mailen er besvaret"
+       (Punktum. Ingen vurdering. Konstateringen står alene.)
+
+  ❌ "Hotellet havde lukket poolen, hvilket er beklageligt"
+  ✅ "Hotellet havde lukket poolen"
+
+  ❌ "Sagsbehandlingen tog længere tid end normalt, hvilket vi forstår
+       har frustreret klager"
+  ✅ "Sagsbehandlingen tog længere tid end normalt"
+
+  ❌ "Klager modtog ikke svar inden 14 dage som lovet, hvilket er
+       en fejl"
+  ✅ "Klager modtog ikke svar inden 14 dage"
+
+  ❌ "Mailen blev ikke besvaret rettidigt, hvilket vi gerne ville
+       have undgået"
+  ✅ "Mailen blev ikke besvaret rettidigt"
+
+FORBUDTE TILBYGNINGER (må ALDRIG hænges på en faktuel sætning):
+  • "...og dette er ikke tilfredsstillende"
+  • "...hvilket er beklageligt"
+  • "...som er kritisabelt"
+  • "...som er en fejl"
+  • "...som ikke burde være sket"
+  • "...og vi forstår klagers reaktion"
+  • "...som vi gerne ville have undgået"
+  • "...hvilket vi tager til efterretning"
+  • "...hvilket vi har lært af"
+  • "...som vi vil arbejde på at forbedre"
+
+Disse tilbygninger gør et neutralt faktum til en delvis indrømmelse.
+Skriv kun det faktuelle udsagn. Ikke mere. Ikke mindre.
 
 SIMPELT SPROG — SKRIV SÅ ALLE FORSTÅR DET:
 Brevet skal være formelt og juridisk præcist, men IKKE akademisk eller
@@ -2162,8 +2224,12 @@ def generer_svarbrev(
         svarbrev_tekst = response.content[0].text
 
         # Sikkerhedsnet: kør svarbrevet gennem den dedikerede anonymiserings-
-        # funktion så klagerens navn aldrig slipper igennem til Nævnet.
-        return _sikr_svarbrev_anonymiseret(svarbrev_tekst)
+        # funktion så klagerens navn aldrig slipper igennem til Nævnet,
+        # og derefter gennem forbudte-ord-rensningen så indrømmelser/
+        # delvist-ansvar-formuleringer ikke ryger med.
+        return _check_og_rens_forbudte_ord(
+            _sikr_svarbrev_anonymiseret(svarbrev_tekst)
+        )
 
     except Exception as e:
         return f"Fejl i generering af svarbrev: {str(e)}"
@@ -2250,6 +2316,180 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
 
     except Exception as e:
         print(f"DEBUG: Svarbrevs-anonymiseringspas fejlede (ikke kritisk): {e}")
+        return svarbrev_tekst
+
+
+# Forbudte ord der LYDER som indrømmelser. Bruges af
+# _check_og_rens_forbudte_ord som post-processor på svarbrevet.
+# Ord-stammer der matches case-insensitivt med \b-grænser.
+_FORBUDTE_ORD_STAMMER = (
+    "beklag",       # beklager, beklagede, beklagelig, beklagelse
+    "anerkend",     # anerkender, anerkendt, anerkendelse
+    "erkend",       # erkender, erkendt, erkendelse
+    "indrømm",      # indrømmer, indrømmet, indrømmelse
+    "undskyld",     # undskylder, undskyldning, undskyldte
+    "bestrid",      # bestrider, bestrides, bestridt
+)
+
+_FORBUDTE_ORD_RE = re.compile(
+    r"\b(" + "|".join(_FORBUDTE_ORD_STAMMER) + r")[a-zæøå]*\b",
+    re.IGNORECASE,
+)
+
+# Forbudte SÆTNINGS-mønstre (vurderings-tilbygninger der gør et neutralt
+# faktum til en delvis indrømmelse af ansvar). Disse er svære at fange
+# med rene ord-stammer da de kræver kontekst — derfor en separat regex
+# der leder efter de specifikke fraser. Case-insensitivt match.
+_FORBUDTE_FRASER = (
+    r"ikke tilfredsstillende",
+    r"er beklageligt",
+    r"er kritisabelt",
+    r"er en fejl",
+    r"burde (?:ikke )?være sket",
+    r"vi forstår klagers (?:reaktion|frustration|utilfredshed)",
+    r"vi gerne ville have undgået",
+    r"tager (?:vi )?til efterretning",
+    r"har vi lært af",
+    r"vil arbejde på at forbedre",
+    r"medgiver",
+)
+
+_FORBUDTE_FRASER_RE = re.compile(
+    r"(?:" + r"|".join(_FORBUDTE_FRASER) + r")",
+    re.IGNORECASE,
+)
+
+
+def _check_og_rens_forbudte_ord(svarbrev_tekst):
+    """
+    Scanner svarbrevet for forbudte ord OG sætnings-mønstre der
+    medgiver ansvar:
+
+      Ord:       beklager, anerkender, erkender, indrømmer, undskylder,
+                 bestrider
+      Fraser:    "ikke tilfredsstillende", "er beklageligt",
+                 "vi forstår klagers reaktion", "tager til efterretning",
+                 "medgiver", osv.
+
+    Hvis ingen findes returneres teksten uændret. Hvis fundet køres et
+    second-chance AI-kald der fjerner ord/fraser og evt. de
+    vurderings-tilbygninger der hænger på faktuelle sætninger.
+
+    Falder tilbage til at returnere originalen hvis AI-kaldet fejler
+    eller giver tom output — så svarbrevet aldrig blokeres af denne
+    post-processor.
+    """
+    if not svarbrev_tekst or not svarbrev_tekst.strip():
+        return svarbrev_tekst
+
+    ord_fund = _FORBUDTE_ORD_RE.findall(svarbrev_tekst)
+    frase_fund = _FORBUDTE_FRASER_RE.findall(svarbrev_tekst)
+    if not ord_fund and not frase_fund:
+        return svarbrev_tekst
+
+    print(
+        f"DEBUG: Svarbrev indeholder forbudte formuleringer "
+        f"(ord: {set(ord_fund) if ord_fund else '-'}, "
+        f"fraser: {set(frase_fund) if frase_fund else '-'}). "
+        f"Kører rewrite-pas."
+    )
+
+    if client is None:
+        return svarbrev_tekst
+
+    instruktion = (
+        "Du modtager et færdigskrevet svarbrev til Pakkerejse-Ankenævnet. "
+        "Din ENESTE opgave er at fjerne to typer af indrømmelses-"
+        "formuleringer og erstatte dem med rene faktuelle udsagn — "
+        "UDEN at ændre andet i brevet. Bevar struktur, afsnit, "
+        "juridiske termer, beløb, datoer, henvisninger og sprogtonen "
+        "100%. Rejseselskabet medgiver INTET i brevet.\n\n"
+        "TYPE 1 — ORD DER SKAL FJERNES (alle bøjninger):\n"
+        "  - beklager / beklagede / beklageligt / beklagelse\n"
+        "  - anerkender / anerkendt / anerkendelse\n"
+        "  - erkender / erkendt / erkendelse\n"
+        "  - indrømmer / indrømmet / indrømmelse\n"
+        "  - undskylder / undskyldning / undskyldte\n"
+        "  - bestrider / bestrides / bestridt (akademisk juridisk)\n\n"
+        "TYPE 2 — VURDERINGS-TILBYGNINGER DER SKAL FJERNES (ikke "
+        "erstattes — bare slettes så det faktuelle udsagn står alene):\n"
+        '  - "...og dette er ikke tilfredsstillende"\n'
+        '  - "...hvilket er beklageligt"\n'
+        '  - "...som er kritisabelt"\n'
+        '  - "...som er en fejl"\n'
+        '  - "...som ikke burde være sket"\n'
+        '  - "...og vi forstår klagers reaktion/frustration"\n'
+        '  - "...som vi gerne ville have undgået"\n'
+        '  - "...hvilket vi tager til efterretning"\n'
+        '  - "...som vi har lært af"\n'
+        '  - "...som vi vil arbejde på at forbedre"\n'
+        '  - "...{REJSESELSKAB_NAVN} medgiver/medgav at..."\n\n'
+        "REWRITE-EKSEMPLER:\n\n"
+        '  Type 1 — ord:\n'
+        '  ❌ "X beklager at Y skete" → ✅ "Y skete (uden følelsesladede '
+        'ord)"\n'
+        '  ❌ "X anerkender at Y" → ✅ "Det er rigtigt at Y"\n'
+        '  ❌ "X bestrider klagers fremstilling" → ✅ "X mener ikke det '
+        'skete sådan"\n\n'
+        '  Type 2 — tilbygninger:\n'
+        '  ❌ "Vi har ikke dokumentation for at mailen er besvaret, og '
+        'dette er ikke tilfredsstillende"\n'
+        '  ✅ "Vi har ikke dokumentation for at mailen er besvaret"\n\n'
+        '  ❌ "Sagsbehandlingen tog længere tid end normalt, hvilket '
+        'er beklageligt"\n'
+        '  ✅ "Sagsbehandlingen tog længere tid end normalt"\n\n'
+        '  ❌ "Klager modtog ikke svar inden 14 dage, hvilket er en '
+        'fejl"\n'
+        '  ✅ "Klager modtog ikke svar inden 14 dage"\n\n'
+        "PRINCIP: KONSTATÉR fakta, STOP DER. Selskabet er uenig med "
+        "klagers krav og medgiver INGEN ansvar. En faktuel sætning "
+        "skal stå alene — uden vurdering af om det var godt eller "
+        "skidt.\n\n"
+        "Returnér kun det rettede svarbrev — ingen forklaring, ingen "
+        "intro, ingen afslutningskommentar. Start direkte med "
+        "brevteksten.\n\n"
+        "SVARBREV DER SKAL RETTES:\n"
+    )
+
+    try:
+        response = client.messages.create(
+            model=MODEL,
+            max_tokens=6000,
+            temperature=0,
+            system=(
+                "Du er en præcis korrektor der fjerner specifikke "
+                "forbudte ord uden at ændre andet i teksten."
+            ),
+            messages=[{
+                "role": "user",
+                "content": instruktion + svarbrev_tekst,
+            }],
+        )
+        ren_tekst = response.content[0].text
+        # Sanity: hvis output er mistænkeligt kort eller stadig
+        # indeholder forbudte ord, fald tilbage til originalen.
+        if not ren_tekst or len(ren_tekst) < 0.4 * len(svarbrev_tekst):
+            print(
+                "DEBUG: Forbudte-ord rewrite gav uventet kort svar — "
+                "bruger originalen"
+            )
+            return svarbrev_tekst
+        rest_ord = _FORBUDTE_ORD_RE.search(ren_tekst)
+        rest_fraser = _FORBUDTE_FRASER_RE.search(ren_tekst)
+        if rest_ord or rest_fraser:
+            # AI'en har stadig forbudte formuleringer. Vi forsøger ikke
+            # en tredje gang — bedre at returnere det forbedrede svar
+            # end at blokere brevet helt. Markér i logs så vi kan se
+            # mønsteret hvis det gentager sig.
+            print(
+                f"DEBUG: Forbudte-rewrite har stadig: "
+                f"ord={rest_ord.group(0) if rest_ord else '-'}, "
+                f"frase={rest_fraser.group(0) if rest_fraser else '-'}. "
+                f"Bruger AI-output alligevel."
+            )
+        return ren_tekst
+    except Exception as e:
+        print(f"DEBUG: Forbudte-ord rewrite fejlede (ikke kritisk): {e}")
         return svarbrev_tekst
 
 
@@ -4698,8 +4938,11 @@ def generer_svarbrev_til_sag(
         )
         svarbrev_tekst = response.content[0].text
 
-        # Sikkerhedsnet: anonymiser svarbrevet før det returneres til juristen
-        return _sikr_svarbrev_anonymiseret(svarbrev_tekst)
+        # Sikkerhedsnet: anonymiser svarbrevet + rens forbudte ord
+        # (indrømmelser, delvist-ansvar-formuleringer) før retur.
+        return _check_og_rens_forbudte_ord(
+            _sikr_svarbrev_anonymiseret(svarbrev_tekst)
+        )
 
     except Exception as e:
         return f"Fejl i generering af svarbrev: {str(e)}"
