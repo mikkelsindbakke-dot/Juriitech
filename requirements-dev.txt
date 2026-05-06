@@ -1,0 +1,11 @@
+# Dev/test-only dependencies — installeres IKKE i produktions-imaget.
+# Brug: python3 -m pip install -r requirements-dev.txt
+#
+# Holdes adskilt fra requirements.txt så Fly-imaget forbliver slankt
+# (Playwright + browser-binaries er 200+ MB).
+
+# E2E browser-automation
+playwright>=1.45.0
+
+# Lokal test-config via .env.test
+python-dotenv>=1.0.0

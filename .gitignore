@@ -58,6 +58,12 @@ backups/
 *.sql.gz
 *.dump
 
+# E2E-test artefakter — fixture-PDF'er og screenshots genereres lokalt
+# pr. kørsel. Selve test-koden er versioneret, men output ikke.
+tests/e2e/fixtures/*.pdf
+tests/e2e/screenshots/
+tests/e2e/reports/
+
 # Python distribution
 *.egg-info/
 build/
