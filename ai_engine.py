@@ -1517,6 +1517,7 @@ def byg_svarbrev_opgave(
     inkluder_kildehenvisninger: bool = False,
     verificerede_klagepunkter: list = None,
     tidsforhold: dict = None,
+    antal_naetter: int = None,
 ) -> str:
     """Bygger svarbrev-prompten dynamisk.
 
@@ -1610,6 +1611,37 @@ def byg_svarbrev_opgave(
             "et flydende, naturligt svar — ikke en akademisk afhandling.\n"
         )
 
+    # Bygger nætter-aware faktum-bullet + eksempel-formulering. Hvis vi
+    # har et beregnet antal nætter, instrueres AI'en til at inkludere
+    # "svarende til {N} nætter" i sætningen om rejsedatoer.
+    if antal_naetter and antal_naetter >= 1:
+        naetter_bullet = (
+            f"  • Udrejse- og hjemrejse-dato (eller rejseperiode), "
+            f"OG antal nætter — du SKAL inkludere 'svarende til "
+            f"{antal_naetter} nætter' i sætningen om rejsedatoerne. "
+            f"Tallet {antal_naetter} er beregnet og verificeret — opfind "
+            f"ikke et andet."
+        )
+        naetter_eksempel = (
+            f'  "Klager rejste den X. juni 2025 til [Hotel-navn], '
+            f'[Destination, Land], med hjemrejse den Y. juni 2025, '
+            f'svarende til {antal_naetter} nætter. Rejsen omfattede '
+            f'[N] rejsende og havde en samlet pris på [beløb] kr. '
+            f'{REJSESELSKAB_NAVN} har forud for nævnsbehandlingen '
+            f'udbetalt [beløb] kr. i kompensation."'
+        )
+    else:
+        naetter_bullet = (
+            "  • Udrejse- og hjemrejse-dato (eller rejseperiode)"
+        )
+        naetter_eksempel = (
+            f'  "Klager rejste den X. juni 2025 til [Hotel-navn], '
+            f'[Destination, Land], med hjemrejse den Y. juni 2025. '
+            f'Rejsen omfattede [N] rejsende og havde en samlet pris på '
+            f'[beløb] kr. {REJSESELSKAB_NAVN} har forud for '
+            f'nævnsbehandlingen udbetalt [beløb] kr. i kompensation."'
+        )
+
     return f"""
 OPGAVE: Generer et KOMPLET UDKAST til svarbrev fra {REJSESELSKAB_NAVN} til
 Pakkerejseankenævnet. Skriv i et formelt, professionelt juridisk sprog —
@@ -1634,15 +1666,12 @@ Direkte efter indledningen skal brevet have et kort, faktuelt
 oversigts-afsnit (3-6 sætninger) der præsenterer sagens basale rammer
 — uden argumentation. Dette afsnit MÅ IKKE udelades. Inkludér:
   • Klagers booking/rejse: hotel-navn og destination (by, land)
-  • Udrejse- og hjemrejse-dato (eller rejseperiode)
+{naetter_bullet}
   • Antal rejsende
   • Rejsens samlede pris
   • Eventuel allerede udbetalt kompensation (med beløb)
 Eksempel-formulering:
-  "Klager rejste den X. juni 2025 til [Hotel-navn], [Destination, Land],
-  med hjemrejse den Y. juni 2025. Rejsen omfattede [N] rejsende og havde
-  en samlet pris på [beløb] kr. {REJSESELSKAB_NAVN} har forud for
-  nævnsbehandlingen udbetalt [beløb] kr. i kompensation."
+{naetter_eksempel}
 Dette afsnit giver Nævnet en hurtig grundforståelse af sagen, før
 argumentationen starter. UDEN det er brevet sværere at læse.
 
@@ -1776,6 +1805,7 @@ def generer_svarbrev(
     sagsakter=None,
     ekstra_instrukser=None,
     inkluder_kildehenvisninger=False,
+    antal_naetter=None,
 ):
     """
     Genererer et komplet udkast til svarbrev fra rejseselskabet til Nævnet.
@@ -1799,7 +1829,8 @@ def generer_svarbrev(
         # ikke verificerede_klagepunkter. Den primære flow er via
         # generer_svarbrev_til_sag() som har fuld dækning.
         svarbrev_opgave = byg_svarbrev_opgave(
-            inkluder_kildehenvisninger=inkluder_kildehenvisninger
+            inkluder_kildehenvisninger=inkluder_kildehenvisninger,
+            antal_naetter=antal_naetter,
         )
         import base64
         klage_filnavn = klage.get("filnavn", "ukendt_klage")
@@ -4314,6 +4345,7 @@ def generer_svarbrev_til_sag(
     inkluder_kildehenvisninger=False,
     verificerede_klagepunkter=None,
     tidsforhold=None,
+    antal_naetter=None,
 ):
     """
     Genererer et komplet udkast til svarbrev baseret på HELE sagspakken
@@ -4351,11 +4383,19 @@ def generer_svarbrev_til_sag(
                 sagsakter_tekst=(sagsakter or "").strip(),
             )
 
+        # Beregn antal nætter ud fra rejseperioden i tidsforhold (hvis
+        # den findes). Hybrid: Python beregner deterministisk, AI bruger
+        # tallet som autoritativt facit i faktum-afsnittet.
+        if antal_naetter is None and tidsforhold:
+            _rp = (tidsforhold.get("rejseperiode") or "").strip()
+            antal_naetter = _beregn_antal_naetter(_rp) if _rp else None
+
         # Byg den korrekte svarbrev-prompt baseret på flag + data
         svarbrev_opgave = byg_svarbrev_opgave(
             inkluder_kildehenvisninger=inkluder_kildehenvisninger,
             verificerede_klagepunkter=verificerede_klagepunkter,
             tidsforhold=tidsforhold,
+            antal_naetter=antal_naetter,
         )
         sagsakter_tekst = (sagsakter or "").strip()
         filer = sag.get("filer") or []
