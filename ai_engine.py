@@ -1813,15 +1813,17 @@ Hotelnavne, destinationer, lufthavne, rejsedatoer, beløb og klagepunkter
 bevares (de er nødvendige for sagens afgørelse).
 
 STRUKTUR:
-Brevet består af tre dele — UDEN nummererede sektion-overskrifter:
+Brevet består af FIRE dele — uden nummererede sektion-overskrifter
+(undtagen "Samlet vurdering" der SKAL have synlig overskrift):
 
 DEL 1 — INDLEDNING (én sætning):
   "{REJSESELSKAB_NAVN} vil hermed komme med sine bemærkninger samt bilag til sagen."
 
 DEL 2 — FAKTUM-OVERSIGT (3-6 sætninger):
 Kort, neutralt afsnit med rejse-grundoplysninger som beskrevet ovenfor
-(hotel, destination, datoer, antal, pris, evt. allerede udbetalt
-kompensation).
+(hotel, destination, datoer, antal, pris). MÅ IKKE indeholde
+kompensations-info eller hvad selskabet tidligere har gjort — det
+hører hjemme i DEL 4.
 
 DEL 3 — JURIDISK VURDERING (brevets hoveddel):
 Det eneste argumenterende afsnit. Brug emne-overskrifter til at
@@ -1838,6 +1840,22 @@ For hver emne-overskrift:
   - Argumentér ud fra rejsevilkår, pakkerejselov og sagens fakta.
   - Afslut med {REJSESELSKAB_NAVN}s stilling til klagepunktet.
 
+DEL 4 — SAMLET VURDERING (afsluttende afsnit, OBLIGATORISK):
+Brevet SKAL afsluttes med et afsnit under den synlige overskrift
+"Samlet vurdering" (præcis denne overskrift, brug fed eller markdown
+header — fx "## Samlet vurdering"). Afsnittet indeholder:
+
+  1. Hvad {REJSESELSKAB_NAVN} har gjort forud for nævnsbehandlingen:
+     kontakt med klager, evt. allerede udbetalt kompensation (med
+     præcist beløb hvis oplyst), tilbud fremsat, dialogen op til
+     ankenævns-klagen. Hold det faktuelt og kort (2-4 sætninger).
+  2. {REJSESELSKAB_NAVN}s samlede stilling til klagen: hvad selskabet
+     mener Nævnet bør gøre (afvise klagen, fastholde tidligere tilbud,
+     osv.) — kort og direkte. Ingen "anmoder Nævnet om..."-formler.
+
+DEL 4 er ALTID det sidste afsnit FØR underskrift. Mangler det,
+betragtes brevet som ufuldstændigt.
+
 Afslut hele brevet med "Med venlig hilsen" og
 "{REJSESELSKAB_SAGSBEHANDLER}". Ingen titler, ingen e-mailadresser, ingen
 [Navn på sagsbehandler]-placeholder.
@@ -1849,12 +1867,17 @@ STRENGE KRAV:
 - ALLE klagepunkter skal adresseres — tæl dem i klagen og sørg for at
   hvert ét har sin egen behandling i brevet.
 - Faktum-oversigten må IKKE udelades.
+- Faktum-oversigten må IKKE indeholde kompensation eller forudgående
+  håndtering — kun rejse-grunddata.
+- "Samlet vurdering"-afsnittet er OBLIGATORISK og skal være sidste
+  afsnit før underskrift. Det skal indeholde både forudgående
+  håndtering OG selskabets samlede stilling.
 - Opfind ALDRIG fakta der ikke står i klagen, sagsakterne eller vidensbanken.
 - Skriv på dansk i et formelt, professionelt juridisk sprog.
 - Hvis en oplysning mangler der er nødvendig, skriv "[SAGSBEHANDLER UDFYLDER: ...]" som placeholder.
 - Brug "{REJSESELSKAB_NAVN}" og "klager" (lille k) konsekvent. Aldrig "rejseselskabet", "K", "Klager 1" eller "Klager 2".
 - Underskriftslinjen skal altid være "{REJSESELSKAB_SAGSBEHANDLER}".
-- Tjek brevet igennem til sidst: ingen personnavne, ingen sektion-numre, ingen "domstols"-formuleringer, ingen "Til:"-headers, faktum-oversigt med, alle klagepunkter adresseret.
+- Tjek brevet igennem til sidst: ingen personnavne, ingen sektion-numre, ingen "domstols"-formuleringer, ingen "Til:"-headers, faktum-oversigt med (men UDEN kompensation), "Samlet vurdering"-afsnit til sidst, alle klagepunkter adresseret.
 """
 
 
