@@ -1626,9 +1626,7 @@ def byg_svarbrev_opgave(
             f'  "Klager rejste den X. juni 2025 til [Hotel-navn], '
             f'[Destination, Land], med hjemrejse den Y. juni 2025, '
             f'svarende til {antal_naetter} nætter. Rejsen omfattede '
-            f'[N] rejsende og havde en samlet pris på [beløb] kr. '
-            f'{REJSESELSKAB_NAVN} har forud for nævnsbehandlingen '
-            f'udbetalt [beløb] kr. i kompensation."'
+            f'[N] rejsende og havde en samlet pris på [beløb] kr."'
         )
     else:
         naetter_bullet = (
@@ -1638,8 +1636,7 @@ def byg_svarbrev_opgave(
             f'  "Klager rejste den X. juni 2025 til [Hotel-navn], '
             f'[Destination, Land], med hjemrejse den Y. juni 2025. '
             f'Rejsen omfattede [N] rejsende og havde en samlet pris på '
-            f'[beløb] kr. {REJSESELSKAB_NAVN} har forud for '
-            f'nævnsbehandlingen udbetalt [beløb] kr. i kompensation."'
+            f'[beløb] kr."'
         )
 
     return f"""
@@ -1669,7 +1666,6 @@ oversigts-afsnit (3-6 sætninger) der præsenterer sagens basale rammer
 {naetter_bullet}
   • Antal rejsende
   • Rejsens samlede pris
-  • Eventuel allerede udbetalt kompensation (med beløb)
 Eksempel-formulering:
 {naetter_eksempel}
 Dette afsnit giver Nævnet en hurtig grundforståelse af sagen, før
