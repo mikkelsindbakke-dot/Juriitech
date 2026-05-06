@@ -1889,7 +1889,32 @@ Brevet skal være formelt og juridisk præcist, men IKKE akademisk eller
 opstyltet. Pakkerejse-Ankenævnets medlemmer er ikke alle jurister, og
 brevet skal kunne forstås af "Hr. og Fru. Danmark".
 
-Undgå akademiske/opstyltede vendinger — brug i stedet hverdagssprog:
+FORBUDTE FORMULERINGER (skal ALDRIG bruges):
+
+  ❌ "{REJSESELSKAB_NAVN} bestrider ..."
+  ❌ "vi bestrider ..."
+  ❌ "der bestrides ..."
+  ❌ "rejseselskabet bestrider ikke ..."
+
+  Ordet "bestride" er for juridisk-akademisk og bliver desuden
+  gentaget i nær-uendelig kæde når man først tager det i brug. Skriv
+  i stedet hvad der FAKTISK menes med almindelige ord:
+
+  ❌ "{REJSESELSKAB_NAVN} bestrider klagers fremstilling af forløbet"
+  ✅ "{REJSESELSKAB_NAVN} mener ikke det skete på den måde klager beskriver"
+
+  ❌ "Rejseselskabet bestrider ikke at der var problemer på hotellet"
+  ✅ "Det er rigtigt at der var problemer på hotellet"
+       (eller: "Hotellet havde de problemer klager nævner")
+
+  ❌ "Det bestrides at klager har lidt et tab"
+  ✅ "Vi mener ikke klager har lidt et økonomisk tab"
+
+  Princip: brug "mener", "vurderer", "er enig i / uenig i", "det er
+  rigtigt at", "det er ikke korrekt at" — ord almindelige danskere
+  bruger om hverdagsuenigheder.
+
+Undgå generelt akademiske/opstyltede vendinger — brug i stedet hverdagssprog:
 
   ❌ "de objektivt konstaterbare forhold"
   ✅ "det der faktisk er sket"
