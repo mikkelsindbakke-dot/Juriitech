@@ -7,12 +7,81 @@ Indeholder:
     for den juridiske førstevurdering
   - vis_brugerfejl(): venlig fejlboks der vises når noget går galt,
     sender automatisk fejlen til Sentry
+  - stable_download_link(): robust download-knap baseret på data: URL
 """
 
+import base64
 import re
 from contextlib import contextmanager
 
 import streamlit as st
+
+
+def stable_download_link(
+    label,
+    data,
+    file_name,
+    mime,
+    primary=False,
+    full_width=True,
+    key=None,
+):
+    """
+    Robust erstatning for st.download_button.
+
+    Streamlit's download_button bruger en intern MediaFileManager der
+    serverer bytes via en URL-hash. Når brugeren re-renders siden
+    (fx pga. WebSocket-reconnect eller anden interaktion), evictes
+    den gamle hash, og hvis brugeren stadig ser den gamle knap og
+    klikker, fejler URL'en med "filen er ikke tilgængelig". Brugeren
+    bliver derefter typisk logget ud (refresh → fresh session).
+
+    stable_download_link bygger en <a download href="data:...">-link
+    med base64-indlejret indhold. Den ER selv-indeholdende:
+      - Ingen server-side cache der kan blive evicted
+      - Klik virker uanset om session er reset, websocket dropped, osv.
+      - Filen ligger i HTML'en der allerede er sendt til browseren
+
+    Trade-off: bytes ligger base64-encoded i DOM'en (~33% overhead).
+    For svarbreve (typisk 30-100 KB) er det acceptabelt.
+
+    Parametre matcher i størst muligt omfang st.download_button.
+    """
+    if data is None or len(data) == 0:
+        st.caption(f"⚠ Ingen data til download: {label}")
+        return
+
+    b64 = base64.b64encode(data).decode("ascii")
+    data_url = f"data:{mime};base64,{b64}"
+
+    # Stylet som en Streamlit-knap så det visuelt matcher resten af UI'en
+    bg = "#6366F1" if primary else "#FFFFFF"
+    color = "#FFFFFF" if primary else "#0F172A"
+    border = "1px solid #6366F1" if primary else "1px solid #E2E8F0"
+    width = "100%" if full_width else "auto"
+
+    # html.escape ville mangle data: URL — men data, label, file_name
+    # kommer ikke fra brugerinput. file_name skal dog escapes for "
+    safe_filename = file_name.replace('"', "%22")
+    safe_label = (
+        label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    )
+
+    html = (
+        f'<a download="{safe_filename}" href="{data_url}" '
+        f'style="display: inline-block; box-sizing: border-box; '
+        f'width: {width}; padding: 0.5rem 1rem; '
+        f'background: {bg}; color: {color}; border: {border}; '
+        f'border-radius: 8px; text-align: center; '
+        f"font-family: 'Space Grotesk', -apple-system, sans-serif; "
+        f"font-weight: 500; font-size: 0.95rem; "
+        f'text-decoration: none; cursor: pointer; '
+        f'transition: opacity 0.15s ease;" '
+        f'onmouseover="this.style.opacity=0.85" '
+        f'onmouseout="this.style.opacity=1">'
+        f'{safe_label}</a>'
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def vis_brugerfejl(handling, exception=None, kort_ekstra=None):

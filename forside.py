@@ -43,6 +43,7 @@ from ui import (
     render_sagsresume,
     render_tidslinje,
     render_svarbrev_forside_preview,
+    stable_download_link,
     vis_brugerfejl,
 )
 from selskab_profiler import (
@@ -4078,13 +4079,13 @@ if st.session_state.get("aktuel_sag"):
                             "lagt over navne, email-lokaldele, telefon-cifre, "
                             "CPR og adresser."
                         )
-                        st.download_button(
+                        stable_download_link(
                             label="Download anonymiseret PDF",
                             data=r["anonymiseret_pdf_bytes"],
                             file_name=f"anonymiseret_{fn_base}.pdf",
                             mime="application/pdf",
+                            primary=True,
                             key=f"anon_pdf_native_{_r_navn}",
-                            use_container_width=True,
                         )
                     else:
                         st.text_area(
@@ -4111,7 +4112,7 @@ if st.session_state.get("aktuel_sag"):
                                         "Ankenævnets retningslinjer"
                                     ),
                                 )
-                                st.download_button(
+                                stable_download_link(
                                     label="Download som Word",
                                     data=docx_bytes,
                                     file_name=(
@@ -4123,7 +4124,6 @@ if st.session_state.get("aktuel_sag"):
                                         "document"
                                     ),
                                     key=f"anon_docx_{_r_navn}",
-                                    use_container_width=True,
                                 )
                             except Exception as e:
                                 st.caption(f"Word-eksport fejlede: {e}")
@@ -4138,7 +4138,7 @@ if st.session_state.get("aktuel_sag"):
                                         "Ankenævnets retningslinjer"
                                     ),
                                 )
-                                st.download_button(
+                                stable_download_link(
                                     label="Download som PDF",
                                     data=pdf_bytes,
                                     file_name=(
@@ -4146,7 +4146,6 @@ if st.session_state.get("aktuel_sag"):
                                     ),
                                     mime="application/pdf",
                                     key=f"anon_pdf_{_r_navn}",
-                                    use_container_width=True,
                                 )
                             except Exception as e:
                                 st.caption(f"PDF-eksport fejlede: {e}")
@@ -5026,12 +5025,21 @@ if st.session_state.get("aktuel_sag"):
         sb_filnavn_base = (
             (_sb.get("klage_filnavn") or "svarbrev")
         ).rsplit(".", 1)[0]
-        st.download_button(
+        # Bruger stable_download_link i stedet for st.download_button:
+        # st.download_button serverer via Streamlit's MediaFileManager,
+        # hvis URL-hash kan blive stale efter en re-render (klik fejler
+        # med "filen ikke tilgængelig" → bruger refresher → ender på
+        # login-siden). stable_download_link indlejrer bytes som
+        # base64 data: URL, så klik altid virker uanset session-state.
+        stable_download_link(
             label="Download svarbrev som Word",
             data=svarbrev_docx,
             file_name=f"svarbrev_{sb_filnavn_base}.docx",
-            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            type="primary",
+            mime=(
+                "application/vnd.openxmlformats-"
+                "officedocument.wordprocessingml.document"
+            ),
+            primary=True,
             key="download_svarbrev",
         )
 
@@ -5229,11 +5237,14 @@ with st.expander("Mine tidligere analyser og svarbreve", expanded=False):
 
                 kol_a, kol_b = st.columns([3, 1])
                 with kol_a:
-                    st.download_button(
+                    stable_download_link(
                         label=label,
                         data=docx_bytes,
                         file_name=file_name,
-                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        mime=(
+                            "application/vnd.openxmlformats-"
+                            "officedocument.wordprocessingml.document"
+                        ),
                         key=f"download_arkiv_{item['id']}",
                     )
                 with kol_b:
