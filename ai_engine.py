@@ -1428,6 +1428,144 @@ def anonymiser_sag(sag):
     return resultat
 
 
+# ---------------------------------------------------------------------------
+# Sort-bjælke-anonymisering (PDF-redaction): AI finder navne + adresser.
+# Bruges af anonymisering_pdf.py som second-stage detektor efter regex.
+# ---------------------------------------------------------------------------
+
+_REDACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "navne": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "fornavn": {"type": "string"},
+                    "efternavn": {"type": "string"},
+                    "kategori": {
+                        "type": "string",
+                        "enum": ["tui_medarbejder", "tredjepart"],
+                    },
+                    "redact_streng": {
+                        "type": "string",
+                        "description": (
+                            "Den præcise streng der skal sortmaskeres "
+                            "— typisk efternavnet"
+                        ),
+                    },
+                },
+                "required": [
+                    "fornavn",
+                    "efternavn",
+                    "kategori",
+                    "redact_streng",
+                ],
+            },
+        },
+        "adresser": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "fuld_adresse": {"type": "string"},
+                    "redact_streng": {
+                        "type": "string",
+                        "description": (
+                            "Den del af adressen der skal sortmaskeres "
+                            "— gade + husnummer, IKKE postnr/by"
+                        ),
+                    },
+                },
+                "required": ["fuld_adresse", "redact_streng"],
+            },
+        },
+    },
+    "required": ["navne", "adresser"],
+}
+
+
+def find_navne_til_redaction(tekst, klager_navne):
+    """
+    Bed AI om at finde alle navne og adresser i teksten der skal redactes.
+
+    Klagers navne (og medrejsende) udelades fra resultatet — de skal
+    ALDRIG redactes. AI'en får dem eksplicit i prompten, og kalder-
+    funktionen filtrerer derudover som sikkerhedsnet.
+
+    Returnerer dict med 'navne' og 'adresser' lister. Tom liste hvis
+    intet fundet eller hvis AI-kaldet fejler (graceful fall-back).
+    """
+    klient = _get_client()
+    if klient is None:
+        print("DEBUG: anonymisering AI-klient ikke tilgængelig — returnerer tom")
+        return {"navne": [], "adresser": []}
+
+    klager_liste_str = (
+        ", ".join(klager_navne) if klager_navne else "(ingen angivet)"
+    )
+
+    selskab = _hent_navn()
+    system_prompt = f"""Du anonymiserer juridiske dokumenter for {selskab}.
+
+KLAGERE I DENNE SAG (må ALDRIG redactes — de skal forblive synlige): {klager_liste_str}
+
+Find ALLE navne og adresser i teksten der SKAL redactes efter disse regler:
+
+NAVNE:
+- {selskab}-medarbejdere og tredjeparter (hotel-staff, læger, vidner osv.):
+  fornavn BEVARES, efternavn(e) sortmaskeres
+- Kategori: 'tui_medarbejder' for ansatte hos rejseselskabet,
+  'tredjepart' for alle andre (hotel, eksterne osv.)
+- redact_streng: den PRÆCISE streng (typisk efternavnet) som det står i teksten
+
+ADRESSER:
+- Privatadresser: gade + husnummer sortmaskeres, postnr + by bevares
+- redact_streng: den del der skal redactes (fx 'Strandvej 14')
+- Hotel-adresser, virksomhedsadresser i signaturer og lignende
+  publikke adresser SKAL OGSÅ redactes (gade + husnummer)
+
+VIGTIGE REGLER:
+- Opfind ALDRIG navne der ikke står i teksten
+- Inkludér ALDRIG klagernes navne i listen
+- Hvis et navn er flertydigt (kan være klager eller tredjepart),
+  så lad være med at inkludere det
+- Returnér tomme lister hvis intet skal redactes
+"""
+
+    try:
+        response = klient.messages.create(
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            temperature=0,
+            system=system_prompt,
+            tools=[{
+                "name": "rapporter_redaction_targets",
+                "description": (
+                    "Rapportér alle navne og adresser der skal redactes"
+                ),
+                "input_schema": _REDACTION_SCHEMA,
+            }],
+            tool_choice={
+                "type": "tool",
+                "name": "rapporter_redaction_targets",
+            },
+            messages=[{
+                "role": "user",
+                "content": (
+                    "Find alle redaction-targets i denne tekst:\n\n" + tekst
+                ),
+            }],
+        )
+        for blok in response.content:
+            if getattr(blok, "type", None) == "tool_use":
+                return blok.input
+    except Exception as e:
+        print(f"DEBUG: find_navne_til_redaction AI-kald fejlede: {e}")
+
+    return {"navne": [], "adresser": []}
+
+
 TJEKLISTE_OPGAVE = """
 OPGAVE: Læs høringsbrevet fra Pakkerejse-Ankenævnet nøje og udtræk den
 EKSAKTE tjekliste over hvad Nævnet beder rejsearrangøren fremsende eller
