@@ -1671,7 +1671,7 @@ def _tilfoej_nye_filer_til_sag(nye_filer):
         "Gemmer i database og forlænger anonymiseringsvindue",
         "Klargør de nye filer til analyse",
     ]
-    with thinking(
+    with thinking_fullpage(
         tekst="juriitech PAX behandler dine filer",
         faser=_filer_faser,
     ):
@@ -1862,6 +1862,32 @@ if st.session_state.get("_scan_filer_pending"):
         # st.stop() er belt-and-suspenders hvis rerun-kaldet skulle
         # mangle (f.eks. hvis en bug fanger exception inde i scanningen).
         st.stop()
+
+
+# Tilsvarende mønster for "Tilføj filer" i active state — fanges FØR
+# upload-UI rendres så thinking_fullpage er det første brugeren ser.
+if st.session_state.get("_tilfoej_filer_pending"):
+    st.session_state._tilfoej_filer_pending = False
+    _pending_active = (
+        st.session_state.get("sag_uploader_active")
+        or st.session_state.get("sag_uploader")
+        or []
+    )
+    if _pending_active:
+        _eksisterende = {
+            f.get("filnavn")
+            for f in (
+                (st.session_state.get("aktuel_sag") or {}).get("filer") or []
+            )
+        }
+        _nye_pending = [
+            f for f in _pending_active if f.name not in _eksisterende
+        ]
+        if _nye_pending:
+            _tilfoej_nye_filer_til_sag(_nye_pending)
+            # Som ved scan-pending: stop er belt-and-suspenders hvis
+            # _tilfoej_nye_filer_til_sag's rerun ikke når at fyre.
+            st.stop()
 
 
 # Empty state: stor hero-sektion med Apple Health-lavendel-baggrund
@@ -2105,7 +2131,12 @@ if _har_aktiv_sag and uploadede_sagsfiler:
                     "Allerede scannede filer bevares."
                 ),
             ):
-                _tilfoej_nye_filer_til_sag(_nye_kun)
+                # Sæt pending-flag + rerun, så thinking_fullpage'en
+                # rendres på fuld bredde øverst på siden i stedet for
+                # smalt inde i kolonnen — samme mønster som
+                # _scan_filer_pending.
+                st.session_state._tilfoej_filer_pending = True
+                st.rerun()
 
 # Knap til at rydde sagen
 if st.session_state.get("aktuel_sag"):

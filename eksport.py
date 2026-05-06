@@ -419,7 +419,8 @@ def svarbrev_til_docx(
                           Hvis None bruges den aktive profil.
       bilag_liste       — liste af dicts på formen
                           [{"bogstav": "A", "overskrift": "..."}, ...]
-                          Vises som bilag-liste lige under Vedr-linjen.
+                          Vises som bilag-oversigt nederst i svarbrevet
+                          (efter Samlet vurdering, før venlig hilsen).
                           Bilag A er pr. konvention selve svarbrevet.
                           Hvis None/tom rendres ingen bilag-liste.
     """
