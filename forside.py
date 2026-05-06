@@ -1437,7 +1437,7 @@ with st.sidebar:
         '</div>',
         unsafe_allow_html=True,
     )
-    st.caption("Juridisk AI til Pakkerejse-Ankenævnet")
+    st.caption("Din juridiske assistent")
 
     # ---------- VIDENSTANK — LYSE STABLEDE PASTELKORT ----------
     # Vertikal stabel af fire små pillers, hver i sin egen Apple Health-
@@ -3560,15 +3560,28 @@ if st.session_state.get("aktuel_sag"):
     for f in _sagsakter_filer:
         _anon_kandidater.append({**f, "_kilde": "sagsakt"})
 
+    def _er_pdf(fil):
+        """True hvis filen har PDF-bytes (uanset om tekst er udtrukket)."""
+        media = (fil.get("media_type") or "").lower()
+        filnavn_lower = (fil.get("filnavn") or "").lower()
+        return ("pdf" in media or filnavn_lower.endswith(".pdf")) and bool(
+            fil.get("bytes")
+        )
+
     def _kan_anonymiseres(fil):
-        """True hvis filen kan anonymiseres tekstuelt af PAX."""
+        """True hvis filen kan anonymiseres af PAX."""
         if fil.get("rolle") in ("vejledning", "høring"):
             return False
-        if fil.get("type") in ("pdf_bytes", "image_bytes", "mp4_skipped"):
+        if fil.get("type") in ("image_bytes", "mp4_skipped"):
             return False
-        if fil.get("type") != "tekst":
-            return False
-        return bool((fil.get("tekst") or "").strip())
+        # PDF: kan altid anonymiseres (sort-bjælke for tekst-PDF, bracket-
+        # fallback for scannet — orchestrator returnerer status)
+        if _er_pdf(fil):
+            return True
+        # Tekst-filer (DOCX, txt etc.): gammel bracket-flow
+        if fil.get("type") == "tekst":
+            return bool((fil.get("tekst") or "").strip())
+        return False
 
     def _hvorfor_ikke(fil):
         """Forklaring når en fil ikke kan anonymiseres automatisk."""
@@ -3576,12 +3589,12 @@ if st.session_state.get("aktuel_sag"):
             return "Vejledning fra Nævnet — anonymiseres ikke"
         if fil.get("rolle") == "høring":
             return "Høringsbrev fra Nævnet — skal ikke sendes tilbage"
-        if fil.get("type") == "pdf_bytes":
-            return "Scannet PDF — kræver OCR, gør manuelt"
         if fil.get("type") == "image_bytes":
             return "Billede — kan ikke anonymiseres tekstuelt"
         if fil.get("type") == "mp4_skipped":
             return "Video — kan ikke anonymiseres tekstuelt"
+        if _er_pdf(fil):
+            return ""
         if fil.get("type") != "tekst":
             return "Filformat understøttes ikke"
         if not (fil.get("tekst") or "").strip():
@@ -3607,7 +3620,38 @@ if st.session_state.get("aktuel_sag"):
         # anonymiserings-sektionen ligger langt nede på en lang side.
         # Med form'en batch'es alle checkbox-klik, og siden re-runs kun
         # når "Anonymisér valgte" trykkes.
+        # Hent klagers navn fra sagsmetadata-cache (auto-udledt under analyse)
+        # — bruges som default for klager-bekræftelses-felterne i form'en.
+        _meta_for_anon = {}
+        for _key, _val in st.session_state.items():
+            if _key.startswith("svarbrev_meta_cache_") and isinstance(_val, dict):
+                _meta_for_anon = _val
+                break
+        _default_klager = (_meta_for_anon.get("klagers_navn") or "").strip()
+        _default_medrejsende = (
+            _meta_for_anon.get("medrejsende_navn") or ""
+        ).strip()
+
         with st.form("anonymisering_valg_form"):
+            st.markdown("**Bekræft klager(e) — bevares synlig i bilagene:**")
+            st.caption(
+                "Disse navne bevares helt. Alle andre navne får sortmaskeret "
+                "efternavn. Komma-separer hvis flere."
+            )
+            _kol_klager, _kol_medrejsende = st.columns(2)
+            with _kol_klager:
+                _klager_input = st.text_input(
+                    "Klager(e)",
+                    value=_default_klager,
+                    key="anon_klager_navne_input",
+                )
+            with _kol_medrejsende:
+                _medrejsende_input = st.text_input(
+                    "Medrejsende (valgfrit)",
+                    value=_default_medrejsende,
+                    key="anon_medrejsende_navne_input",
+                )
+
             st.markdown("**Vælg de bilag du ønsker at anonymisere:**")
 
             _valgte_filnavne_inputs = {}  # filnavn → checkbox-key
@@ -3697,28 +3741,129 @@ if st.session_state.get("aktuel_sag"):
                     and _kan_anonymiseres(fil)
                 ]
 
+                # Saml klager-navne (klager + medrejsende, komma-separeret).
+                # Bruges som "ALDRIG redact"-liste i sort-bjælke-flowet.
+                _klager_raw = (
+                    (_klager_input or "")
+                    + ","
+                    + (_medrejsende_input or "")
+                )
+                klager_navne = [
+                    n.strip() for n in _klager_raw.split(",") if n.strip()
+                ]
+
+                # Split valgte filer: PDF'er kører ny sort-bjælke-flow,
+                # tekst-baserede filer kører gammel bracket-flow.
+                pdf_filer = [f for f in valgte_filer if _er_pdf(f)]
+                tekst_filer = [
+                    f for f in valgte_filer
+                    if not _er_pdf(f) and f.get("type") == "tekst"
+                ]
+
                 with thinking(
                     f"juriitech PAX anonymiserer {len(valgte_filer)} bilag",
                     faser=[
                         "Identificerer personnavne, CPR, adresser og kontaktdata...",
-                        "Erstatter klagers navn konsekvent med 'Klager'...",
-                        "Maskerer booking-numre og bankoplysninger...",
-                        "Bevarer hotelnavne, destinationer og rejsedatoer...",
+                        "Lægger sort-bjælke over følsomme felter i PDF'er...",
+                        "Bevarer klagers navn samt booking-, datoer og beløb...",
+                        "Maskerer email-lokaldele og telefon-cifre...",
                         "Tjekker hver fil igennem for missede oplysninger...",
                     ],
                 ):
-                    try:
-                        nye_resultater = anonymiser_valgte_filer(valgte_filer)
-                    except Exception as e:
-                        vis_brugerfejl(
-                            "anonymisering af bilag",
-                            exception=e,
-                            kort_ekstra=(
-                                "De valgte bilag er stadig markeret — du "
-                                "kan trygt prøve igen."
-                            ),
-                        )
-                        nye_resultater = []
+                    nye_resultater = []
+
+                    # 1) PDF'er via ny sort-bjælke-flow
+                    if pdf_filer:
+                        try:
+                            from anonymisering_pdf import anonymiser_pdf_fil
+                            for fil in pdf_filer:
+                                filnavn = fil.get("filnavn", "ukendt.pdf")
+                                pdf_bytes_input = fil.get("bytes")
+                                output_pdf, status = anonymiser_pdf_fil(
+                                    pdf_bytes_input, klager_navne
+                                )
+                                if status == "ok":
+                                    nye_resultater.append({
+                                        "filnavn": filnavn,
+                                        "status": "ok",
+                                        "anonymiseret_pdf_bytes": output_pdf,
+                                        "_format": "pdf",
+                                        "bemaerkning": (
+                                            "Sort-bjælke-anonymiseret PDF "
+                                            "med bevaret layout"
+                                        ),
+                                    })
+                                elif status == "scannet":
+                                    # Scannet PDF — fald tilbage til bracket-
+                                    # flow på tekst-feltet hvis tilgængelig
+                                    if (fil.get("tekst") or "").strip():
+                                        try:
+                                            fallback = (
+                                                anonymiser_valgte_filer([fil])
+                                            )
+                                            nye_resultater.extend(fallback)
+                                        except Exception as e:
+                                            nye_resultater.append({
+                                                "filnavn": filnavn,
+                                                "status": "fejl",
+                                                "anonymiseret_tekst": "",
+                                                "_format": "tekst",
+                                                "bemaerkning": (
+                                                    "Scannet PDF — bracket-"
+                                                    f"fallback fejlede: {e}"
+                                                ),
+                                            })
+                                    else:
+                                        nye_resultater.append({
+                                            "filnavn": filnavn,
+                                            "status": "fejl",
+                                            "anonymiseret_tekst": "",
+                                            "_format": "tekst",
+                                            "bemaerkning": (
+                                                "Scannet PDF uden tekst-lag "
+                                                "— kan ikke anonymiseres "
+                                                "automatisk"
+                                            ),
+                                        })
+                                else:
+                                    nye_resultater.append({
+                                        "filnavn": filnavn,
+                                        "status": "fejl",
+                                        "anonymiseret_tekst": "",
+                                        "_format": "tekst",
+                                        "bemaerkning": (
+                                            f"Sort-bjælke-flow fejlede "
+                                            f"({status})"
+                                        ),
+                                    })
+                        except Exception as e:
+                            vis_brugerfejl(
+                                "PDF-anonymisering (sort-bjælke)",
+                                exception=e,
+                                kort_ekstra=(
+                                    "PDF-anonymisering fejlede helt — du "
+                                    "kan trygt prøve igen."
+                                ),
+                            )
+
+                    # 2) Tekst-filer via eksisterende bracket-flow
+                    if tekst_filer:
+                        try:
+                            tekst_resultater = anonymiser_valgte_filer(
+                                tekst_filer
+                            )
+                            for r in tekst_resultater:
+                                r.setdefault("_format", "tekst")
+                            nye_resultater.extend(tekst_resultater)
+                        except Exception as e:
+                            vis_brugerfejl(
+                                "anonymisering af tekst-bilag",
+                                exception=e,
+                                kort_ekstra=(
+                                    "Tekst-bilag er stadig markeret — du "
+                                    "kan trygt prøve igen."
+                                ),
+                            )
 
                 # Flet ind i den persistente map, så tidligere resultater
                 # bevares hvis de ikke er blevet genkørt nu. Vi husker
@@ -3772,68 +3917,90 @@ if st.session_state.get("aktuel_sag"):
                     r["filnavn"] in netop_anonymiserede
                 )
 
+                _format = r.get("_format", "tekst")
+
                 with st.expander(
                     f"✓ {r['filnavn']}  —  {r['bemaerkning']}",
                     expanded=_er_netop_anonymiseret,
                 ):
-                    st.text_area(
-                        "Anonymiseret indhold",
-                        value=r["anonymiseret_tekst"],
-                        height=320,
-                        key=f"anon_visning_{r['filnavn']}",
-                        label_visibility="collapsed",
-                    )
+                    if _format == "pdf" and r.get("anonymiseret_pdf_bytes"):
+                        st.markdown(
+                            "Original layout er bevaret. Sorte bjælker er "
+                            "lagt over navne, email-lokaldele, telefon-cifre, "
+                            "CPR og adresser."
+                        )
+                        st.download_button(
+                            label="Download anonymiseret PDF",
+                            data=r["anonymiseret_pdf_bytes"],
+                            file_name=f"anonymiseret_{fn_base}.pdf",
+                            mime="application/pdf",
+                            key=f"anon_pdf_native_{r['filnavn']}",
+                            use_container_width=True,
+                        )
+                    else:
+                        st.text_area(
+                            "Anonymiseret indhold",
+                            value=r.get("anonymiseret_tekst", ""),
+                            height=320,
+                            key=f"anon_visning_{r['filnavn']}",
+                            label_visibility="collapsed",
+                        )
 
-                    from eksport import (
-                        markdown_til_docx_bytes,
-                        markdown_til_pdf_bytes,
-                    )
+                        from eksport import (
+                            markdown_til_docx_bytes,
+                            markdown_til_pdf_bytes,
+                        )
 
-                    kol_docx, kol_pdf = st.columns(2)
-                    with kol_docx:
-                        try:
-                            docx_bytes = markdown_til_docx_bytes(
-                                r["anonymiseret_tekst"],
-                                titel=f"Anonymiseret: {r['filnavn']}",
-                                undertitel=(
-                                    "Anonymiseret efter Pakkerejse-"
-                                    "Ankenævnets retningslinjer"
-                                ),
-                            )
-                            st.download_button(
-                                label="Download som Word",
-                                data=docx_bytes,
-                                file_name=f"anonymiseret_{fn_base}.docx",
-                                mime=(
-                                    "application/vnd.openxmlformats-"
-                                    "officedocument.wordprocessingml.document"
-                                ),
-                                key=f"anon_docx_{r['filnavn']}",
-                                use_container_width=True,
-                            )
-                        except Exception as e:
-                            st.caption(f"Word-eksport fejlede: {e}")
+                        kol_docx, kol_pdf = st.columns(2)
+                        with kol_docx:
+                            try:
+                                docx_bytes = markdown_til_docx_bytes(
+                                    r.get("anonymiseret_tekst", ""),
+                                    titel=f"Anonymiseret: {r['filnavn']}",
+                                    undertitel=(
+                                        "Anonymiseret efter Pakkerejse-"
+                                        "Ankenævnets retningslinjer"
+                                    ),
+                                )
+                                st.download_button(
+                                    label="Download som Word",
+                                    data=docx_bytes,
+                                    file_name=(
+                                        f"anonymiseret_{fn_base}.docx"
+                                    ),
+                                    mime=(
+                                        "application/vnd.openxmlformats-"
+                                        "officedocument.wordprocessingml."
+                                        "document"
+                                    ),
+                                    key=f"anon_docx_{r['filnavn']}",
+                                    use_container_width=True,
+                                )
+                            except Exception as e:
+                                st.caption(f"Word-eksport fejlede: {e}")
 
-                    with kol_pdf:
-                        try:
-                            pdf_bytes = markdown_til_pdf_bytes(
-                                r["anonymiseret_tekst"],
-                                titel=f"Anonymiseret: {r['filnavn']}",
-                                undertitel=(
-                                    "Anonymiseret efter Pakkerejse-"
-                                    "Ankenævnets retningslinjer"
-                                ),
-                            )
-                            st.download_button(
-                                label="Download som PDF",
-                                data=pdf_bytes,
-                                file_name=f"anonymiseret_{fn_base}.pdf",
-                                mime="application/pdf",
-                                key=f"anon_pdf_{r['filnavn']}",
-                                use_container_width=True,
-                            )
-                        except Exception as e:
-                            st.caption(f"PDF-eksport fejlede: {e}")
+                        with kol_pdf:
+                            try:
+                                pdf_bytes = markdown_til_pdf_bytes(
+                                    r.get("anonymiseret_tekst", ""),
+                                    titel=f"Anonymiseret: {r['filnavn']}",
+                                    undertitel=(
+                                        "Anonymiseret efter Pakkerejse-"
+                                        "Ankenævnets retningslinjer"
+                                    ),
+                                )
+                                st.download_button(
+                                    label="Download som PDF",
+                                    data=pdf_bytes,
+                                    file_name=(
+                                        f"anonymiseret_{fn_base}.pdf"
+                                    ),
+                                    mime="application/pdf",
+                                    key=f"anon_pdf_{r['filnavn']}",
+                                    use_container_width=True,
+                                )
+                            except Exception as e:
+                                st.caption(f"PDF-eksport fejlede: {e}")
 
         # Fejlede filer vises separat i en kort linje
         fejlede = [r for r in resultater_map.values() if r.get("status") == "fejl"]
