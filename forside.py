@@ -3652,11 +3652,17 @@ if st.session_state.get("aktuel_sag"):
         # anonymiserings-sektionen ligger langt nede på en lang side.
         # Med form'en batch'es alle checkbox-klik, og siden re-runs kun
         # når "Anonymisér valgte" trykkes.
-        # Hent klagers navn fra sagsmetadata-cache (auto-udledt under analyse)
-        # — bruges som default for klager-bekræftelses-felterne i form'en.
+        # Hent klagers navn fra sagsmetadata-cache (auto-udledt under
+        # analyse) — bruges som default for klager-bekræftelses-felterne
+        # i form'en. Cache-key'en sættes i svarbrev-pillaren som
+        # "sagsmetadata_<id>_<hash>" — vi løber alle st.session_state-
+        # nøgler igennem og bruger den FØRSTE der matcher.
         _meta_for_anon = {}
         for _key, _val in st.session_state.items():
-            if _key.startswith("svarbrev_meta_cache_") and isinstance(_val, dict):
+            if (
+                _key.startswith("sagsmetadata_")
+                and isinstance(_val, dict)
+            ):
                 _meta_for_anon = _val
                 break
         _default_klager = (_meta_for_anon.get("klagers_navn") or "").strip()
@@ -3906,8 +3912,11 @@ if st.session_state.get("aktuel_sag"):
                 # at alt var forsvundet).
                 netop_anonymiserede_filnavne = []
                 for r in nye_resultater:
-                    st.session_state.anon_resultater_per_fil[r["filnavn"]] = r
-                    netop_anonymiserede_filnavne.append(r["filnavn"])
+                    _r_navn = r.get("filnavn")
+                    if not _r_navn:
+                        continue
+                    st.session_state.anon_resultater_per_fil[_r_navn] = r
+                    netop_anonymiserede_filnavne.append(_r_navn)
 
                 # Gem flag i session state så vi i resultat-loopet kan
                 # se hvilke filer der skal vises åbne
@@ -3942,17 +3951,16 @@ if st.session_state.get("aktuel_sag"):
             )
 
             for r in færdige:
-                fn_base = r["filnavn"].rsplit(".", 1)[0]
+                _r_navn = r.get("filnavn") or "anonymiseret_bilag"
+                fn_base = _r_navn.rsplit(".", 1)[0]
                 # Åbn expanderen hvis denne fil lige blev anonymiseret —
                 # så brugeren straks kan se og downloade resultatet.
-                _er_netop_anonymiseret = (
-                    r["filnavn"] in netop_anonymiserede
-                )
+                _er_netop_anonymiseret = _r_navn in netop_anonymiserede
 
                 _format = r.get("_format", "tekst")
 
                 with st.expander(
-                    f"✓ {r['filnavn']}  —  {r['bemaerkning']}",
+                    f"✓ {_r_navn}  —  {r.get('bemaerkning', '')}",
                     expanded=_er_netop_anonymiseret,
                 ):
                     if _format == "pdf" and r.get("anonymiseret_pdf_bytes"):
@@ -3966,7 +3974,7 @@ if st.session_state.get("aktuel_sag"):
                             data=r["anonymiseret_pdf_bytes"],
                             file_name=f"anonymiseret_{fn_base}.pdf",
                             mime="application/pdf",
-                            key=f"anon_pdf_native_{r['filnavn']}",
+                            key=f"anon_pdf_native_{_r_navn}",
                             use_container_width=True,
                         )
                     else:
@@ -3974,7 +3982,7 @@ if st.session_state.get("aktuel_sag"):
                             "Anonymiseret indhold",
                             value=r.get("anonymiseret_tekst", ""),
                             height=320,
-                            key=f"anon_visning_{r['filnavn']}",
+                            key=f"anon_visning_{_r_navn}",
                             label_visibility="collapsed",
                         )
 
@@ -3988,7 +3996,7 @@ if st.session_state.get("aktuel_sag"):
                             try:
                                 docx_bytes = markdown_til_docx_bytes(
                                     r.get("anonymiseret_tekst", ""),
-                                    titel=f"Anonymiseret: {r['filnavn']}",
+                                    titel=f"Anonymiseret: {_r_navn}",
                                     undertitel=(
                                         "Anonymiseret efter Pakkerejse-"
                                         "Ankenævnets retningslinjer"
@@ -4005,7 +4013,7 @@ if st.session_state.get("aktuel_sag"):
                                         "officedocument.wordprocessingml."
                                         "document"
                                     ),
-                                    key=f"anon_docx_{r['filnavn']}",
+                                    key=f"anon_docx_{_r_navn}",
                                     use_container_width=True,
                                 )
                             except Exception as e:
@@ -4015,7 +4023,7 @@ if st.session_state.get("aktuel_sag"):
                             try:
                                 pdf_bytes = markdown_til_pdf_bytes(
                                     r.get("anonymiseret_tekst", ""),
-                                    titel=f"Anonymiseret: {r['filnavn']}",
+                                    titel=f"Anonymiseret: {_r_navn}",
                                     undertitel=(
                                         "Anonymiseret efter Pakkerejse-"
                                         "Ankenævnets retningslinjer"
@@ -4028,7 +4036,7 @@ if st.session_state.get("aktuel_sag"):
                                         f"anonymiseret_{fn_base}.pdf"
                                     ),
                                     mime="application/pdf",
-                                    key=f"anon_pdf_{r['filnavn']}",
+                                    key=f"anon_pdf_{_r_navn}",
                                     use_container_width=True,
                                 )
                             except Exception as e:
@@ -4039,7 +4047,10 @@ if st.session_state.get("aktuel_sag"):
         if fejlede:
             with st.expander(f"⚠ {len(fejlede)} fil(er) fejlede", expanded=False):
                 for r in fejlede:
-                    st.markdown(f"- **{r['filnavn']}:** {r['bemaerkning']}")
+                    st.markdown(
+                        f"- **{r.get('filnavn', 'ukendt')}:** "
+                        f"{r.get('bemaerkning', '')}"
+                    )
 
 
 # ---------- 11. BILAG TIL SVARBREVET — STANDALONE SEKTION ----------
@@ -4128,14 +4139,29 @@ if st.session_state.get("aktuel_sag"):
 
         if _bilag_raekkefolge_key not in st.session_state:
             # Default-rækkefølge = sagsakter først (i upload-rækkefølge),
-            # derefter sag-filer (i sag-rækkefølge)
+            # derefter sag-filer (i sag-rækkefølge).
+            #
+            # KRITISK: dedupliker på filnavn — hvis samme filnavn findes
+            # i BÅDE sag og sagsakter (fx hvis brugeren uploadede klage-
+            # skemaet som sagsakt også), ville duplikerede entries give
+            # StreamlitDuplicateElementId-crash når checkbox-rækken
+            # rendres med samme key for begge.
+            _seen = set()
             _orden = []
             for f in _anon_kandidater:
+                fn = f.get("filnavn")
+                if not fn or fn in _seen:
+                    continue
                 if f.get("_kilde") == "sagsakt":
-                    _orden.append(f.get("filnavn"))
+                    _orden.append(fn)
+                    _seen.add(fn)
             for f in _anon_kandidater:
+                fn = f.get("filnavn")
+                if not fn or fn in _seen:
+                    continue
                 if f.get("_kilde") != "sagsakt":
-                    _orden.append(f.get("filnavn"))
+                    _orden.append(fn)
+                    _seen.add(fn)
             st.session_state[_bilag_raekkefolge_key] = _orden
 
         if _bilag_startbogstav_key not in st.session_state:
@@ -4663,15 +4689,22 @@ if st.session_state.get("aktuel_sag"):
                 svarbrev = None
 
         if svarbrev:
-            # Titel: find klageskema eller første fil
+            # Titel: find klageskema eller første fil. Defensiv .get()
+            # — hvis et fil-dict mangler 'filnavn' (fx ved partial
+            # restore fra DB), må det IKKE crashe efter AI-kaldet er
+            # færdigt. Brugeren ville ellers se en fejl der ligner
+            # "svarbrev fejlede" selvom selve generationen lykkedes.
             sag_filer = st.session_state.aktuel_sag.get("filer") or []
             klage_fn = None
             for fil in sag_filer:
                 if fil.get("rolle") == "klageskema":
-                    klage_fn = fil["filnavn"]
-                    break
+                    klage_fn = fil.get("filnavn")
+                    if klage_fn:
+                        break
             if not klage_fn and sag_filer:
-                klage_fn = sag_filer[0]["filnavn"]
+                klage_fn = sag_filer[0].get("filnavn")
+            if not klage_fn:
+                klage_fn = "klage.pdf"
 
             # Gem forrige udkast hvis det findes — bruges til diff-
             # visning i UI når brugeren genererer en revideret version.
@@ -4801,11 +4834,16 @@ if st.session_state.get("aktuel_sag"):
         _sb = st.session_state.seneste_svarbrev
         _udkast_nr = _sb.get("udkast_nr", 1)
         _forrige = _sb.get("forrige_svarbrev")
+        # Defensiv .get() — gendannet sag fra ældre format kan mangle
+        # 'svarbrev'-key. Render-blokken er allerede gated af
+        # `if st.session_state.seneste_svarbrev:`, men dict kan være
+        # truthy uden at have nøglen.
+        _sb_tekst = _sb.get("svarbrev", "") or ""
 
-        if _udkast_nr > 1 and _forrige:
+        if _udkast_nr > 1 and _forrige and _sb_tekst:
             # Diff-visning: highlight ændrede/nye afsnit
             from svarbrev_diff import afsnits_diff
-            _diff_resultat = afsnits_diff(_forrige, _sb["svarbrev"])
+            _diff_resultat = afsnits_diff(_forrige, _sb_tekst)
 
             # Banner + forklaring øverst
             st.markdown(
@@ -4866,18 +4904,18 @@ if st.session_state.get("aktuel_sag"):
                     st.markdown(_tekst)
         else:
             # Første udkast — vis som almindelig markdown
-            st.markdown(_sb["svarbrev"])
+            st.markdown(_sb_tekst)
 
         svarbrev_docx = svarbrev_til_docx(
-            st.session_state.seneste_svarbrev["svarbrev"],
-            klage_filnavn=st.session_state.seneste_svarbrev["klage_filnavn"],
+            _sb_tekst,
+            klage_filnavn=_sb.get("klage_filnavn") or "svarbrev.pdf",
             sagsnummer=_docx_sagsnr,
             klagers_navn=_docx_navn,
             hoeringssvar_nr=_docx_hoer,
             bilag_liste=_bilag_liste_dl,
         )
         sb_filnavn_base = (
-            st.session_state.seneste_svarbrev["klage_filnavn"] or "svarbrev"
+            (_sb.get("klage_filnavn") or "svarbrev")
         ).rsplit(".", 1)[0]
         st.download_button(
             label="Download svarbrev som Word",
