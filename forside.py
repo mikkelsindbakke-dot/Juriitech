@@ -4536,7 +4536,75 @@ if st.session_state.get("aktuel_sag"):
         )
 
         # ---------- BRØDTEKST (selve svarbrevet) ----------
-        st.markdown(st.session_state.seneste_svarbrev["svarbrev"])
+        _sb = st.session_state.seneste_svarbrev
+        _udkast_nr = _sb.get("udkast_nr", 1)
+        _forrige = _sb.get("forrige_svarbrev")
+
+        if _udkast_nr > 1 and _forrige:
+            # Diff-visning: highlight ændrede/nye afsnit
+            from svarbrev_diff import afsnits_diff
+            _diff_resultat = afsnits_diff(_forrige, _sb["svarbrev"])
+
+            # Banner + forklaring øverst
+            st.markdown(
+                f"""
+                <div style="background: #EFF6FF; border-left: 3px solid #3B82F6;
+                            padding: 10px 14px; border-radius: 8px;
+                            margin: 8px 0 4px 0; font-size: 0.92rem;
+                            color: #1E3A8A;">
+                    <strong>Udkast nr. {_udkast_nr}</strong> — ændringer
+                    siden forrige udkast er fremhævet nedenfor.
+                </div>
+                <div style="font-size: 0.85rem; color: #6B7280;
+                            margin: 0 0 12px 0;">
+                    🟢 Nyt afsnit · 🟡 Ændret afsnit
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            # Render hvert afsnit. Vi bruger en lille farvet pill-badge
+            # over hvert ændret/nyt afsnit i stedet for at wrappe selve
+            # markdown-teksten i en farvet div — Streamlit's
+            # st.markdown wrapper hver call separat, så split-div-tricks
+            # virker ikke pålideligt. Badge + standard-markdown er simpelt
+            # og pålideligt.
+            for _afsnit in _diff_resultat:
+                _tekst = _afsnit["tekst"]
+                _status = _afsnit["status"]
+
+                if _status == "ny":
+                    st.markdown(
+                        '<div style="display: inline-block; '
+                        'background: #E7F5DD; color: #1F5128; '
+                        'border-left: 3px solid #76D672; '
+                        'padding: 4px 12px; border-radius: 6px; '
+                        'font-size: 0.82rem; font-weight: 600; '
+                        'margin: 16px 0 6px 0;">'
+                        '🟢 Nyt afsnit'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(_tekst)
+                elif _status == "ændret":
+                    st.markdown(
+                        '<div style="display: inline-block; '
+                        'background: #FFF8DC; color: #5C4F00; '
+                        'border-left: 3px solid #F0C040; '
+                        'padding: 4px 12px; border-radius: 6px; '
+                        'font-size: 0.82rem; font-weight: 600; '
+                        'margin: 16px 0 6px 0;">'
+                        '🟡 Ændret afsnit'
+                        '</div>',
+                        unsafe_allow_html=True,
+                    )
+                    st.markdown(_tekst)
+                else:
+                    # Uændret — render som standard markdown
+                    st.markdown(_tekst)
+        else:
+            # Første udkast — vis som almindelig markdown
+            st.markdown(_sb["svarbrev"])
 
         svarbrev_docx = svarbrev_til_docx(
             st.session_state.seneste_svarbrev["svarbrev"],
