@@ -1209,6 +1209,29 @@ def _restore_session_state_fra_snapshot(snapshot):
         st.session_state[k] = v
 
 
+def _beregn_kombineret_signatur_top():
+    """
+    Modul-niveau version af _beregn_kombineret_signatur (som kun
+    findes i scope nedenunder). Bruges af sagsakt-fjern/omdøb-handlere
+    der skal opdatere auto_vurdering_for_signatur så ÆNDRINGER der
+    bare er metadata (rename) eller fjernelser (delete) ikke automatisk
+    re-trigger en hel ny førstevurdering — det forårsagede freeze +
+    WebSocket-timeout = brugeren blev kastet tilbage til login.
+    """
+    sag_sig = st.session_state.get("sidste_sagsfil_signatur") or ()
+    sagsakter_tekst = st.session_state.get("sagsakter", "") or ""
+    sagsakter_filer = st.session_state.get("sagsakter_filer", []) or []
+    sagsakter_sig = tuple(
+        (
+            f.get("filnavn", ""),
+            len(f.get("bytes") or b""),
+            len(f.get("tekst") or ""),
+        )
+        for f in sagsakter_filer
+    )
+    return (sag_sig, _stabil_hash(sagsakter_tekst), sagsakter_sig)
+
+
 def _persist_aktuel_sag_til_db():
     """
     No-op. Tidligere persistede vi en kopi af analyse + svarbrev i
@@ -3471,6 +3494,15 @@ if st.session_state.get("aktuel_sag"):
                             st.session_state.sagsakter_filer[idx][
                                 "filnavn"
                             ] = _nyt_navn
+                            # Opdatér signatur så omdøbning IKKE
+                            # trigger ny AI-analyse — filnavnet er
+                            # rent metadata, indholdet er uændret.
+                            if st.session_state.get(
+                                "auto_vurdering_for_signatur"
+                            ):
+                                st.session_state.auto_vurdering_for_signatur = (
+                                    _beregn_kombineret_signatur_top()
+                                )
                         # Ryd rename-tilstand uanset
                         st.session_state[_rename_aktiv_key] = False
                         if _nyt_navn_key in st.session_state:
@@ -3534,6 +3566,16 @@ if st.session_state.get("aktuel_sag"):
 
         if _fil_til_fjern is not None:
             st.session_state.sagsakter_filer.pop(_fil_til_fjern)
+            # Opdatér auto_vurdering_for_signatur til den NYE state.
+            # Uden det ville signaturen være ændret → skal_auto_vurdere
+            # blev True → hele førstevurderingen re-trigger automatisk
+            # → 60+ sek freeze → WebSocket-timeout → bruger tilbage på
+            # login. Brugeren har bare bedt om at fjerne en fil — det
+            # skal ikke trigge et nyt AI-kald.
+            if st.session_state.get("auto_vurdering_for_signatur"):
+                st.session_state.auto_vurdering_for_signatur = (
+                    _beregn_kombineret_signatur_top()
+                )
             st.rerun()
 
     # Free-text notater (bevares til backward compat + bruges til hurtige noter)
