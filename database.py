@@ -507,6 +507,42 @@ def opret_tabeller():
             ON gemte_sager (tenant_id)
         """)
 
+        # ═════════════════════════════════════════════════════════════
+        # ROW-LEVEL SECURITY: Slå RLS til på ALLE tabeller
+        # ═════════════════════════════════════════════════════════════
+        # Supabase eksponerer ALLE tabeller i 'public' schema via
+        # PostgREST + anon-key (som er offentlig i frontend). Uden RLS
+        # kan hvem som helst læse/skrive direkte via SUPABASE_URL.
+        #
+        # Vi bruger IKKE Supabase's REST API til data — kun direkte
+        # psycopg2-forbindelse via DATABASE_URL (postgres-rolle, der
+        # bypasser RLS automatisk pga. SUPERUSER/BYPASSRLS-attribut).
+        # At slå RLS til lukker derfor REST-adgangen UDEN at bryde
+        # vores eget app-flow. Ingen policies = total spærring for
+        # anon/authenticated, fuld adgang for postgres-rolle.
+        #
+        # Idempotent: ALTER TABLE ... ENABLE ROW LEVEL SECURITY kan
+        # køres mange gange uden fejl.
+        for _tabel in (
+            "mine_dokumenter",
+            "dokument_chunks",
+            "analyse_arkiv",
+            "gemte_sager",
+            "tenants",
+            "users",
+            "gdpr_audit_log",
+            "shared_patterns",
+        ):
+            try:
+                cur.execute(
+                    f"ALTER TABLE {_tabel} ENABLE ROW LEVEL SECURITY"
+                )
+            except Exception as _rls_err:
+                print(
+                    f"DEBUG: kunne ikke slå RLS til på {_tabel}: "
+                    f"{_rls_err}"
+                )
+
         conn.commit()
         cur.close()
         conn.close()
