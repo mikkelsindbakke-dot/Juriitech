@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
@@ -82,28 +81,21 @@ const NAEVNET_NOTE = "Vejledning fra Nævnet — anonymiseres ikke";
 
 // Sektion 10: Anonymisér bilag til Nævnet.
 //
-// Per-fil checkbox-valg + Klager(e) + Medrejsende inputs (begge bliver
-// merget til klager_navne-listen API'et bruger — adskillelsen er kun
-// visuel for at hjælpe brugeren med at huske at oplyse begge slags).
+// Klagers navn auto-udledes fra klageskemaet via /api/sagsmetadata
+// (samme endpoint som svarbrev-sektionen bruger). Tidligere havde vi
+// en manuel "bekræft klager + medrejsende"-formular her — den er nu
+// fjernet for at minimere brugerens manuelle arbejde. Hvis auto-
+// udtrækning fejler, bliver klager_navne tom — og find_redaction_targets
+// anonymiserer så ALLE personnavne, hvilket er en sikker fallback.
 export function AnonymiserSektion({ filer }: { filer: File[] }) {
   const [pending, startTransition] = useTransition();
-
-  const [klagerNavne, sætKlagerNavne] = useState<string[]>([]);
-  const [klagerInput, sætKlagerInput] = useState("");
-  const [medrejsende, sætMedrejsende] = useState<string[]>([]);
-  const [medrejsendeInput, sætMedrejsendeInput] = useState("");
-
-  // Per-fil checkbox-valg. Initialiseres til alle PDF'er der ikke er
-  // fra Nævnet (klageskema, bilag) som default unchecked — brugeren
-  // skal aktivt vælge hvad der skal anonymiseres.
+  const [klagersNavn, sætKlagersNavn] = useState<string>("");
   const [valgte, sætValgte] = useState<Record<string, boolean>>({});
 
+  // Sync valgte-map med filer-prop. eslint-disable: prop-sync er det
+  // legitime use case der ikke kan løses med derived state uden tab af
+  // user-overrides.
   useEffect(() => {
-    // Prop-sync: når 'filer'-prop'en ændres skal vi opdatere det interne
-    // valgte-map (tilføj nye filer, fjern gamle, bevar brugerens
-    // checkmarks for filer der stadig er der). Lint-reglen mod
-    // setState-i-effect rammer her — men for prop-sync til afledt
-    // intern state er useEffect den korrekte mekanisme.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     sætValgte((prev) => {
       const ny: Record<string, boolean> = {};
@@ -116,25 +108,38 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
     });
   }, [filer]);
 
+  // Auto-hent klagers navn ved første render efter filer er valgt.
+  // Cacher pr. fil-signatur via useRef så vi ikke kalder igen ved hver
+  // re-render. Fejler stille — anonymiseren har en sikker fallback hvis
+  // listen er tom.
+  const navnHentetRef = useRef<string>("");
+  useEffect(() => {
+    if (filer.length === 0) return;
+    const filSig = filer.map((f) => f.name).sort().join("|");
+    if (navnHentetRef.current === filSig) return;
+    navnHentetRef.current = filSig;
+
+    const url = process.env.NEXT_PUBLIC_API_URL;
+    if (!url) return;
+
+    (async () => {
+      try {
+        const formData = new FormData();
+        for (const fil of filer) formData.append("filer", fil);
+        const res = await fetch(`${url}/api/sagsmetadata`, {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) return;
+        const data = (await res.json()) as { klagers_navn?: string };
+        if (data.klagers_navn) sætKlagersNavn(data.klagers_navn);
+      } catch (e) {
+        console.warn("Auto-udtrækning af klagers navn fejlede:", e);
+      }
+    })();
+  }, [filer]);
+
   const [resultater, sætResultater] = useState<AnonymRespons | null>(null);
-
-  function tilfoejTilListe(
-    nyVerdi: string,
-    sæt: React.Dispatch<React.SetStateAction<string[]>>,
-    sætInput: (s: string) => void,
-  ) {
-    const v = nyVerdi.trim();
-    if (!v) return;
-    sæt((xs) => [...xs, v]);
-    sætInput("");
-  }
-
-  function fjernFraListe(
-    i: number,
-    sæt: React.Dispatch<React.SetStateAction<string[]>>,
-  ) {
-    sæt((xs) => xs.filter((_, idx) => idx !== i));
-  }
 
   function toggleAlle(vaerdi: boolean) {
     sætValgte((prev) => {
@@ -155,7 +160,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
       return;
     }
     const filerAtSende = filer.filter((f) => valgte[f.name]);
-    const alleNavne = [...klagerNavne, ...medrejsende];
+    const klagerNavneListe = klagersNavn.trim() ? [klagersNavn.trim()] : [];
 
     startTransition(async () => {
       const url = process.env.NEXT_PUBLIC_API_URL;
@@ -165,7 +170,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
       }
       const formData = new FormData();
       for (const fil of filerAtSende) formData.append("filer", fil);
-      formData.append("klager_navne_json", JSON.stringify(alleNavne));
+      formData.append("klager_navne_json", JSON.stringify(klagerNavneListe));
 
       try {
         const res = await fetch(`${url}/api/anonymiser`, {
@@ -203,142 +208,22 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
     URL.revokeObjectURL(url);
   }
 
-  // Filter til visning: vis alle filer (også non-PDF og fra-Nævnet) men
-  // markér dem som disabled. Det matcher Streamlit-PAX' UI hvor fx
-  // høringsbrev og vejledninger vises men er disabled med en note.
   const filerSorted = [...filer].sort((a, b) => a.name.localeCompare(b.name));
 
   return (
     <Card>
       <CardContent className="space-y-4 pt-6">
-        {/* Bekræft klager(e) + medrejsende */}
-        <div className="space-y-2">
-          <Label className="text-sm font-semibold">
-            Bekræft klager(e) — bevares synlig i bilagene
-          </Label>
-          <p className="text-xs text-zinc-500">
-            Disse navne bevares helt. Alle andre navne får sortmasket
-            efternavn.
-          </p>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div>
-              <Label className="text-xs">Klager(e)</Label>
-              <div className="flex gap-1 mt-1">
-                <Input
-                  value={klagerInput}
-                  onChange={(e) => sætKlagerInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      tilfoejTilListe(klagerInput, sætKlagerNavne, sætKlagerInput);
-                    }
-                  }}
-                  placeholder="Anders Andersen"
-                  disabled={pending}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() =>
-                    tilfoejTilListe(klagerInput, sætKlagerNavne, sætKlagerInput)
-                  }
-                  disabled={pending || !klagerInput.trim()}
-                >
-                  +
-                </Button>
-              </div>
-              {klagerNavne.length > 0 && (
-                <ul className="space-y-1 text-xs mt-2">
-                  {klagerNavne.map((n, i) => (
-                    <li
-                      key={i}
-                      className="flex items-center gap-2 rounded-md bg-zinc-50 px-2 py-1"
-                    >
-                      <span className="flex-1 text-zinc-800">{n}</span>
-                      <button
-                        type="button"
-                        onClick={() => fjernFraListe(i, sætKlagerNavne)}
-                        disabled={pending}
-                        className="text-zinc-400 hover:text-red-700"
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-            <div>
-              <Label className="text-xs">
-                Medrejsende{" "}
-                <span className="text-zinc-400">(valgfrit)</span>
-              </Label>
-              <div className="flex gap-1 mt-1">
-                <Input
-                  value={medrejsendeInput}
-                  onChange={(e) => sætMedrejsendeInput(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      tilfoejTilListe(
-                        medrejsendeInput,
-                        sætMedrejsende,
-                        sætMedrejsendeInput,
-                      );
-                    }
-                  }}
-                  placeholder="fx ægtefælle eller barn"
-                  disabled={pending}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  size="sm"
-                  onClick={() =>
-                    tilfoejTilListe(
-                      medrejsendeInput,
-                      sætMedrejsende,
-                      sætMedrejsendeInput,
-                    )
-                  }
-                  disabled={pending || !medrejsendeInput.trim()}
-                >
-                  +
-                </Button>
-              </div>
-              {medrejsende.length > 0 && (
-                <ul className="space-y-1 text-xs mt-2">
-                  {medrejsende.map((n, i) => (
-                    <li
-                      key={i}
-                      className="flex items-center gap-2 rounded-md bg-zinc-50 px-2 py-1"
-                    >
-                      <span className="flex-1 text-zinc-800">{n}</span>
-                      <button
-                        type="button"
-                        onClick={() => fjernFraListe(i, sætMedrejsende)}
-                        disabled={pending}
-                        className="text-zinc-400 hover:text-red-700"
-                      >
-                        ✕
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+        {/* Auto-udledt klager-info — vises som info-strip, ikke som form */}
+        {klagersNavn && (
+          <div className="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs text-emerald-900">
+            <strong>Klagers navn auto-udledt:</strong> {klagersNavn} —
+            bevares synligt i bilagene. Andre personnavne (medarbejdere,
+            guider, eksterne partnere) sortmaskeres.
           </div>
-          {klagerNavne.length === 0 && medrejsende.length === 0 && (
-            <p className="text-xs text-amber-700 italic">
-              Hvis listerne er tomme, anonymiseres ALLE personnavne (også
-              klagers).
-            </p>
-          )}
-        </div>
+        )}
 
         {/* Per-fil checkbox-liste */}
-        <div className="space-y-2 pt-2 border-t border-zinc-200">
+        <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label className="text-sm font-semibold">
               Vælg de bilag du ønsker at anonymisere
@@ -420,8 +305,8 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
         {pending && (
           <div className="rounded-md bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-900">
             juriitech PAX anonymiserer {antalValgte} bilag — lægger
-            sort-bjælke over følsomme felter i PDF&apos;er. Klagers fulde
-            navn anonymiseres ikke, da det ikke er et krav.
+            sort-bjælke over følsomme felter (CPR, e-mails, telefon,
+            interne medarbejdere og eksterne partnere).
           </div>
         )}
 

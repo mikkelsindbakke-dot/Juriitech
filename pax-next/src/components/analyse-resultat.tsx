@@ -103,6 +103,52 @@ function renderTekstMedBilagPiller(tekst: string): React.ReactNode[] {
   return dele;
 }
 
+// Renderer fri-tekst som afsnit, hvor leading-overskrifter/labels
+// (markdown **bold**, "Tema:", "Klagepunkt:", "Afsnit:" osv.) gøres
+// fed. Bruges fx i 'Rejseselskabets stillingtagen' og 'Kort juridisk
+// vurdering' så afsnitsstrukturen visuelt matcher resten af analysen.
+const LEADING_LABEL_RE = /^([A-ZÆØÅ][^:.\n]{2,60})[::]\s+/;
+
+function renderTekstMedAfsnit(tekst: string): React.ReactNode {
+  if (!tekst) return null;
+  const afsnit = tekst.split(/\n\s*\n/).map((s) => s.trim()).filter(Boolean);
+  return (
+    <div className="space-y-3">
+      {afsnit.map((afsnitTekst, idx) => {
+        // 1) Markdown-style **fed**-prefix vinder
+        const mdMatch = /^\*\*([^*]+?)\*\*[:\s—-]+/.exec(afsnitTekst);
+        if (mdMatch) {
+          const titel = mdMatch[1].trim();
+          const rest = afsnitTekst.slice(mdMatch[0].length).trim();
+          return (
+            <p key={idx} className="text-sm sm:text-base text-zinc-800 leading-relaxed">
+              <strong className="font-semibold text-zinc-900">{titel}</strong>
+              {rest && <> — {renderTekstMedBilagPiller(rest)}</>}
+            </p>
+          );
+        }
+        // 2) "Tema: …" / "Klagepunkt: …" / "Afsnit: …" leading-label
+        const labelMatch = LEADING_LABEL_RE.exec(afsnitTekst);
+        if (labelMatch && labelMatch[1].length <= 50) {
+          const titel = labelMatch[1].trim();
+          const rest = afsnitTekst.slice(labelMatch[0].length).trim();
+          return (
+            <p key={idx} className="text-sm sm:text-base text-zinc-800 leading-relaxed">
+              <strong className="font-semibold text-zinc-900">{titel}</strong>
+              {rest && <> — {renderTekstMedBilagPiller(rest)}</>}
+            </p>
+          );
+        }
+        return (
+          <p key={idx} className="text-sm sm:text-base text-zinc-800 leading-relaxed">
+            {renderTekstMedBilagPiller(afsnitTekst)}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
 // ─────────── Toppen: MEST SANDSYNLIGE UDFALD-kort ───────────
 
 function findMestSandsynligeUdfald(s: Sandsynligheder) {
@@ -113,8 +159,6 @@ function findMestSandsynligeUdfald(s: Sandsynligheder) {
     return {
       label: "DELVIST MEDHOLD",
       pct: delvist,
-      anbefaling:
-        "Blandet billede. Overvej et forligstilbud der afspejler det forventede delvise udfald.",
       farve: "border-amber-300 bg-amber-50 text-amber-900",
     };
   }
@@ -122,16 +166,12 @@ function findMestSandsynligeUdfald(s: Sandsynligheder) {
     return {
       label: "AFVISNING AF KLAGEN",
       pct: afvisning,
-      anbefaling:
-        "Stærk position. Hold fast i argumentet, men vurder om et lille goodwill-tilbud kan undgå nævnsbehandling.",
       farve: "border-emerald-300 bg-emerald-50 text-emerald-900",
     };
   }
   return {
     label: "FULD MEDHOLD TIL KLAGER",
     pct: fuld,
-    anbefaling:
-      "Svag position. Overvej hurtigt forligstilbud nær klagers krav for at minimere yderligere omkostninger.",
     farve: "border-red-300 bg-red-50 text-red-900",
   };
 }
@@ -173,9 +213,6 @@ function TopDashboard({ s }: { s: Sandsynligheder }) {
         </p>
         <p className="text-xl font-bold mt-1">
           {top.label} — {top.pct}%
-        </p>
-        <p className="text-sm mt-2">
-          <strong>Anbefalet strategi:</strong> {top.anbefaling}
         </p>
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -239,6 +276,115 @@ function KlagepunktItem({ punkt }: { punkt: string }) {
         </span>
       )}
     </li>
+  );
+}
+
+// ─────────── Afgørelses-tekst i Pakkerejse-Ankenævnets stil ───────────
+//
+// Den scrapede tekst er ren tekst uden HTML-struktur. For at matche
+// Nævnets webpræsentation parser vi de kanoniske afsnits-overskrifter
+// (fx "Klagens indhold", "Indklagedes bemærkninger", "Nævnets
+// bemærkninger og afgørelse") og renderer dem som tydelige sektion-
+// overskrifter med almindelig brødtekst i serif-font.
+
+const AFG_OVERSKRIFTER = [
+  "Klagen drejer sig om",
+  "Klagens indhold",
+  "Klagerens påstand",
+  "Klagers påstand",
+  "Indklagedes bemærkninger",
+  "Indklagedes påstand",
+  "Indklagedes svar",
+  "Sagens omstændigheder",
+  "Sagsfremstilling",
+  "Nævnets bemærkninger og afgørelse",
+  "Nævnets bemærkninger",
+  "Nævnets afgørelse",
+  "Konklusion",
+  "Begrundelse",
+  "Sagsfremstilling og afgørelse",
+];
+
+function erOverskrift(linje: string): boolean {
+  const trimmet = linje.trim().replace(/[.:]+$/, "");
+  if (!trimmet || trimmet.length > 80) return false;
+  return AFG_OVERSKRIFTER.some(
+    (h) => trimmet.toLowerCase() === h.toLowerCase(),
+  );
+}
+
+type AfgBlok =
+  | { type: "overskrift"; tekst: string }
+  | { type: "afsnit"; tekst: string };
+
+function parseAfgoerelse(raaTekst: string): AfgBlok[] {
+  const blokke: AfgBlok[] = [];
+  let aktueltAfsnit: string[] = [];
+
+  const flushAfsnit = () => {
+    const sammen = aktueltAfsnit.join(" ").trim();
+    if (sammen) blokke.push({ type: "afsnit", tekst: sammen });
+    aktueltAfsnit = [];
+  };
+
+  // Split på blanke linjer for at få "naturlige" afsnit, men hold også
+  // single-newlines som potentielle overskrift-kandidater.
+  for (const raaLinje of raaTekst.split(/\n/)) {
+    const linje = raaLinje.trim();
+    if (!linje) {
+      flushAfsnit();
+      continue;
+    }
+    if (erOverskrift(linje)) {
+      flushAfsnit();
+      blokke.push({ type: "overskrift", tekst: linje.replace(/[.:]+$/, "") });
+      continue;
+    }
+    aktueltAfsnit.push(linje);
+  }
+  flushAfsnit();
+  return blokke;
+}
+
+function AfgoerelseFormateret({
+  tekst,
+  harMere,
+}: {
+  tekst: string;
+  harMere: boolean;
+}) {
+  const blokke = parseAfgoerelse(tekst);
+  return (
+    <article className="max-h-[36rem] overflow-auto rounded-md border border-zinc-200 bg-white p-6">
+      <div className="text-[0.65rem] uppercase tracking-wider text-zinc-400 mb-4">
+        Uddrag · format som på pakkerejseankenaevnet.dk
+      </div>
+      <div className="space-y-4 font-serif text-[0.95rem] text-zinc-900 leading-relaxed">
+        {blokke.map((b, i) => {
+          if (b.type === "overskrift") {
+            return (
+              <h4
+                key={i}
+                className="font-sans text-sm font-semibold uppercase tracking-wider text-zinc-700 pt-2 border-b border-zinc-200 pb-1"
+              >
+                {b.tekst}
+              </h4>
+            );
+          }
+          return (
+            <p key={i} className="leading-[1.7]">
+              {b.tekst}
+            </p>
+          );
+        })}
+        {harMere && (
+          <p className="font-sans text-xs text-zinc-400 italic pt-3 border-t border-zinc-200">
+            …resten af afgørelsen er ikke vist. Klik &quot;Åbn original&quot;
+            for at læse hele teksten.
+          </p>
+        )}
+      </div>
+    </article>
   );
 }
 
@@ -385,17 +531,11 @@ function RelevantSagKort({
                 size="sm"
                 onClick={() => sætVisRaaTekst((v) => !v)}
               >
-                {visRaaTekst ? "Skjul rå tekst" : "Se rå tekst fra afgørelsen"}
+                {visRaaTekst ? "Skjul afgørelsen" : "Se uddrag af afgørelsen"}
               </Button>
               {visRaaTekst && (
-                <div className="mt-2 space-y-1">
-                  <p className="text-[0.65rem] uppercase tracking-wider text-zinc-500">
-                    De første ~3 sider af afgørelsen
-                  </p>
-                  <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-md border border-zinc-200 bg-white p-3 text-xs text-zinc-700 font-sans leading-relaxed">
-                    {raaTekst}
-                    {harMere && "\n\n[...resten af afgørelsen er ikke vist]"}
-                  </pre>
+                <div className="mt-3">
+                  <AfgoerelseFormateret tekst={raaTekst} harMere={harMere} />
                 </div>
               )}
             </div>
@@ -533,18 +673,14 @@ export function AnalyseResultat({
       {/* 5. Rejseselskabets stillingtagen */}
       {a.rejseselskabets_stillingtagen_indtil_nu && (
         <Pillar farve="blue" nummer={5} titel="Rejseselskabets stillingtagen indtil nu">
-          <div className="text-sm text-zinc-800 whitespace-pre-wrap leading-relaxed">
-            {renderTekstMedBilagPiller(a.rejseselskabets_stillingtagen_indtil_nu)}
-          </div>
+          {renderTekstMedAfsnit(a.rejseselskabets_stillingtagen_indtil_nu)}
         </Pillar>
       )}
 
       {/* 6. Kort juridisk vurdering */}
       {a.kort_juridisk_vurdering && (
         <Pillar farve="emerald" nummer={6} titel="Kort juridisk vurdering">
-          <div className="text-sm text-zinc-800 whitespace-pre-wrap leading-relaxed">
-            {renderTekstMedBilagPiller(a.kort_juridisk_vurdering)}
-          </div>
+          {renderTekstMedAfsnit(a.kort_juridisk_vurdering)}
         </Pillar>
       )}
 

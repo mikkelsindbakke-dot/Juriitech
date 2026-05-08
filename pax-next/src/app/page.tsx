@@ -1,159 +1,67 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
+import { Button } from "@/components/ui/button";
+import { UploadForm } from "@/components/upload-form";
 import { createClient } from "@/lib/supabase/server";
 import { hentBrugerMedTenant } from "@/lib/queries/users";
-import { ApiHealthButton } from "@/components/api-health-button";
-import Link from "next/link";
 import { logout } from "./login/actions";
+import Link from "next/link";
 
-// Server Component — kører server-side ved hver request.
-// proxy.ts har allerede verificeret at brugeren er logget ind når
-// vi når hertil; vi kan derfor antage at user findes.
+// Forsiden ER ny-sag-flowet. Tidligere "logget ind som"-side er fjernet
+// (irrelevant info — brugeren skal lande direkte i sit arbejde).
+// Sekundære navigations-links (Gemte sager, Arkiv, Admin, Log ud) ligger
+// diskret i top-rækken så de ikke konkurrerer med headlinen.
 export default async function Home() {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-
-  // Slå tenant op via supabase_user_id i vores users-tabel.
-  // Returnerer null hvis brugeren er oprettet i Supabase Auth
-  // men ikke endnu er linket via admin-UI'en.
   const dbBruger = user ? await hentBrugerMedTenant(user.id) : null;
 
   return (
-    <main className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-20">
-      <Card className="w-full max-w-xl border-zinc-200 shadow-sm">
-        <CardHeader className="space-y-3">
-          <div className="flex items-center gap-3">
-            <span className="inline-flex h-3 w-3 rounded-full bg-amber-500" />
-            <span className="text-xs font-medium uppercase tracking-wider text-zinc-500">
-              Migrations-version · ikke i produktion
-            </span>
-          </div>
-          <CardTitle className="text-3xl font-semibold tracking-tight">
-            juriitech PAX
-          </CardTitle>
-          <CardDescription className="text-base text-zinc-600">
-            Logget ind som <strong>{user?.email}</strong>
-            {dbBruger && (
-              <>
-                {" — tenant: "}
-                <strong>{dbBruger.tenant_navn}</strong>
-                <span className="text-zinc-400 text-sm">
-                  {" "}
-                  ({dbBruger.tenant_slug})
-                </span>
-              </>
-            )}
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4 text-sm text-zinc-700">
-          {dbBruger ? (
-            <div className="rounded-md bg-zinc-100 p-4 leading-relaxed space-y-3">
-              <div>
-                <p className="font-medium text-zinc-900 mb-1">Bruger-info</p>
-                <ul className="space-y-1">
-                  <li>
-                    <span className="text-zinc-500">Email:</span>{" "}
-                    {dbBruger.email}
-                  </li>
-                  <li>
-                    <span className="text-zinc-500">Navn:</span>{" "}
-                    {dbBruger.fulde_navn || "(ikke sat)"}
-                  </li>
-                  <li>
-                    <span className="text-zinc-500">Rolle:</span>{" "}
-                    {dbBruger.role}
-                  </li>
-                </ul>
-              </div>
-              <div>
-                <p className="font-medium text-zinc-900 mb-1">Tenant</p>
-                <ul className="space-y-1">
-                  <li>
-                    <span className="text-zinc-500">Navn:</span>{" "}
-                    {dbBruger.tenant_navn}
-                  </li>
-                  <li>
-                    <span className="text-zinc-500">Slug:</span>{" "}
-                    {dbBruger.tenant_slug}
-                  </li>
-                  <li>
-                    <span className="text-zinc-500">Tenant-id:</span>{" "}
-                    {dbBruger.tenant_id}
-                  </li>
-                </ul>
-              </div>
-            </div>
-          ) : (
-            <div className="rounded-md bg-amber-50 border border-amber-200 p-4 text-sm text-amber-900">
-              Du er logget ind på Supabase Auth, men din konto er ikke
-              endnu linket til en tenant i <code>users</code>-tabellen.
-              Bed en admin om at invitere dig.
-            </div>
+    <main className="flex-1 bg-zinc-50 px-6 py-10">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
+        <nav className="flex items-center justify-end gap-1">
+          <Link
+            href="/sager"
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            Gemte sager
+          </Link>
+          <Link
+            href="/arkiv"
+            className={buttonVariants({ variant: "ghost", size: "sm" })}
+          >
+            Arkiv
+          </Link>
+          {dbBruger?.role === "admin" && (
+            <Link
+              href="/admin"
+              className={buttonVariants({ variant: "ghost", size: "sm" })}
+            >
+              Admin
+            </Link>
           )}
-          <div className="space-y-2">
-            <p className="font-medium text-zinc-900 text-sm">
-              FastAPI-bro til Python-AI
-            </p>
-            <p className="text-xs text-zinc-500">
-              Test at Next.js (port 3000) kan tale med FastAPI (port 8000)
-              som wrapper den eksisterende ai_engine.py.
-            </p>
-            <ApiHealthButton />
-          </div>
-
-          <div className="pt-2 border-t border-zinc-200 flex flex-wrap gap-2">
-            <Link href="/sag/ny" className={buttonVariants()}>
-              Ny sag
-            </Link>
-            <Link
-              href="/sager"
-              className={buttonVariants({ variant: "outline" })}
-            >
-              Gemte sager
-            </Link>
-            <Link
-              href="/arkiv"
-              className={buttonVariants({ variant: "outline" })}
-            >
-              Arkiv
-            </Link>
-            {dbBruger?.role === "admin" && (
-              <Link
-                href="/admin"
-                className={buttonVariants({ variant: "outline" })}
-              >
-                🛡️ Admin
-              </Link>
-            )}
-          </div>
-
-          <p className="text-zinc-500 italic text-xs">
-            Den nuværende PAX kører fortsat på{" "}
-            <a
-              href="https://pax.juriitech.com"
-              className="underline underline-offset-2 hover:text-zinc-900"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              pax.juriitech.com
-            </a>{" "}
-            — kunder mærker intet før vi er klar.
-          </p>
           <form action={logout}>
-            <Button type="submit" variant="outline" size="sm">
+            <Button type="submit" variant="ghost" size="sm">
               Log ud
             </Button>
           </form>
-        </CardContent>
-      </Card>
+        </nav>
+
+        <header className="space-y-2">
+          <h1 className="font-serif text-4xl sm:text-5xl font-bold tracking-tight text-zinc-900">
+            Ny sag
+          </h1>
+          <p className="text-zinc-600 max-w-3xl">
+            Upload klage og bilag (PDF, DOCX, PNG, JPG eller ZIP). juriitech
+            PAX kører en grundig analyse, finder præcedens i Pakkerejse-
+            Ankenævnets afgørelser og hjælper dig hele vejen til et
+            færdigt svarbrev.
+          </p>
+        </header>
+
+        <UploadForm />
+      </div>
     </main>
   );
 }
