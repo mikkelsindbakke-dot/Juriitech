@@ -28,7 +28,7 @@ if _PARENT not in sys.path:
 
 from typing import List  # noqa: E402
 
-from fastapi import FastAPI, File, UploadFile  # noqa: E402
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app = FastAPI(
@@ -111,3 +111,134 @@ async def parse_fil(filer: List[UploadFile] = File(...)):
         })
 
     return {"filer": resultater, "antal": len(resultater)}
+
+
+@app.post("/api/foerstevurdering")
+async def foerstevurdering(
+    filer: List[UploadFile] = File(...),
+    sagsakter: str = Form(""),
+):
+    """
+    Orkestrerer hele førstevurderings-flowet ved at kalde de eksisterende
+    Python-funktioner uændret:
+
+      1. processor._laes_fra_bytes — parse uploadede filer
+      2. ai_engine.udled_alle_klagepunkter — verificeret klagepunkt-liste
+      3. ai_engine.udled_tidsforhold — reklamationsrettidighed
+      4. ai_engine.udled_foerstevurdering_struktureret — 6-sektion JSON-analyse
+         (returnerer også relevante tidligere afgørelser via RAG)
+
+    Returnerer alt i én JSON. Tager 30-90 sekunder pga. AI-kald +
+    embedding-opslag i 500+ sager. Kalder mod prod-Supabase READ-ONLY
+    (vidensbanken). Bruger Anthropic-credits.
+
+    Bytes i sag-filerne sendes IKKE tilbage i JSON (kun metadata).
+    """
+    from processor import _laes_fra_bytes
+    from ai_engine import (
+        udled_alle_klagepunkter,
+        udled_tidsforhold,
+        udled_foerstevurdering_struktureret,
+    )
+
+    # ---------- 1. Parse files ----------
+    parsed_filer = []
+    for fil in filer:
+        data = await fil.read()
+        result = _laes_fra_bytes(fil.filename or "ukendt", data)
+        parsed_filer.append(result)
+    sag = {"filer": parsed_filer}
+
+    # ---------- 2. Verified klagepunkter ----------
+    try:
+        klagepunkter = udled_alle_klagepunkter(
+            sag=sag,
+            sagsakter_tekst=sagsakter,
+        ) or []
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"udled_alle_klagepunkter fejlede: {e}",
+        )
+
+    # ---------- 3. Tidsforhold (reklamationsrettidighed) ----------
+    try:
+        tidsforhold = udled_tidsforhold(
+            sag=sag,
+            sagsakter_tekst=sagsakter,
+        ) or {}
+    except Exception as e:
+        print(f"DEBUG: udled_tidsforhold fejlede ({e}) — fortsætter uden")
+        tidsforhold = {}
+
+    # ---------- 4. Byg facit-blokke ----------
+    klagepunkter_facit = ""
+    if klagepunkter:
+        klagepunkter_facit = (
+            "VERIFICERET LISTE OVER ALLE KLAGEPUNKTER (udtrukket separat):\n"
+            + "".join(f"  {i + 1}. {kp}\n" for i, kp in enumerate(klagepunkter))
+            + f"\nTotal: {len(klagepunkter)} klagepunkter.\n\n"
+        )
+
+    tidsforhold_facit = ""
+    if (
+        tidsforhold
+        and tidsforhold.get("har_problematisk_forsinkelse")
+        and not tidsforhold.get("kunne_ikke_udledes")
+    ):
+        tidsforhold_facit = (
+            "VERIFICERET TIDSFORHOLD — REKLAMATIONSRETTIDIGHED:\n"
+            + (
+                f"  Samlet: {tidsforhold.get('samlet_vurdering', '')}\n\n"
+                if tidsforhold.get("samlet_vurdering")
+                else ""
+            )
+            + "".join(
+                f"  • {obs}\n"
+                for obs in (tidsforhold.get("konkrete_observationer") or [])
+            )
+        )
+
+    # ---------- 5. Hovedanalyse ----------
+    try:
+        analyse_dict, rel_sager = udled_foerstevurdering_struktureret(
+            sag=sag,
+            sagsakter=sagsakter,
+            sagsakter_filer=[],
+            klagepunkter_facit=klagepunkter_facit,
+            tidsforhold_facit=tidsforhold_facit,
+            klagepunkter_liste=klagepunkter,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"udled_foerstevurdering_struktureret fejlede: {e}",
+        )
+
+    if analyse_dict is None:
+        raise HTTPException(
+            status_code=502,
+            detail="AI returnerede tom analyse (kan være credit-problem)",
+        )
+
+    # ---------- 6. Strip bytes/embedding fra rel_sager til JSON ----------
+    rel_sager_clean = []
+    for s in (rel_sager or [])[:5]:  # top 5 sager
+        rel_sager_clean.append({
+            k: v
+            for k, v in s.items()
+            if k not in ("embedding", "fil_bytes")
+            and not isinstance(v, bytes)
+        })
+
+    return {
+        "klagepunkter": klagepunkter,
+        "tidsforhold": tidsforhold,
+        "analyse": analyse_dict,
+        "relevante_sager": rel_sager_clean,
+        "metadata": {
+            "antal_filer": len(parsed_filer),
+            "antal_klagepunkter": len(klagepunkter),
+            "antal_relevante_sager": len(rel_sager_clean),
+        },
+    }

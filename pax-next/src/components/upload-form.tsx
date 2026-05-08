@@ -1,8 +1,12 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState, useTransition, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import {
+  AnalyseResultat,
+  type FoerstevurderingsRespons,
+} from "@/components/analyse-resultat";
 
 type ParsedFil = {
   filnavn: string;
@@ -35,34 +39,55 @@ const RolleEtiket: Record<string, string> = {
   ukendt: "Ukendt",
 };
 
+// Lille timer der tæller op mens AI-kaldet kører — så brugeren ved
+// at noget sker (analysen tager 30-90 sek).
+function Timer({ kører }: { kører: boolean }) {
+  const [sek, sætSek] = useState(0);
+  useEffect(() => {
+    if (!kører) {
+      sætSek(0);
+      return;
+    }
+    const id = setInterval(() => sætSek((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [kører]);
+  if (!kører) return null;
+  return (
+    <span className="text-xs text-zinc-500 tabular-nums">
+      {" "}({sek}s — kan tage op til 90s)
+    </span>
+  );
+}
+
 export function UploadForm() {
-  const [pending, startTransition] = useTransition();
+  const [parsePending, startParseTransition] = useTransition();
+  const [analysePending, startAnalyseTransition] = useTransition();
   const [resultater, sætResultater] = useState<ParsedFil[] | null>(null);
+  const [analyse, sætAnalyse] = useState<FoerstevurderingsRespons | null>(
+    null,
+  );
   const [valgteFiler, sætValgteFiler] = useState<File[]>([]);
 
   function håndterFilValg(e: React.ChangeEvent<HTMLInputElement>) {
     const filer = Array.from(e.target.files ?? []);
     sætValgteFiler(filer);
     sætResultater(null);
+    sætAnalyse(null);
   }
 
-  function håndterUpload() {
+  function håndterParse() {
     if (valgteFiler.length === 0) {
       toast.error("Vælg mindst én fil først.");
       return;
     }
-    startTransition(async () => {
+    startParseTransition(async () => {
       const url = process.env.NEXT_PUBLIC_API_URL;
       if (!url) {
         toast.error("NEXT_PUBLIC_API_URL ikke sat.");
         return;
       }
-
       const formData = new FormData();
-      for (const fil of valgteFiler) {
-        formData.append("filer", fil);
-      }
-
+      for (const fil of valgteFiler) formData.append("filer", fil);
       try {
         const res = await fetch(`${url}/api/parse-fil`, {
           method: "POST",
@@ -77,8 +102,44 @@ export function UploadForm() {
         toast.success(`${data.antal} fil(er) parset.`);
       } catch (e) {
         toast.error(
-          `Kunne ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}. ` +
-            `Husk at uvicorn kører på port 8000.`,
+          `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
+        );
+      }
+    });
+  }
+
+  function håndterAnalyse() {
+    if (valgteFiler.length === 0) {
+      toast.error("Vælg mindst én fil først.");
+      return;
+    }
+    startAnalyseTransition(async () => {
+      const url = process.env.NEXT_PUBLIC_API_URL;
+      if (!url) {
+        toast.error("NEXT_PUBLIC_API_URL ikke sat.");
+        return;
+      }
+      const formData = new FormData();
+      for (const fil of valgteFiler) formData.append("filer", fil);
+      try {
+        const res = await fetch(`${url}/api/foerstevurdering`, {
+          method: "POST",
+          body: formData,
+        });
+        if (!res.ok) {
+          const fejl = await res.text();
+          toast.error(`API svarede ${res.status}: ${fejl.slice(0, 200)}`);
+          return;
+        }
+        const data = (await res.json()) as FoerstevurderingsRespons;
+        sætAnalyse(data);
+        toast.success(
+          `Analyse færdig — ${data.metadata.antal_klagepunkter} klagepunkter, ` +
+            `${data.metadata.antal_relevante_sager} præcedens-matches.`,
+        );
+      } catch (e) {
+        toast.error(
+          `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
         );
       }
     });
@@ -93,7 +154,9 @@ export function UploadForm() {
           className="block w-full cursor-pointer rounded-lg border-2 border-dashed border-zinc-300 bg-zinc-50 p-8 text-center hover:border-zinc-400 hover:bg-zinc-100 transition-colors"
         >
           <div className="text-sm text-zinc-600">
-            <span className="font-medium text-zinc-900">Klik for at vælge filer</span>
+            <span className="font-medium text-zinc-900">
+              Klik for at vælge filer
+            </span>
             <span className="block mt-1 text-xs">
               eller træk dem hertil. PDF, DOCX, PNG, JPG.
             </span>
@@ -116,7 +179,8 @@ export function UploadForm() {
             <ul className="space-y-0.5 text-zinc-700">
               {valgteFiler.map((f, i) => (
                 <li key={i}>
-                  · {f.name} <span className="text-zinc-500">({formatStr(f.size)})</span>
+                  · {f.name}{" "}
+                  <span className="text-zinc-500">({formatStr(f.size)})</span>
                 </li>
               ))}
             </ul>
@@ -124,16 +188,39 @@ export function UploadForm() {
         )}
       </div>
 
-      <Button
-        type="button"
-        onClick={håndterUpload}
-        disabled={pending || valgteFiler.length === 0}
-        className="w-full"
-      >
-        {pending ? "Parser..." : "Upload + parse via FastAPI"}
-      </Button>
+      {/* To-knap-rækken: parse (gratis, sec) vs analyse (AI, dyrt) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={håndterParse}
+          disabled={parsePending || analysePending || valgteFiler.length === 0}
+        >
+          {parsePending ? "Parser..." : "1. Parse-preview"}
+        </Button>
+        <Button
+          type="button"
+          onClick={håndterAnalyse}
+          disabled={parsePending || analysePending || valgteFiler.length === 0}
+        >
+          {analysePending ? (
+            <>
+              Analyserer<Timer kører={analysePending} />
+            </>
+          ) : (
+            "2. Kør førstevurdering (AI)"
+          )}
+        </Button>
+      </div>
 
-      {/* Resultater */}
+      {analysePending && (
+        <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-900">
+          AI'en arbejder: udtrækker klagepunkter → finder præcedens via RAG →
+          genererer 6-sektion juridisk analyse. Forlad ikke siden.
+        </div>
+      )}
+
+      {/* Parse-resultater */}
       {resultater && (
         <div className="space-y-3">
           <p className="text-sm font-medium text-zinc-900">
@@ -162,11 +249,6 @@ export function UploadForm() {
                     {r.tekst_total_laengde} tegn læst
                   </span>
                 )}
-                {r.media_type && (
-                  <span className="rounded-full bg-blue-100 px-2 py-0.5 text-blue-800">
-                    {r.media_type}
-                  </span>
-                )}
                 {r.aarsag && (
                   <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-800">
                     {r.aarsag}
@@ -185,6 +267,16 @@ export function UploadForm() {
               )}
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Analyse-resultat */}
+      {analyse && (
+        <div className="space-y-3">
+          <h2 className="text-lg font-semibold tracking-tight border-t border-zinc-200 pt-4">
+            Førstevurdering
+          </h2>
+          <AnalyseResultat data={analyse} />
         </div>
       )}
     </div>
