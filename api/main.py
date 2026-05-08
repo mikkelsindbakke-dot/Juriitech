@@ -434,3 +434,50 @@ async def anonymiser(
             "klager_navne": klager_navne,
         },
     }
+
+
+@app.post("/api/tjekliste")
+async def tjekliste(filer: List[UploadFile] = File(...)):
+    """
+    Genererer struktureret tjekliste over hvad Nævnet har bedt om i
+    høringsbrevet, og hvad der er dækket/ikke dækket af de uploadede
+    bilag. Kalder eksisterende ai_engine.generer_tjekliste uændret.
+
+    Returnerer markdown-tekst som typisk indeholder:
+      - Liste af ønskede oplysninger
+      - Status per punkt (✓ dækket / ✗ mangler)
+      - Konkrete bilag der dækker hvert punkt
+
+    Tager ~30 sek. Bruger Anthropic-credits.
+    """
+    from processor import _laes_fra_bytes
+    from ai_engine import generer_tjekliste
+
+    parsed_filer = []
+    for fil in filer:
+        data = await fil.read()
+        result = _laes_fra_bytes(fil.filename or "ukendt", data)
+        parsed_filer.append(result)
+    sag = {"filer": parsed_filer}
+
+    try:
+        tjekliste_md = generer_tjekliste(sag=sag)
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"generer_tjekliste fejlede: {e}",
+        )
+
+    if not tjekliste_md or not tjekliste_md.strip():
+        raise HTTPException(
+            status_code=502,
+            detail="AI returnerede tom tjekliste",
+        )
+
+    return {
+        "tjekliste": tjekliste_md,
+        "metadata": {
+            "antal_filer": len(parsed_filer),
+            "tegn": len(tjekliste_md),
+        },
+    }

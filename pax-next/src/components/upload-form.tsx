@@ -9,6 +9,7 @@ import {
 } from "@/components/analyse-resultat";
 import { SvarbrevSektion } from "@/components/svarbrev-sektion";
 import { AnonymiserSektion } from "@/components/anonymiser-sektion";
+import { TjeklisteSektion } from "@/components/tjekliste-sektion";
 
 type ParsedFil = {
   filnavn: string;
@@ -290,6 +291,13 @@ export function UploadForm() {
             klagepunkter={analyse?.klagepunkter}
             tidsforhold={analyse?.tidsforhold}
           />
+        </div>
+      )}
+
+      {/* Tjekliste-sektion */}
+      {valgteFiler.length > 0 && (
+        <div className="space-y-3 border-t border-zinc-200 pt-4">
+          <TjeklisteSektion filer={valgteFiler} />
         </div>
       )}
 
