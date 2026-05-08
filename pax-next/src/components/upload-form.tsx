@@ -59,9 +59,8 @@ function AnalyseProgress() {
             juriitech PAX scanner din sag
           </p>
           <p className="text-xs text-indigo-700 mt-0.5 max-w-md">
-            Analyserer klagepunkter, tidsforhold og søger præcedens i
-            500+ afgørelser. En typisk sag tager 60-90 sek; større
-            sager med mange bilag op til 2-3 min.
+            En typisk sag tager 2-3 min. at analysere. Større sager kan
+            tage op til 5 min.
           </p>
         </div>
       </div>
@@ -370,6 +369,7 @@ export function UploadForm() {
             vaerdi={sagsakter}
             onAendret={sætSagsakter}
             onFilerTilfoejet={tilfoejFiler}
+            filer={valgteFiler}
             disabled={analysePending}
           />
         </div>
