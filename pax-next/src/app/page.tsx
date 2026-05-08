@@ -125,6 +125,14 @@ export default async function Home() {
             >
               Arkiv
             </Link>
+            {dbBruger?.role === "admin" && (
+              <Link
+                href="/admin"
+                className={buttonVariants({ variant: "outline" })}
+              >
+                🛡️ Admin
+              </Link>
+            )}
           </div>
 
           <p className="text-zinc-500 italic text-xs">
