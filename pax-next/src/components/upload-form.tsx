@@ -11,6 +11,12 @@ import { SvarbrevSektion } from "@/components/svarbrev-sektion";
 import { AnonymiserSektion } from "@/components/anonymiser-sektion";
 import { TjeklisteSektion } from "@/components/tjekliste-sektion";
 import { GemSagKnap } from "@/components/gem-sag-knap";
+import { SagsakterSektion } from "@/components/sagsakter-sektion";
+import {
+  BilagTilSvarbrevSektion,
+  bilagValgTilListe,
+  type BilagValg,
+} from "@/components/bilag-til-svarbrev-sektion";
 
 type ParsedFil = {
   filnavn: string;
@@ -43,8 +49,7 @@ const RolleEtiket: Record<string, string> = {
   ukendt: "Ukendt",
 };
 
-// Lille timer der tæller op mens AI-kaldet kører — så brugeren ved
-// at noget sker (analysen tager 30-90 sek).
+// Lille timer der tæller op mens AI-kaldet kører.
 function Timer({ kører }: { kører: boolean }) {
   const [sek, sætSek] = useState(0);
   useEffect(() => {
@@ -58,7 +63,8 @@ function Timer({ kører }: { kører: boolean }) {
   if (!kører) return null;
   return (
     <span className="text-xs text-zinc-500 tabular-nums">
-      {" "}({sek}s — kan tage op til 90s)
+      {" "}
+      ({sek}s — kan tage op til 90s)
     </span>
   );
 }
@@ -72,11 +78,20 @@ export function UploadForm() {
   );
   const [valgteFiler, sætValgteFiler] = useState<File[]>([]);
 
+  // Sektion 9: Sagsakter (fri tekst med ekstra kontekst).
+  // Medsendes alle AI-kald så vurderingen tager højde for ny information.
+  const [sagsakter, sætSagsakter] = useState("");
+
+  // Sektion 11: Bilag til svarbrevet (letter assignment + reorder).
+  const [bilagStartBogstav, sætBilagStartBogstav] = useState("A");
+  const [bilagValg, sætBilagValg] = useState<BilagValg[]>([]);
+
   function håndterFilValg(e: React.ChangeEvent<HTMLInputElement>) {
     const filer = Array.from(e.target.files ?? []);
     sætValgteFiler(filer);
     sætResultater(null);
     sætAnalyse(null);
+    sætBilagValg([]); // ny fil-set → reset bilag-valg
   }
 
   function håndterParse() {
@@ -125,6 +140,7 @@ export function UploadForm() {
       }
       const formData = new FormData();
       for (const fil of valgteFiler) formData.append("filer", fil);
+      if (sagsakter.trim()) formData.append("sagsakter", sagsakter);
       try {
         const res = await fetch(`${url}/api/foerstevurdering`, {
           method: "POST",
@@ -148,6 +164,15 @@ export function UploadForm() {
       }
     });
   }
+
+  // Bygger bilag-listen der sendes til /api/svarbrev så Word-filen får
+  // den korrekte bilag-oversigt nederst.
+  const bilagListeTilDocx = bilagValgTilListe(bilagValg, bilagStartBogstav);
+
+  // Tilbyd analyse-trigger igen hvis sagsakter ændres efter første analyse —
+  // så brugeren kan re-køre med ekstra kontekst.
+  const sagsakterAendretEfterAnalyse =
+    analyse !== null && sagsakter.trim().length > 0;
 
   return (
     <div className="space-y-6">
@@ -211,6 +236,8 @@ export function UploadForm() {
             <>
               Analyserer<Timer kører={analysePending} />
             </>
+          ) : sagsakterAendretEfterAnalyse ? (
+            "Re-kør førstevurdering med ny kontekst"
           ) : (
             "2. Kør førstevurdering (AI)"
           )}
@@ -219,8 +246,8 @@ export function UploadForm() {
 
       {analysePending && (
         <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-900">
-          AI'en arbejder: udtrækker klagepunkter → finder præcedens via RAG →
-          genererer 6-sektion juridisk analyse. Forlad ikke siden.
+          AI&apos;en arbejder: udtrækker klagepunkter → finder præcedens via
+          RAG → genererer 6-sektion juridisk analyse. Forlad ikke siden.
         </div>
       )}
 
@@ -281,9 +308,68 @@ export function UploadForm() {
             Førstevurdering
           </h2>
           <AnalyseResultat data={analyse} />
+        </div>
+      )}
+
+      {/* Sektion 9: Sagsakter (vises altid når der er filer) */}
+      {valgteFiler.length > 0 && (
+        <div className="border-t border-zinc-200 pt-4">
+          <SagsakterSektion
+            vaerdi={sagsakter}
+            onAendret={sætSagsakter}
+            disabled={analysePending || parsePending}
+          />
+        </div>
+      )}
+
+      {/* Anonymiser-sektion (10) */}
+      {valgteFiler.length > 0 && (
+        <div className="space-y-3 border-t border-zinc-200 pt-4">
+          <AnonymiserSektion filer={valgteFiler} />
+        </div>
+      )}
+
+      {/* Sektion 11: Bilag til svarbrevet — output bruges i sektion 13 */}
+      {valgteFiler.length > 0 && (
+        <div className="border-t border-zinc-200 pt-4">
+          <BilagTilSvarbrevSektion
+            filer={valgteFiler.map((f) => ({ filnavn: f.name }))}
+            startBogstav={bilagStartBogstav}
+            onStartBogstavAendret={sætBilagStartBogstav}
+            valg={bilagValg}
+            onValgAendret={sætBilagValg}
+          />
+        </div>
+      )}
+
+      {/* Tjekliste-sektion (12) */}
+      {valgteFiler.length > 0 && (
+        <div className="space-y-3 border-t border-zinc-200 pt-4">
+          <TjeklisteSektion filer={valgteFiler} />
+        </div>
+      )}
+
+      {/* Svarbrev-sektion (13) — modtager bilag-listen fra sektion 11 */}
+      {valgteFiler.length > 0 && (
+        <div className="space-y-3 border-t border-zinc-200 pt-4">
+          <SvarbrevSektion
+            filer={valgteFiler}
+            klagepunkter={analyse?.klagepunkter}
+            tidsforhold={analyse?.tidsforhold}
+            bilagListe={bilagListeTilDocx}
+          />
+        </div>
+      )}
+
+      {/* Sektion 14: Gem din sagsbehandling */}
+      {analyse && (
+        <div className="border-t border-zinc-200 pt-4">
           <GemSagKnap
             state={{
               analyse,
+              sagsakter,
+              bilag_start_bogstav: bilagStartBogstav,
+              bilag_valg: bilagValg,
               filer: valgteFiler.map((f) => ({
                 navn: f.name,
                 antal_bytes: f.size,
@@ -294,31 +380,6 @@ export function UploadForm() {
               valgteFiler[0]?.name?.replace(/\.(pdf|docx)$/i, "") ?? ""
             }
           />
-        </div>
-      )}
-
-      {/* Svarbrev-sektion (kun synlig hvis vi har filer) */}
-      {valgteFiler.length > 0 && (
-        <div className="space-y-3 border-t border-zinc-200 pt-4">
-          <SvarbrevSektion
-            filer={valgteFiler}
-            klagepunkter={analyse?.klagepunkter}
-            tidsforhold={analyse?.tidsforhold}
-          />
-        </div>
-      )}
-
-      {/* Tjekliste-sektion */}
-      {valgteFiler.length > 0 && (
-        <div className="space-y-3 border-t border-zinc-200 pt-4">
-          <TjeklisteSektion filer={valgteFiler} />
-        </div>
-      )}
-
-      {/* Anonymiser-sektion */}
-      {valgteFiler.length > 0 && (
-        <div className="space-y-3 border-t border-zinc-200 pt-4">
-          <AnonymiserSektion filer={valgteFiler} />
         </div>
       )}
     </div>

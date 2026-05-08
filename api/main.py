@@ -285,6 +285,37 @@ async def foerstevurdering(
     }
 
 
+@app.post("/api/sagsmetadata")
+async def sagsmetadata(
+    filer: List[UploadFile] = File(...),
+    sagsakter: str = Form(""),
+):
+    """
+    Auto-udtræk af sagsnummer + klagers fulde navn fra uploadede filer.
+    Bruges til at præ-udfylde Brevhoved-felterne i svarbrev-formularen.
+
+    Lille hurtigt AI-kald (~5-10 sek). Frontenden kan cache resultatet
+    pr. sag-signatur så vi kun kalder én gang.
+    """
+    from processor import _laes_fra_bytes
+    from ai_engine import udled_sagsmetadata
+
+    flade_filer = await _laes_uploads_med_zip_udpakning(filer)
+    parsed_filer = [_laes_fra_bytes(navn, data) for navn, data in flade_filer]
+    sag = {"filer": parsed_filer}
+
+    try:
+        meta = udled_sagsmetadata(sag=sag, sagsakter_tekst=sagsakter) or {}
+    except Exception as e:
+        print(f"DEBUG: udled_sagsmetadata fejlede: {e}")
+        meta = {"sagsnummer": "", "klagers_navn": ""}
+
+    return {
+        "sagsnummer": meta.get("sagsnummer", ""),
+        "klagers_navn": meta.get("klagers_navn", ""),
+    }
+
+
 @app.post("/api/svarbrev")
 async def svarbrev(
     filer: List[UploadFile] = File(...),
@@ -293,6 +324,10 @@ async def svarbrev(
     inkluder_kildehenvisninger: bool = Form(False),
     verificerede_klagepunkter_json: str = Form("null"),
     tidsforhold_json: str = Form("null"),
+    sagsnummer: str = Form(""),
+    klagers_navn: str = Form(""),
+    hoeringssvar_nr: int = Form(1),
+    bilag_liste_json: str = Form("[]"),
 ):
     """
     Genererer komplet udkast til svarbrev. Kalder eksisterende
@@ -367,12 +402,57 @@ async def svarbrev(
             detail="AI returnerede tomt svarbrev (kan være credit-problem)",
         )
 
+    # ---------- Generer DOCX med brevhoved + bilag-liste ----------
+    # Streamlit-PAX bruger svarbrev_til_docx der bygger en pæn brev-
+    # opsætning med selskabs-logo, by/dato, "Vedr."-linje og bilag-
+    # oversigt nederst. Returneres som base64 så frontenden kan tilbyde
+    # download direkte uden et separat API-kald.
+    import base64
+    docx_b64 = ""
+    docx_fejl = None
+    try:
+        bilag_liste = json.loads(bilag_liste_json) or []
+        if not isinstance(bilag_liste, list):
+            bilag_liste = []
+    except Exception:
+        bilag_liste = []
+
+    try:
+        from eksport import svarbrev_til_docx
+        klage_filnavn = None
+        for f in parsed_filer:
+            if f.get("rolle") == "klageskema":
+                klage_filnavn = f.get("filnavn")
+                if klage_filnavn:
+                    break
+        if not klage_filnavn and parsed_filer:
+            klage_filnavn = parsed_filer[0].get("filnavn")
+
+        docx_bytes = svarbrev_til_docx(
+            svarbrev=svarbrev_tekst,
+            klage_filnavn=klage_filnavn or "svarbrev.pdf",
+            sagsnummer=sagsnummer.strip(),
+            klagers_navn=klagers_navn.strip(),
+            hoeringssvar_nr=hoeringssvar_nr if hoeringssvar_nr in (1, 2, 3) else 1,
+            bilag_liste=bilag_liste,
+        )
+        docx_b64 = base64.b64encode(docx_bytes).decode("ascii")
+    except Exception as e:
+        print(f"DEBUG: svarbrev_til_docx fejlede ({e}) — returnerer kun markdown")
+        docx_fejl = str(e)
+
     return {
         "svarbrev": svarbrev_tekst,
+        "docx_base64": docx_b64,
+        "docx_fejl": docx_fejl,
         "metadata": {
             "antal_filer": len(parsed_filer),
             "antal_instrukser": len(ekstra_instrukser),
             "inkluder_kildehenvisninger": inkluder_kildehenvisninger,
+            "sagsnummer": sagsnummer.strip(),
+            "klagers_navn": klagers_navn.strip(),
+            "hoeringssvar_nr": hoeringssvar_nr,
+            "antal_bilag": len(bilag_liste),
             "tegn": len(svarbrev_tekst),
         },
     }

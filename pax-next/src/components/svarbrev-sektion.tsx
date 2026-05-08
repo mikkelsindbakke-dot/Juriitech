@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -12,35 +12,90 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { toast } from "sonner";
-import type {
-  Tidsforhold,
-} from "@/components/analyse-resultat";
+import type { Tidsforhold } from "@/components/analyse-resultat";
 import { gemIArkivAction } from "@/app/arkiv/actions";
 
 type SvarbrevRespons = {
   svarbrev: string;
+  docx_base64?: string;
+  docx_fejl?: string | null;
   metadata: {
     antal_filer: number;
     antal_instrukser: number;
     inkluder_kildehenvisninger: boolean;
+    sagsnummer?: string;
+    klagers_navn?: string;
+    hoeringssvar_nr?: number;
+    antal_bilag?: number;
     tegn: number;
   };
+};
+
+type Sagsmetadata = {
+  sagsnummer: string;
+  klagers_navn: string;
+};
+
+export type BilagItem = {
+  bogstav: string;
+  overskrift: string;
 };
 
 export function SvarbrevSektion({
   filer,
   klagepunkter,
   tidsforhold,
+  bilagListe,
 }: {
   filer: File[];
   klagepunkter?: string[];
   tidsforhold?: Tidsforhold;
+  bilagListe?: BilagItem[];
 }) {
   const [pending, startTransition] = useTransition();
+  const [meta_pending, startMetaTransition] = useTransition();
+
   const [instrukser, sætInstrukser] = useState<string[]>([]);
   const [nyInstruks, sætNyInstruks] = useState("");
   const [kilder, sætKilder] = useState(false);
+
+  // Brevhoved-felter (sektion: 13. Generer svarbrev til Nævnet)
+  const [sagsnummer, sætSagsnummer] = useState("");
+  const [klagersNavn, sætKlagersNavn] = useState("");
+  const [hoeringssvarNr, sætHoeringssvarNr] = useState<1 | 2 | 3>(1);
+  const [metaHentet, sætMetaHentet] = useState(false);
+
   const [svarbrev, sætSvarbrev] = useState<SvarbrevRespons | null>(null);
+
+  // Auto-udtrækning af sagsnummer + klagers navn ved første render efter
+  // filer er valgt. Cacher pr. fil-signatur så vi ikke kalder igen ved
+  // hver re-render. Fejler stille — brugeren kan altid skrive selv.
+  useEffect(() => {
+    if (metaHentet || filer.length === 0) return;
+    const url = process.env.NEXT_PUBLIC_API_URL;
+    if (!url) return;
+
+    sætMetaHentet(true);
+    startMetaTransition(async () => {
+      try {
+        const formData = new FormData();
+        for (const fil of filer) formData.append("filer", fil);
+        const res = await fetch(`${url}/api/sagsmetadata`, {
+          method: "POST",
+          body: formData,
+        });
+        if (res.ok) {
+          const data = (await res.json()) as Sagsmetadata;
+          if (data.sagsnummer && !sagsnummer) sætSagsnummer(data.sagsnummer);
+          if (data.klagers_navn && !klagersNavn)
+            sætKlagersNavn(data.klagers_navn);
+        }
+      } catch (e) {
+        console.warn("Auto-udtrækning af brevhoved fejlede:", e);
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filer]);
 
   function tilfoejInstruks() {
     const v = nyInstruks.trim();
@@ -68,6 +123,12 @@ export function SvarbrevSektion({
       for (const fil of filer) formData.append("filer", fil);
       formData.append("ekstra_instrukser_json", JSON.stringify(instrukser));
       formData.append("inkluder_kildehenvisninger", String(kilder));
+      formData.append("sagsnummer", sagsnummer.trim());
+      formData.append("klagers_navn", klagersNavn.trim());
+      formData.append("hoeringssvar_nr", String(hoeringssvarNr));
+      if (bilagListe && bilagListe.length > 0) {
+        formData.append("bilag_liste_json", JSON.stringify(bilagListe));
+      }
       if (klagepunkter) {
         formData.append(
           "verificerede_klagepunkter_json",
@@ -92,7 +153,7 @@ export function SvarbrevSektion({
         sætSvarbrev(data);
         toast.success(`Svarbrev genereret (${data.metadata.tegn} tegn).`);
 
-        // Auto-save i arkiv (parity med Streamlit-PAX)
+        // Auto-arkivér
         const klageFn = filer[0]?.name ?? null;
         const arkivResultat = await gemIArkivAction({
           titel: klageFn ? `Svarbrev — ${klageFn}` : "Svarbrev",
@@ -121,22 +182,68 @@ export function SvarbrevSektion({
       .catch(() => toast.error("Kunne ikke kopiere"));
   }
 
+  function downloadDocx() {
+    if (!svarbrev?.docx_base64) {
+      toast.error("Word-fil er ikke klar — prøv at generere svarbrevet igen.");
+      return;
+    }
+    try {
+      const binaer = atob(svarbrev.docx_base64);
+      const buf = new Uint8Array(binaer.length);
+      for (let i = 0; i < binaer.length; i++) buf[i] = binaer.charCodeAt(i);
+      const blob = new Blob([buf], {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      });
+      const klageFn = filer[0]?.name ?? "svarbrev";
+      const filnavn = `svarbrev_${klageFn.replace(/\.[^.]+$/, "")}.docx`;
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = filnavn;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+    } catch (e) {
+      toast.error(
+        `Kunne ikke downloade: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
+      );
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base font-semibold">
-          Generer svarbrev
+          13. Generer svarbrev til Nævnet
         </CardTitle>
         <CardDescription className="text-xs">
-          {klagepunkter && tidsforhold
-            ? "Bruger verificerede klagepunkter + tidsforhold fra førstevurderingen — sparer 2 AI-kald."
-            : "Vil udlede klagepunkter + tidsforhold internt (~30s ekstra)."}
+          Lav et kompakt udkast til svarbrev. Brevet bliver max 1-2 A4-sider
+          og struktureres som indledning + samlet juridisk vurdering med
+          præcise henvisninger til rejsevilkår, pakkerejseloven og bilag.
+          {klagepunkter && tidsforhold ? (
+            <>
+              {" "}
+              Bruger verificerede klagepunkter + tidsforhold fra
+              førstevurderingen — sparer 2 AI-kald.
+            </>
+          ) : (
+            <>
+              {" "}
+              Vil udlede klagepunkter + tidsforhold internt (~30s ekstra).
+            </>
+          )}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {/* Særlige instrukser */}
         <div className="space-y-2">
-          <Label>Særlige instrukser (valgfrit)</Label>
+          <Label>
+            Særlige instrukser <span className="text-zinc-400">(valgfrit)</span>
+          </Label>
+          <p className="text-xs text-zinc-500 -mt-1">
+            Tilføj én eller flere instrukser der skal påvirke svarbrevet.
+            Instrukserne bruges KUN til denne sag.
+          </p>
           <div className="flex gap-2">
             <Input
               value={nyInstruks}
@@ -147,7 +254,7 @@ export function SvarbrevSektion({
                   tilfoejInstruks();
                 }
               }}
-              placeholder="fx 'læg vægt på force majeure-forbeholdet'"
+              placeholder="fx 'læg særlig vægt på force majeure-forbeholdet' eller 'anerkend 2.000 kr. men bestrid resten'"
               disabled={pending}
             />
             <Button
@@ -157,27 +264,26 @@ export function SvarbrevSektion({
               onClick={tilfoejInstruks}
               disabled={pending || !nyInstruks.trim()}
             >
-              Tilføj
+              Tilføj instruks
             </Button>
           </div>
           {instrukser.length > 0 && (
-            <ul className="space-y-1 text-sm">
+            <ul className="space-y-1 pt-1">
               {instrukser.map((instr, i) => (
                 <li
                   key={i}
-                  className="flex items-start gap-2 rounded-md bg-zinc-50 px-3 py-2"
+                  className="flex items-start gap-2 rounded-md bg-indigo-50 border-l-2 border-indigo-500 px-3 py-2 text-sm"
                 >
-                  <span className="text-zinc-500 tabular-nums">
-                    {i + 1}.
-                  </span>
+                  <span className="font-semibold text-zinc-700">{i + 1}.</span>
                   <span className="flex-1 text-zinc-800">{instr}</span>
                   <button
                     type="button"
                     onClick={() => fjernInstruks(i)}
                     disabled={pending}
-                    className="text-zinc-400 hover:text-red-700 text-xs"
+                    className="text-zinc-400 hover:text-red-700 text-sm leading-none"
+                    aria-label="Fjern instruks"
                   >
-                    fjern
+                    ✕
                   </button>
                 </li>
               ))}
@@ -195,13 +301,85 @@ export function SvarbrevSektion({
             className="mt-1"
           />
           <span className="text-sm">
-            <span className="font-medium">Inkluder kildehenvisninger</span>
+            <span className="font-medium">
+              Vil du tilføje kildehenvisninger til dit svarbrev?
+            </span>
             <span className="block text-xs text-zinc-500">
-              Eksplicitte henvisninger til bilag, vilkår og lovparagraffer.
-              Default: fra (mere flydende sprog).
+              Slået TIL: eksplicitte henvisninger til bilag (fx [Bilag 04, s.
+              1]), rejsevilkår og lovparagraffer. Slået FRA (standard):
+              brevet bliver mere flydende og naturligt at læse.
             </span>
           </span>
         </label>
+
+        {/* Brevhoved */}
+        <div className="space-y-3 pt-2 border-t border-zinc-200">
+          <div>
+            <Label className="text-sm font-semibold">Brevhoved</Label>
+            <p className="text-xs text-zinc-500 mt-0.5">
+              Disse felter sættes på selve svarbrevet. Sagsnummer og klagers
+              navn er forsøgt udtrukket automatisk — ret dem hvis de ikke
+              passer.
+              {meta_pending && (
+                <span className="ml-2 italic text-indigo-600">
+                  henter sagsdata…
+                </span>
+              )}
+            </p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label htmlFor="sagsnummer" className="text-xs">
+                Sagsnummer
+              </Label>
+              <Input
+                id="sagsnummer"
+                value={sagsnummer}
+                onChange={(e) => sætSagsnummer(e.target.value)}
+                placeholder="fx 25-109-8024327"
+                disabled={pending}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="klagersnavn" className="text-xs">
+                Klagers fulde navn
+              </Label>
+              <Input
+                id="klagersnavn"
+                value={klagersNavn}
+                onChange={(e) => sætKlagersNavn(e.target.value)}
+                placeholder="fx Laura Stephanie Uhler"
+                disabled={pending}
+              />
+            </div>
+          </div>
+
+          {/* Høringssvar-nummer */}
+          <div className="space-y-1">
+            <Label className="text-xs">Høringssvar-nummer</Label>
+            <p className="text-xs text-zinc-500">
+              Hvilken runde høringssvar er dette? Vises i &quot;Vedr.&quot;-linjen
+              øverst på brevet.
+            </p>
+            <div className="inline-flex rounded-md border border-zinc-300 bg-white p-0.5">
+              {([1, 2, 3] as const).map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => sætHoeringssvarNr(n)}
+                  disabled={pending}
+                  className={`px-3 py-1.5 text-sm rounded-sm transition-colors disabled:opacity-50 ${
+                    hoeringssvarNr === n
+                      ? "bg-indigo-100 text-indigo-900 font-medium"
+                      : "text-zinc-600 hover:bg-zinc-50"
+                  }`}
+                >
+                  {n}. høringssvar
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
 
         {/* Generér-knap */}
         <Button
@@ -210,30 +388,49 @@ export function SvarbrevSektion({
           disabled={pending || filer.length === 0}
           className="w-full"
         >
-          {pending ? "Genererer svarbrev (30-90 sek)..." : "Generer svarbrev"}
+          {pending
+            ? "Genererer svarbrev (30-90 sek)..."
+            : "Generer udkast til svarbrev"}
         </Button>
 
         {pending && (
           <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-900">
-            AI'en bygger svarbrev: indledning → faktum → juridisk vurdering →
-            stillingtagen → konklusion. Forbudte ord (beklager, anerkender,
-            bestrider osv.) bliver auto-fjernet i post-processing.
+            AI&apos;en bygger svarbrev: indledning → faktum → juridisk
+            vurdering → stillingtagen → konklusion. Forbudte ord (beklager,
+            anerkender, bestrider osv.) bliver auto-fjernet i
+            post-processing.
           </div>
         )}
 
         {/* Resultat */}
         {svarbrev && (
           <div className="space-y-3 border-t border-zinc-200 pt-4">
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between flex-wrap gap-2">
               <p className="text-sm font-medium">Genereret svarbrev</p>
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                onClick={kopier}
-              >
-                Kopier
-              </Button>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="default"
+                  size="sm"
+                  onClick={downloadDocx}
+                  disabled={!svarbrev.docx_base64}
+                  title={
+                    svarbrev.docx_fejl
+                      ? `Word-export fejlede: ${svarbrev.docx_fejl}`
+                      : undefined
+                  }
+                >
+                  📄 Download som Word
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={kopier}
+                >
+                  Kopiér
+                </Button>
+              </div>
             </div>
             <pre className="whitespace-pre-wrap rounded-md bg-zinc-50 p-4 text-sm text-zinc-800 font-sans leading-relaxed border border-zinc-200">
               {svarbrev.svarbrev}
@@ -243,6 +440,11 @@ export function SvarbrevSektion({
               {svarbrev.metadata.antal_instrukser} særlig(e) instrukser ·
               kildehenvisninger:{" "}
               {svarbrev.metadata.inkluder_kildehenvisninger ? "ja" : "nej"}
+              {svarbrev.metadata.sagsnummer && (
+                <> · sag {svarbrev.metadata.sagsnummer}</>
+              )}
+              {" · "}
+              {svarbrev.metadata.hoeringssvar_nr ?? 1}. høringssvar
             </p>
           </div>
         )}
