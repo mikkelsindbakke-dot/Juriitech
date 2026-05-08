@@ -254,11 +254,29 @@ async def foerstevurdering(
             and not isinstance(v, bytes)
         })
 
+    # ---------- 7. Match-metadata til visningskort ----------
+    # opsummer_matches_til_visning er et separat AI-kald der pr. sag
+    # producerer struktureret metadata (sagsnummer, udfald, klagers krav,
+    # tilkendt beløb, match-begrundelser). Streamlit-PAX bruger det til
+    # de visuelle sagskort.
+    match_info = []
+    if rel_sager_clean:
+        try:
+            from ai_engine import opsummer_matches_til_visning
+            match_info = opsummer_matches_til_visning(
+                uploadet_sag=sag,
+                relevante_sager=rel_sager_clean,
+            ) or []
+        except Exception as e:
+            print(f"DEBUG: opsummer_matches_til_visning fejlede ({e}) — fortsætter uden")
+            match_info = []
+
     return {
         "klagepunkter": klagepunkter,
         "tidsforhold": tidsforhold,
         "analyse": analyse_dict,
         "relevante_sager": rel_sager_clean,
+        "match_info": match_info,
         "metadata": {
             "antal_filer": len(parsed_filer),
             "antal_klagepunkter": len(klagepunkter),
