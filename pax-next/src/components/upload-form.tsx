@@ -49,6 +49,54 @@ const RolleEtiket: Record<string, string> = {
   ukendt: "Ukendt",
 };
 
+// Grøn opsummerings-bar der viser "Sag klar til analyse: N filer (X læst,
+// Y scannede PDF'er)" + en expandable fil-liste med rolle og tegn læst.
+// Matcher Streamlit-PAX' status-bar lige under upload-zonen.
+function SagKlarBar({ resultater }: { resultater: ParsedFil[] }) {
+  const [aaben, sætAaben] = useState(false);
+  const antal = resultater.length;
+  const læst = resultater.filter((r) => r.tekst_total_laengde > 0).length;
+  const scannet = resultater.filter(
+    (r) => r.type === "scannet_pdf",
+  ).length;
+  const fejlet = resultater.filter((r) => r.aarsag).length;
+  return (
+    <div className="space-y-2">
+      <div className="rounded-md bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-900">
+        <strong>Sag klar til analyse:</strong> {antal} filer ({læst} læst
+        {scannet > 0 && `, ${scannet} scannede PDF'er`}
+        {fejlet > 0 && `, ${fejlet} fejlede`})
+      </div>
+      <button
+        type="button"
+        onClick={() => sætAaben((v) => !v)}
+        className="w-full text-left text-sm text-zinc-600 hover:text-zinc-900 rounded-md border border-zinc-200 bg-white px-3 py-2"
+      >
+        <span className="text-zinc-400 mr-1">{aaben ? "▾" : "▸"}</span>
+        {aaben ? `Skjul fil-listen` : `Se de ${antal} filer i sagen`}
+      </button>
+      {aaben && (
+        <ol className="space-y-1 text-sm text-zinc-700 list-decimal pl-6">
+          {resultater.map((r, i) => (
+            <li key={i}>
+              <strong className="font-semibold text-zinc-900">{r.filnavn}</strong>{" "}
+              <em className="text-zinc-500">· {RolleEtiket[r.rolle] ?? r.rolle}</em>{" "}
+              <span className="text-zinc-500">
+                —{" "}
+                {r.tekst_total_laengde > 0
+                  ? `${r.tekst_total_laengde} tegn læst`
+                  : r.aarsag
+                    ? `fejl: ${r.aarsag}`
+                    : "scannet PDF"}
+              </span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 // Lille timer der tæller op mens AI-kaldet kører.
 function Timer({ kører }: { kører: boolean }) {
   const [sek, sætSek] = useState(0);
@@ -251,54 +299,9 @@ export function UploadForm() {
         </div>
       )}
 
-      {/* Parse-resultater */}
-      {resultater && (
-        <div className="space-y-3">
-          <p className="text-sm font-medium text-zinc-900">
-            Parse-resultat fra processor.py:
-          </p>
-          {resultater.map((r, i) => (
-            <div
-              key={i}
-              className="rounded-md border border-zinc-200 bg-white p-3 space-y-2"
-            >
-              <div className="flex items-center justify-between">
-                <span className="font-medium text-sm">{r.filnavn}</span>
-                <span className="text-xs text-zinc-500">
-                  {formatStr(r.antal_bytes)}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-2 text-xs">
-                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700">
-                  type: <code>{r.type}</code>
-                </span>
-                <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-zinc-700">
-                  rolle: {RolleEtiket[r.rolle] ?? r.rolle}
-                </span>
-                {r.tekst_total_laengde > 0 && (
-                  <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-emerald-800">
-                    {r.tekst_total_laengde} tegn læst
-                  </span>
-                )}
-                {r.aarsag && (
-                  <span className="rounded-full bg-red-100 px-2 py-0.5 text-red-800">
-                    {r.aarsag}
-                  </span>
-                )}
-              </div>
-              {r.tekst_uddrag && (
-                <details className="text-xs">
-                  <summary className="cursor-pointer text-zinc-600 hover:text-zinc-900">
-                    Vis tekst-uddrag (første 500 tegn)
-                  </summary>
-                  <pre className="mt-2 whitespace-pre-wrap rounded bg-zinc-50 p-2 text-zinc-800 max-h-40 overflow-auto">
-                    {r.tekst_uddrag}
-                  </pre>
-                </details>
-              )}
-            </div>
-          ))}
-        </div>
+      {/* Sag klar til analyse — opsummerings-bar */}
+      {resultater && resultater.length > 0 && (
+        <SagKlarBar resultater={resultater} />
       )}
 
       {/* Analyse-resultat */}

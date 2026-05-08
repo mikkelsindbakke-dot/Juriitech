@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,7 +52,6 @@ function formatStr(b: number): string {
   return `${(b / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// Konverter base64 til Blob så vi kan downloade
 function base64TilBlob(b64: string, mime: string): Blob {
   const byteString = atob(b64);
   const arr = new Uint8Array(byteString.length);
@@ -62,29 +61,103 @@ function base64TilBlob(b64: string, mime: string): Blob {
   return new Blob([arr], { type: mime });
 }
 
+// Heuristik: filer fra Nævnet (høringsbrev, retningslinjer, vejledninger)
+// skal IKKE anonymiseres — de sendes ikke tilbage til Nævnet og er ikke
+// følsomme. Vi disabler dem i checkbox-listen så brugeren ikke kommer til
+// at anonymisere noget der allerede er offentligt fra Nævnet.
+function erFraNaevnet(filnavn: string): boolean {
+  const navn = filnavn.toLowerCase();
+  return (
+    /høring/.test(navn) ||
+    /hoering/.test(navn) ||
+    /retningsl/.test(navn) ||
+    /vejledning/.test(navn)
+  );
+}
+
+function rolleAfFilnavn(filnavn: string): string {
+  const navn = filnavn.toLowerCase();
+  if (/høring|hoering/.test(navn)) return "høring";
+  if (/retningsl|vejledning/.test(navn)) return "vejledning";
+  if (/klageskema/.test(navn)) return "klageskema";
+  if (/bilag\s*0?[1-9]\d?/.test(navn)) return "bilag";
+  return "fil";
+}
+
+const NAEVNET_NOTE = "Vejledning fra Nævnet — anonymiseres ikke";
+
+// Sektion 10: Anonymisér bilag til Nævnet.
+//
+// Per-fil checkbox-valg + Klager(e) + Medrejsende inputs (begge bliver
+// merget til klager_navne-listen API'et bruger — adskillelsen er kun
+// visuel for at hjælpe brugeren med at huske at oplyse begge slags).
 export function AnonymiserSektion({ filer }: { filer: File[] }) {
   const [pending, startTransition] = useTransition();
+
   const [klagerNavne, sætKlagerNavne] = useState<string[]>([]);
-  const [nytNavn, sætNytNavn] = useState("");
+  const [klagerInput, sætKlagerInput] = useState("");
+  const [medrejsende, sætMedrejsende] = useState<string[]>([]);
+  const [medrejsendeInput, sætMedrejsendeInput] = useState("");
+
+  // Per-fil checkbox-valg. Initialiseres til alle PDF'er der ikke er
+  // fra Nævnet (klageskema, bilag) som default unchecked — brugeren
+  // skal aktivt vælge hvad der skal anonymiseres.
+  const [valgte, sætValgte] = useState<Record<string, boolean>>({});
+
+  useEffect(() => {
+    // Synkronisér valgte-map når filer ændres
+    sætValgte((prev) => {
+      const ny: Record<string, boolean> = {};
+      for (const f of filer) {
+        if (!f.name.toLowerCase().endsWith(".pdf")) continue;
+        if (erFraNaevnet(f.name)) continue;
+        ny[f.name] = prev[f.name] ?? false;
+      }
+      return ny;
+    });
+  }, [filer]);
+
   const [resultater, sætResultater] = useState<AnonymRespons | null>(null);
 
-  function tilfoejNavn() {
-    const v = nytNavn.trim();
+  function tilfoejTilListe(
+    nyVerdi: string,
+    sæt: React.Dispatch<React.SetStateAction<string[]>>,
+    sætInput: (s: string) => void,
+  ) {
+    const v = nyVerdi.trim();
     if (!v) return;
-    sætKlagerNavne((xs) => [...xs, v]);
-    sætNytNavn("");
+    sæt((xs) => [...xs, v]);
+    sætInput("");
   }
 
-  function fjernNavn(i: number) {
-    sætKlagerNavne((xs) => xs.filter((_, idx) => idx !== i));
+  function fjernFraListe(
+    i: number,
+    sæt: React.Dispatch<React.SetStateAction<string[]>>,
+  ) {
+    sæt((xs) => xs.filter((_, idx) => idx !== i));
   }
+
+  function toggleAlle(vaerdi: boolean) {
+    sætValgte((prev) => {
+      const ny: Record<string, boolean> = {};
+      for (const k of Object.keys(prev)) ny[k] = vaerdi;
+      return ny;
+    });
+  }
+
+  const valgteFilNavne = Object.entries(valgte)
+    .filter(([, v]) => v)
+    .map(([k]) => k);
+  const antalValgte = valgteFilNavne.length;
 
   function anonymiser() {
-    const pdfFiler = filer.filter((f) => f.name.toLowerCase().endsWith(".pdf"));
-    if (pdfFiler.length === 0) {
-      toast.error("Vælg mindst én PDF-fil. Sort-bjælke virker kun på PDF.");
+    if (antalValgte === 0) {
+      toast.error("Vælg mindst én fil at anonymisere.");
       return;
     }
+    const filerAtSende = filer.filter((f) => valgte[f.name]);
+    const alleNavne = [...klagerNavne, ...medrejsende];
+
     startTransition(async () => {
       const url = process.env.NEXT_PUBLIC_API_URL;
       if (!url) {
@@ -92,8 +165,8 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
         return;
       }
       const formData = new FormData();
-      for (const fil of pdfFiler) formData.append("filer", fil);
-      formData.append("klager_navne_json", JSON.stringify(klagerNavne));
+      for (const fil of filerAtSende) formData.append("filer", fil);
+      formData.append("klager_navne_json", JSON.stringify(alleNavne));
 
       try {
         const res = await fetch(`${url}/api/anonymiser`, {
@@ -108,7 +181,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
         const data = (await res.json()) as AnonymRespons;
         sætResultater(data);
         toast.success(
-          `${data.metadata.antal_anonymiseret_ok} af ${data.metadata.antal_input} fil(er) anonymiseret.`,
+          `${data.metadata.antal_anonymiseret_ok} af ${data.metadata.antal_input} bilag anonymiseret.`,
         );
       } catch (e) {
         toast.error(
@@ -131,84 +204,255 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
     URL.revokeObjectURL(url);
   }
 
+  // Filter til visning: vis alle filer (også non-PDF og fra-Nævnet) men
+  // markér dem som disabled. Det matcher Streamlit-PAX' UI hvor fx
+  // høringsbrev og vejledninger vises men er disabled med en note.
+  const filerSorted = [...filer].sort((a, b) => a.name.localeCompare(b.name));
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base font-semibold">
-          Anonymiser PDF-bilag (sort-bjælke)
+          10. Anonymisér bilag til Nævnet
         </CardTitle>
         <CardDescription className="text-xs">
-          Bruger eksisterende anonymisering_pdf.py. Klagers navne bevares;
-          andre navne, CPR, telefon, adresser sorbjælkes med bevaret layout.
+          Vælg de bilag du ønsker at anonymisere — både sagsfiler og
+          sagsakter du selv har uploadet. juriitech PAX producerer
+          anonymiserede versioner efter Pakkerejse-Ankenævnets
+          retningslinjer (Klager for klager, medrejsende for bipersoner,
+          CPR-numre fjernes osv.).
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Klager-navne */}
+        {/* Bekræft klager(e) + medrejsende */}
         <div className="space-y-2">
-          <Label>Klagers navne (skal IKKE sorbjælkes)</Label>
-          <div className="flex gap-2">
-            <Input
-              value={nytNavn}
-              onChange={(e) => sætNytNavn(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  tilfoejNavn();
-                }
-              }}
-              placeholder="fx 'Anders Andersen' eller 'Anders'"
-              disabled={pending}
-            />
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={tilfoejNavn}
-              disabled={pending || !nytNavn.trim()}
-            >
-              Tilføj
-            </Button>
-          </div>
-          {klagerNavne.length > 0 && (
-            <ul className="space-y-1 text-sm">
-              {klagerNavne.map((n, i) => (
-                <li
-                  key={i}
-                  className="flex items-center gap-2 rounded-md bg-zinc-50 px-3 py-2"
-                >
-                  <span className="flex-1 text-zinc-800">{n}</span>
-                  <button
-                    type="button"
-                    onClick={() => fjernNavn(i)}
-                    disabled={pending}
-                    className="text-zinc-400 hover:text-red-700 text-xs"
-                  >
-                    fjern
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+          <Label className="text-sm font-semibold">
+            Bekræft klager(e) — bevares synlig i bilagene
+          </Label>
           <p className="text-xs text-zinc-500">
-            Hvis listen er tom, anonymiseres ALLE personnavne (inkl. klagers).
+            Disse navne bevares helt. Alle andre navne får sortmasket
+            efternavn.
           </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div>
+              <Label className="text-xs">Klager(e)</Label>
+              <div className="flex gap-1 mt-1">
+                <Input
+                  value={klagerInput}
+                  onChange={(e) => sætKlagerInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      tilfoejTilListe(klagerInput, sætKlagerNavne, sætKlagerInput);
+                    }
+                  }}
+                  placeholder="Anders Andersen"
+                  disabled={pending}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    tilfoejTilListe(klagerInput, sætKlagerNavne, sætKlagerInput)
+                  }
+                  disabled={pending || !klagerInput.trim()}
+                >
+                  +
+                </Button>
+              </div>
+              {klagerNavne.length > 0 && (
+                <ul className="space-y-1 text-xs mt-2">
+                  {klagerNavne.map((n, i) => (
+                    <li
+                      key={i}
+                      className="flex items-center gap-2 rounded-md bg-zinc-50 px-2 py-1"
+                    >
+                      <span className="flex-1 text-zinc-800">{n}</span>
+                      <button
+                        type="button"
+                        onClick={() => fjernFraListe(i, sætKlagerNavne)}
+                        disabled={pending}
+                        className="text-zinc-400 hover:text-red-700"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+            <div>
+              <Label className="text-xs">
+                Medrejsende{" "}
+                <span className="text-zinc-400">(valgfrit)</span>
+              </Label>
+              <div className="flex gap-1 mt-1">
+                <Input
+                  value={medrejsendeInput}
+                  onChange={(e) => sætMedrejsendeInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      tilfoejTilListe(
+                        medrejsendeInput,
+                        sætMedrejsende,
+                        sætMedrejsendeInput,
+                      );
+                    }
+                  }}
+                  placeholder="fx ægtefælle eller barn"
+                  disabled={pending}
+                />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    tilfoejTilListe(
+                      medrejsendeInput,
+                      sætMedrejsende,
+                      sætMedrejsendeInput,
+                    )
+                  }
+                  disabled={pending || !medrejsendeInput.trim()}
+                >
+                  +
+                </Button>
+              </div>
+              {medrejsende.length > 0 && (
+                <ul className="space-y-1 text-xs mt-2">
+                  {medrejsende.map((n, i) => (
+                    <li
+                      key={i}
+                      className="flex items-center gap-2 rounded-md bg-zinc-50 px-2 py-1"
+                    >
+                      <span className="flex-1 text-zinc-800">{n}</span>
+                      <button
+                        type="button"
+                        onClick={() => fjernFraListe(i, sætMedrejsende)}
+                        disabled={pending}
+                        className="text-zinc-400 hover:text-red-700"
+                      >
+                        ✕
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+          {klagerNavne.length === 0 && medrejsende.length === 0 && (
+            <p className="text-xs text-amber-700 italic">
+              Hvis listerne er tomme, anonymiseres ALLE personnavne (også
+              klagers).
+            </p>
+          )}
+        </div>
+
+        {/* Per-fil checkbox-liste */}
+        <div className="space-y-2 pt-2 border-t border-zinc-200">
+          <div className="flex items-center justify-between">
+            <Label className="text-sm font-semibold">
+              Vælg de bilag du ønsker at anonymisere
+            </Label>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                onClick={() => toggleAlle(true)}
+                disabled={pending}
+                className="text-xs text-indigo-600 hover:text-indigo-800"
+              >
+                Vælg alle
+              </button>
+              <span className="text-xs text-zinc-300">·</span>
+              <button
+                type="button"
+                onClick={() => toggleAlle(false)}
+                disabled={pending}
+                className="text-xs text-zinc-500 hover:text-zinc-800"
+              >
+                Ryd
+              </button>
+            </div>
+          </div>
+          <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
+            {filerSorted.map((f, idx) => {
+              const erPdf = f.name.toLowerCase().endsWith(".pdf");
+              const fraNaevnet = erFraNaevnet(f.name);
+              const disabled = !erPdf || fraNaevnet || pending;
+              const rolle = rolleAfFilnavn(f.name);
+              return (
+                <li
+                  key={f.name + idx}
+                  className={`p-3 flex items-center gap-3 ${disabled ? "opacity-60" : ""}`}
+                >
+                  <input
+                    type="checkbox"
+                    id={`anonym-${idx}`}
+                    checked={!!valgte[f.name]}
+                    onChange={() =>
+                      sætValgte((p) => ({ ...p, [f.name]: !p[f.name] }))
+                    }
+                    disabled={disabled}
+                  />
+                  <label
+                    htmlFor={`anonym-${idx}`}
+                    className={`flex-1 text-sm ${disabled ? "text-zinc-500" : "text-zinc-900 cursor-pointer"}`}
+                  >
+                    {f.name}
+                  </label>
+                  <span className="text-xs text-zinc-500">Sag · {rolle}</span>
+                  {fraNaevnet && (
+                    <span className="text-xs italic text-zinc-500">
+                      {NAEVNET_NOTE}
+                    </span>
+                  )}
+                  {!erPdf && !fraNaevnet && (
+                    <span className="text-xs italic text-zinc-400">
+                      kun PDF understøttes
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
         </div>
 
         <Button
           type="button"
           onClick={anonymiser}
-          disabled={pending || filer.length === 0}
+          disabled={pending || antalValgte === 0}
           className="w-full"
         >
           {pending
-            ? "Anonymiserer..."
-            : `Anonymiser ${filer.filter((f) => f.name.toLowerCase().endsWith(".pdf")).length} PDF-fil(er)`}
+            ? `Anonymiserer ${antalValgte} bilag…`
+            : `Anonymisér valgte (${antalValgte})`}
         </Button>
+
+        {pending && (
+          <div className="rounded-md bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-900">
+            juriitech PAX anonymiserer {antalValgte} bilag — lægger
+            sort-bjælke over følsomme felter i PDF&apos;er. Klagers fulde
+            navn anonymiseres ikke, da det ikke er et krav.
+          </div>
+        )}
 
         {/* Resultater */}
         {resultater && (
           <div className="space-y-3 border-t border-zinc-200 pt-4">
-            <p className="text-sm font-medium text-zinc-900">
-              Anonymiseringsresultat
+            <div className="rounded-md bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-900">
+              ✓ {resultater.metadata.antal_anonymiseret_ok} af{" "}
+              {resultater.metadata.antal_input} bilag er anonymiseret.
+              Gennemgå indholdet nedenunder og download som PDF når du er
+              tilfreds.
+            </div>
+            <p className="text-sm font-semibold text-zinc-900">
+              Anonymiserede bilag — klar til download
+            </p>
+            <p className="text-xs text-zinc-500">
+              Tjek resultatet manuelt før du sender til Nævnet. AI-anonymisering
+              er et hjælpeværktøj, ikke en garanti.
             </p>
             {resultater.filer.map((r, i) => (
               <div
@@ -216,7 +460,10 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
                 className="rounded-md border border-zinc-200 bg-white p-3 space-y-2"
               >
                 <div className="flex items-center justify-between gap-2">
-                  <span className="font-medium text-sm">{r.filnavn}</span>
+                  <span className="font-medium text-sm">
+                    {r.status === "ok" ? "✓ " : "⚠ "}
+                    {r.filnavn}
+                  </span>
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs ${statusFarve[r.status]}`}
                   >
@@ -232,7 +479,6 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
                     </span>
                     <Button
                       type="button"
-                      variant="outline"
                       size="sm"
                       onClick={() => download(r)}
                     >

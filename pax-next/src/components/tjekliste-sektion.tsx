@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -52,7 +53,6 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
         sætResultat(data);
         toast.success(`Tjekliste klar (${data.metadata.tegn} tegn).`);
 
-        // Auto-save i arkiv
         const klageFn = filer[0]?.name ?? null;
         const arkivResultat = await gemIArkivAction({
           titel: klageFn ? `Tjekliste — ${klageFn}` : "Tjekliste",
@@ -79,16 +79,22 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
       .catch(() => toast.error("Kunne ikke kopiere"));
   }
 
+  // Tæller status-bullets så vi kan vise summary-strip øverst.
+  const statusTal = resultat
+    ? tællStatus(resultat.tjekliste)
+    : { dækket: 0, delvist: 0, mangler: 0 };
+
   return (
     <Card>
       <CardHeader>
         <CardTitle className="text-base font-semibold">
-          Tjekliste mod Nævnets høringsbrev
+          12. Tjekliste mod høringsbrev
         </CardTitle>
         <CardDescription className="text-xs">
-          AI'en gennemgår høringsbrevet og markerer hvilke ønskede
-          oplysninger der er dækket af bilagene, og hvad der mangler.
-          Kør den <strong>inden</strong> svarbrevet.
+          AI&apos;en gennemgår høringsbrevet og markerer hvilke ønskede
+          oplysninger der er dækket af bilagene, og hvad der mangler. Kør
+          den <strong>inden</strong> svarbrevet — så du ved hvad du skal
+          hente fra rejseselskabets systemer først.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -103,22 +109,79 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
             : "Generer tjekliste"}
         </Button>
 
+        {pending && (
+          <div className="rounded-md bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-900">
+            juriitech PAX gennemgår sagen mod Nævnets høringsbrev —
+            identificerer alle ønskede oplysninger og dokumenter…
+          </div>
+        )}
+
         {resultat && (
           <div className="space-y-3 border-t border-zinc-200 pt-4">
+            {/* Status-summary-strip */}
+            {(statusTal.dækket + statusTal.delvist + statusTal.mangler) > 0 && (
+              <div className="grid grid-cols-3 gap-2">
+                <StatusKort
+                  label="Dækket"
+                  antal={statusTal.dækket}
+                  bg="bg-emerald-50 border-emerald-200 text-emerald-900"
+                  ikon="✓"
+                />
+                <StatusKort
+                  label="Delvist"
+                  antal={statusTal.delvist}
+                  bg="bg-amber-50 border-amber-200 text-amber-900"
+                  ikon="⚠"
+                />
+                <StatusKort
+                  label="Mangler"
+                  antal={statusTal.mangler}
+                  bg="bg-red-50 border-red-200 text-red-900"
+                  ikon="✕"
+                />
+              </div>
+            )}
+
             <div className="flex items-center justify-between">
-              <p className="text-sm font-medium">Tjekliste</p>
+              <p className="text-sm font-medium">📋 Tjekliste fra høringsbrevet</p>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
                 onClick={kopier}
               >
-                Kopier
+                Kopiér
               </Button>
             </div>
-            <pre className="whitespace-pre-wrap rounded-md bg-zinc-50 p-4 text-sm text-zinc-800 font-sans leading-relaxed border border-zinc-200">
-              {resultat.tjekliste}
-            </pre>
+
+            <div className="rounded-md border border-zinc-200 bg-white p-4">
+              <div className="prose prose-sm max-w-none prose-headings:font-semibold prose-li:my-1 prose-strong:text-zinc-900">
+                <ReactMarkdown
+                  components={{
+                    li: ({ children, ...props }) => {
+                      // Detekter status-linjer ("Status: ✅ DÆKKET" osv.) og
+                      // marker dem visuelt så det er nemt at scanne.
+                      const tekst = childrenTilTekst(children);
+                      const status = parseStatus(tekst);
+                      if (status) {
+                        return (
+                          <li
+                            {...props}
+                            className={`rounded px-2 py-0.5 ${status.bg}`}
+                          >
+                            {children}
+                          </li>
+                        );
+                      }
+                      return <li {...props}>{children}</li>;
+                    },
+                  }}
+                >
+                  {resultat.tjekliste}
+                </ReactMarkdown>
+              </div>
+            </div>
+
             <p className="text-xs text-zinc-500">
               {resultat.metadata.tegn} tegn ·{" "}
               {resultat.metadata.antal_filer} fil(er) gennemgået
@@ -128,4 +191,79 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
       </CardContent>
     </Card>
   );
+}
+
+function StatusKort({
+  label,
+  antal,
+  bg,
+  ikon,
+}: {
+  label: string;
+  antal: number;
+  bg: string;
+  ikon: string;
+}) {
+  return (
+    <div className={`rounded-md border ${bg} p-3 text-center`}>
+      <p className="text-xs uppercase tracking-wide opacity-75">{label}</p>
+      <p className="text-2xl font-bold tabular-nums">
+        <span className="mr-1">{ikon}</span>
+        {antal}
+      </p>
+    </div>
+  );
+}
+
+function childrenTilTekst(children: React.ReactNode): string {
+  if (typeof children === "string") return children;
+  if (typeof children === "number") return String(children);
+  if (!children) return "";
+  if (Array.isArray(children)) return children.map(childrenTilTekst).join("");
+  if (
+    typeof children === "object" &&
+    "props" in children &&
+    children.props &&
+    typeof children.props === "object" &&
+    "children" in children.props
+  ) {
+    return childrenTilTekst(children.props.children as React.ReactNode);
+  }
+  return "";
+}
+
+type StatusInfo = { bg: string };
+
+function parseStatus(tekst: string): StatusInfo | null {
+  const lower = tekst.toLowerCase();
+  if (
+    /status\s*[::]/i.test(tekst) === false &&
+    !lower.includes("dækket") &&
+    !lower.includes("mangler")
+  ) {
+    return null;
+  }
+  if (/✅|✓|fuldt\s+dækket|fuld\s+dækket/i.test(tekst)) {
+    return { bg: "bg-emerald-50" };
+  }
+  if (/⚠|delvist/i.test(tekst)) {
+    return { bg: "bg-amber-50" };
+  }
+  if (/❌|✕|mangler/i.test(tekst)) {
+    return { bg: "bg-red-50" };
+  }
+  return null;
+}
+
+function tællStatus(markdown: string) {
+  let dækket = 0;
+  let delvist = 0;
+  let mangler = 0;
+  for (const linje of markdown.split("\n")) {
+    if (!/status\s*[::]/i.test(linje)) continue;
+    if (/✅|fuldt?\s+dækket/i.test(linje)) dækket += 1;
+    else if (/⚠|delvist/i.test(linje)) delvist += 1;
+    else if (/❌|mangler/i.test(linje)) mangler += 1;
+  }
+  return { dækket, delvist, mangler };
 }

@@ -271,12 +271,48 @@ async def foerstevurdering(
             print(f"DEBUG: opsummer_matches_til_visning fejlede ({e}) — fortsætter uden")
             match_info = []
 
+    # ---------- 8. Struktureret sagsresumé ----------
+    # Driver den 2-kolonne "Resumé"-pillar i UI'et: emne + klagepunkter
+    # + klagers krav + selskabets håndtering + forventet udfald. Bygger
+    # ovenpå den allerede genererede analyse, så det er hurtigt.
+    sagsresume = None
+    try:
+        from ai_engine import udled_sagsresume_strukturelt
+        # Saml analyse-tekst som funktionen forventer (markdown af alle
+        # sektioner). Vi kan rekonstruere det fra analyse_dict.
+        analyse_tekst_dele = []
+        for nøgle, label in [
+            ("klagens_kernepunkter", "Klagens kernepunkter"),
+            ("yderligere_klagepunkter_og_detaljer", "Yderligere klagepunkter"),
+            ("rejseselskabets_stillingtagen_indtil_nu", "Rejseselskabets stillingtagen indtil nu"),
+            ("kort_juridisk_vurdering", "Kort juridisk vurdering"),
+            ("konklusion_en_linje", "Konklusion"),
+        ]:
+            v = analyse_dict.get(nøgle)
+            if not v:
+                continue
+            if isinstance(v, list):
+                analyse_tekst_dele.append(f"## {label}\n" + "\n".join(f"- {p}" for p in v))
+            else:
+                analyse_tekst_dele.append(f"## {label}\n{v}")
+        analyse_tekst = "\n\n".join(analyse_tekst_dele)
+        if analyse_tekst:
+            sagsresume = udled_sagsresume_strukturelt(
+                analyse_tekst=analyse_tekst,
+                sagsakter_tekst=sagsakter,
+                tidsforhold=tidsforhold,
+            )
+    except Exception as e:
+        print(f"DEBUG: udled_sagsresume_strukturelt fejlede ({e}) — fortsætter uden")
+        sagsresume = None
+
     return {
         "klagepunkter": klagepunkter,
         "tidsforhold": tidsforhold,
         "analyse": analyse_dict,
         "relevante_sager": rel_sager_clean,
         "match_info": match_info,
+        "sagsresume": sagsresume,
         "metadata": {
             "antal_filer": len(parsed_filer),
             "antal_klagepunkter": len(klagepunkter),
