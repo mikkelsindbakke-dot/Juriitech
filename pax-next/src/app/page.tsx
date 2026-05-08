@@ -109,9 +109,15 @@ export default async function Home() {
             <ApiHealthButton />
           </div>
 
-          <div className="pt-2 border-t border-zinc-200">
+          <div className="pt-2 border-t border-zinc-200 flex flex-wrap gap-2">
             <Link href="/sag/ny" className={buttonVariants()}>
-              Upload klage + bilag (step 6)
+              Ny sag
+            </Link>
+            <Link
+              href="/sager"
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Gemte sager
             </Link>
           </div>
 

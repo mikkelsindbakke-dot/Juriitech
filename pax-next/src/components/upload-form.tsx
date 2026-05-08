@@ -10,6 +10,7 @@ import {
 import { SvarbrevSektion } from "@/components/svarbrev-sektion";
 import { AnonymiserSektion } from "@/components/anonymiser-sektion";
 import { TjeklisteSektion } from "@/components/tjekliste-sektion";
+import { GemSagKnap } from "@/components/gem-sag-knap";
 
 type ParsedFil = {
   filnavn: string;
@@ -280,6 +281,19 @@ export function UploadForm() {
             Førstevurdering
           </h2>
           <AnalyseResultat data={analyse} />
+          <GemSagKnap
+            state={{
+              analyse,
+              filer: valgteFiler.map((f) => ({
+                navn: f.name,
+                antal_bytes: f.size,
+              })),
+              gemt_dato: new Date().toISOString(),
+            }}
+            defaultTitel={
+              valgteFiler[0]?.name?.replace(/\.(pdf|docx)$/i, "") ?? ""
+            }
+          />
         </div>
       )}
 
