@@ -5,10 +5,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { hentBrugerMedTenant } from "@/lib/queries/users";
 import { ApiHealthButton } from "@/components/api-health-button";
+import Link from "next/link";
 import { logout } from "./login/actions";
 
 // Server Component — kører server-side ved hver request.
@@ -106,6 +107,12 @@ export default async function Home() {
               som wrapper den eksisterende ai_engine.py.
             </p>
             <ApiHealthButton />
+          </div>
+
+          <div className="pt-2 border-t border-zinc-200">
+            <Link href="/sag/ny" className={buttonVariants()}>
+              Upload klage + bilag (step 6)
+            </Link>
           </div>
 
           <p className="text-zinc-500 italic text-xs">

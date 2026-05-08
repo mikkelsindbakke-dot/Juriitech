@@ -26,7 +26,9 @@ _PARENT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PARENT not in sys.path:
     sys.path.insert(0, _PARENT)
 
-from fastapi import FastAPI  # noqa: E402
+from typing import List  # noqa: E402
+
+from fastapi import FastAPI, File, UploadFile  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 app = FastAPI(
@@ -73,3 +75,39 @@ def health():
         "python_path_root": _PARENT,
         "moduler": moduler_status,
     }
+
+
+@app.post("/api/parse-fil")
+async def parse_fil(filer: List[UploadFile] = File(...)):
+    """
+    Tager én eller flere uploadede filer og returnerer struktureret
+    parse-resultat per fil. Bruger eksisterende
+    processor._laes_fra_bytes — samme funktion som Streamlit-PAX bruger
+    bag scenen, så parse-output er bit-præcist det samme.
+
+    Bytes i resultatet sendes IKKE tilbage i JSON (de kan være store).
+    Vi returnerer kun:
+      - filnavn, type, rolle, media_type, evt. aarsag
+      - antal_bytes (størrelse-info så frontend kan vise)
+      - tekst_uddrag (første 500 tegn til preview)
+      - tekst_total_laengde (total antal tegn udtrukket)
+    """
+    from processor import _laes_fra_bytes  # lazy import for testbarhed
+
+    resultater = []
+    for fil in filer:
+        data = await fil.read()
+        result = _laes_fra_bytes(fil.filename or "ukendt", data)
+        tekst = result.get("tekst") or ""
+        resultater.append({
+            "filnavn": result.get("filnavn"),
+            "type": result.get("type"),
+            "rolle": result.get("rolle"),
+            "media_type": result.get("media_type"),
+            "aarsag": result.get("aarsag"),
+            "antal_bytes": len(data),
+            "tekst_total_laengde": len(tekst),
+            "tekst_uddrag": tekst[:500],
+        })
+
+    return {"filer": resultater, "antal": len(resultater)}
