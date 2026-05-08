@@ -3,13 +3,7 @@
 import { useState, useTransition } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { gemIArkivAction } from "@/app/arkiv/actions";
 
@@ -86,18 +80,7 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">
-          12. Tjekliste mod høringsbrev
-        </CardTitle>
-        <CardDescription className="text-xs">
-          AI&apos;en gennemgår høringsbrevet og markerer hvilke ønskede
-          oplysninger der er dækket af bilagene, og hvad der mangler. Kør
-          den <strong>inden</strong> svarbrevet — så du ved hvad du skal
-          hente fra rejseselskabets systemer først.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 pt-6">
         <Button
           type="button"
           onClick={generer}

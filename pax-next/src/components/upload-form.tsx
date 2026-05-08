@@ -2,6 +2,7 @@
 
 import { useState, useTransition, useEffect } from "react";
 import { Button } from "@/components/ui/button";
+import { Pillar } from "@/components/ui/pillar";
 import { toast } from "sonner";
 import {
   AnalyseResultat,
@@ -97,18 +98,15 @@ function SagKlarBar({ resultater }: { resultater: ParsedFil[] }) {
   );
 }
 
-// Lille timer der tæller op mens AI-kaldet kører.
-function Timer({ kører }: { kører: boolean }) {
+// Lille timer der tæller op mens AI-kaldet kører. Renderes kun når
+// analysen kører (parent gater på analysePending), så tilstanden
+// auto-resettes via mount/unmount — derfor ingen reset i useEffect.
+function Timer() {
   const [sek, sætSek] = useState(0);
   useEffect(() => {
-    if (!kører) {
-      sætSek(0);
-      return;
-    }
     const id = setInterval(() => sætSek((s) => s + 1), 1000);
     return () => clearInterval(id);
-  }, [kører]);
-  if (!kører) return null;
+  }, []);
   return (
     <span className="text-xs text-zinc-500 tabular-nums">
       {" "}
@@ -116,6 +114,145 @@ function Timer({ kører }: { kører: boolean }) {
     </span>
   );
 }
+
+// Progress-linje der tracker analyse-trinene tidsbaseret. Vi har ikke
+// real-time feedback fra backenden (ét fetch-kald), så vi bruger
+// estimerede varigheder pr. trin og animerer ud fra elapsed seconds.
+// Matcher Streamlit-PAX' thinking_fullpage()-mønster.
+//
+// Renderes kun mens analysen kører (parent gater på analysePending), så
+// tæller-tilstanden auto-resettes via mount/unmount.
+function AnalyseProgress() {
+  const [sek, sætSek] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => sætSek((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  // Estimerede varigheder (sekunder) pr. trin — baseret på faktiske
+  // målinger af /api/foerstevurdering på en typisk sag.
+  const trin = [
+    { label: "Læser og parser sagsfiler", varighed: 4 },
+    { label: "Udtrækker klagepunkter", varighed: 10 },
+    { label: "Analyserer tidsforhold mellem rejse, klage og høring", varighed: 8 },
+    { label: "Søger præcedens i vidensbank (500+ afgørelser)", varighed: 6 },
+    { label: "Skriver juridisk førstevurdering med 6 sektioner", varighed: 30 },
+    { label: "Sammenfatter resumé og konklusion", varighed: 10 },
+  ];
+  let cum = 0;
+  const trinMedSlut = trin.map((t) => {
+    cum += t.varighed;
+    return { ...t, slut: cum };
+  });
+  const total = cum;
+
+  // Progressen må aldrig nå 100% inden svaret er kommet — det får brugeren
+  // til at tro at noget hænger fast. Vi capper ved 90% i estimerings-
+  // perioden, og kryber langsomt mod 98% bagefter (asymptote).
+  let pct: number;
+  if (sek <= total) {
+    pct = Math.min(90, (sek / total) * 90);
+  } else {
+    // Efter estimatet: kryb fra 90% mod 98% over de næste 90 sek.
+    const efter = sek - total;
+    pct = Math.min(98, 90 + (efter / 90) * 8);
+  }
+
+  // Når vi er forbi estimatet er sidste trin stadig "aktivt" (vi kan
+  // ikke vide hvilken AI-fase der hænger fast — typisk er det dog det
+  // tunge skrivetrin).
+  let aktivIdx = trinMedSlut.findIndex((t) => sek < t.slut);
+  if (aktivIdx === -1) aktivIdx = trin.length - 1;
+
+  const overTid = sek > total;
+
+  return (
+    <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-5 space-y-4">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-sm font-semibold text-indigo-900">
+            juriitech PAX laver en grundig analyse af din sag
+          </p>
+          <p className="text-xs text-indigo-700 mt-0.5 max-w-md">
+            Kvalitet tager tid. En typisk sag tager 60-90 sek; større
+            sager med +10 dokumenter kan tage 2-3 min.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          <span
+            className={`inline-block w-2.5 h-2.5 rounded-full animate-pulse ${
+              overTid ? "bg-amber-500" : "bg-indigo-500"
+            }`}
+          />
+          <span
+            className={`text-sm font-mono tabular-nums font-semibold ${
+              overTid ? "text-amber-900" : "text-indigo-900"
+            }`}
+          >
+            {sek}s
+          </span>
+        </div>
+      </div>
+
+      {/* Progress-bar */}
+      <div className="h-2 w-full bg-indigo-100 rounded-full overflow-hidden">
+        <div
+          className={`h-full transition-all duration-700 ease-out ${
+            overTid
+              ? "bg-gradient-to-r from-amber-400 to-amber-600"
+              : "bg-gradient-to-r from-indigo-500 to-indigo-700"
+          }`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+
+      {/* Trin-liste */}
+      <ol className="space-y-1.5">
+        {trinMedSlut.map((t, i) => {
+          const erFærdig = i < aktivIdx;
+          const erAktiv = i === aktivIdx;
+          return (
+            <li
+              key={i}
+              className={`flex items-center gap-3 text-sm transition-colors ${
+                erFærdig
+                  ? "text-emerald-700"
+                  : erAktiv
+                    ? overTid
+                      ? "text-amber-900 font-medium"
+                      : "text-indigo-900 font-medium"
+                    : "text-indigo-400"
+              }`}
+            >
+              <span className="w-5 inline-flex justify-center items-center">
+                {erFærdig ? (
+                  <span className="text-emerald-600">✓</span>
+                ) : erAktiv ? (
+                  <span
+                    className={`inline-block w-3 h-3 border-2 ${overTid ? "border-amber-500" : "border-indigo-500"} border-t-transparent rounded-full animate-spin`}
+                  />
+                ) : (
+                  <span className="text-indigo-300">○</span>
+                )}
+              </span>
+              <span>{t.label}</span>
+            </li>
+          );
+        })}
+      </ol>
+
+      {overTid && (
+        <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-3 py-2">
+          <strong>Det tager længere end forventet</strong> — store sager med
+          mange bilag kan tage 2-3 minutter. juriitech PAX arbejder
+          stadig; forlad ikke siden.
+        </p>
+      )}
+    </div>
+  );
+}
+
+type AnalyseFejl = { besked: string; detalje?: string; status?: number };
 
 export function UploadForm() {
   const [parsePending, startParseTransition] = useTransition();
@@ -126,19 +263,37 @@ export function UploadForm() {
   );
   const [valgteFiler, sætValgteFiler] = useState<File[]>([]);
 
+  // Persistent fejl-state — vises som banner i stedet for at forsvinde
+  // som toast. Brugeren skal vide hvad der gik galt og kunne prøve igen
+  // uden at miste filerne.
+  const [analyseFejl, sætAnalyseFejl] = useState<AnalyseFejl | null>(null);
+
   // Sektion 9: Sagsakter (fri tekst med ekstra kontekst).
-  // Medsendes alle AI-kald så vurderingen tager højde for ny information.
   const [sagsakter, sætSagsakter] = useState("");
 
   // Sektion 11: Bilag til svarbrevet (letter assignment + reorder).
   const [bilagStartBogstav, sætBilagStartBogstav] = useState("A");
   const [bilagValg, sætBilagValg] = useState<BilagValg[]>([]);
 
+  // Advar brugeren hvis de prøver at lukke siden mens analysen kører —
+  // ellers kan de tro de blev "smidt tilbage" til upload (i virkeligheden
+  // bare en page-refresh der dræbte fetch'en).
+  useEffect(() => {
+    if (!analysePending && !parsePending) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "Analysen kører stadig — er du sikker på du vil forlade siden?";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [analysePending, parsePending]);
+
   function håndterFilValg(e: React.ChangeEvent<HTMLInputElement>) {
     const filer = Array.from(e.target.files ?? []);
     sætValgteFiler(filer);
     sætResultater(null);
     sætAnalyse(null);
+    sætAnalyseFejl(null);
     sætBilagValg([]); // ny fil-set → reset bilag-valg
   }
 
@@ -180,10 +335,16 @@ export function UploadForm() {
       toast.error("Vælg mindst én fil først.");
       return;
     }
+    sætAnalyseFejl(null); // ryd evt. tidligere fejl
     startAnalyseTransition(async () => {
       const url = process.env.NEXT_PUBLIC_API_URL;
       if (!url) {
-        toast.error("NEXT_PUBLIC_API_URL ikke sat.");
+        const fejl: AnalyseFejl = {
+          besked: "NEXT_PUBLIC_API_URL er ikke sat",
+          detalje: "Kontakt en administrator — environment-variablen mangler.",
+        };
+        sætAnalyseFejl(fejl);
+        toast.error(fejl.besked);
         return;
       }
       const formData = new FormData();
@@ -195,20 +356,33 @@ export function UploadForm() {
           body: formData,
         });
         if (!res.ok) {
-          const fejl = await res.text();
-          toast.error(`API svarede ${res.status}: ${fejl.slice(0, 200)}`);
+          const fejlTekst = await res.text().catch(() => "");
+          const fejl: AnalyseFejl = {
+            besked: `API svarede ${res.status} ${res.statusText || ""}`.trim(),
+            detalje: fejlTekst.slice(0, 500),
+            status: res.status,
+          };
+          console.error("[foerstevurdering] non-ok:", fejl);
+          sætAnalyseFejl(fejl);
+          toast.error(fejl.besked);
           return;
         }
         const data = (await res.json()) as FoerstevurderingsRespons;
         sætAnalyse(data);
+        sætAnalyseFejl(null);
         toast.success(
           `Analyse færdig — ${data.metadata.antal_klagepunkter} klagepunkter, ` +
             `${data.metadata.antal_relevante_sager} præcedens-matches.`,
         );
       } catch (e) {
-        toast.error(
-          `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
-        );
+        const detalje = e instanceof Error ? e.message : String(e);
+        console.error("[foerstevurdering] fetch fejl:", e);
+        const fejl: AnalyseFejl = {
+          besked: "Kan ikke nå analyse-API'en",
+          detalje,
+        };
+        sætAnalyseFejl(fejl);
+        toast.error(`${fejl.besked}: ${detalje}`);
       }
     });
   }
@@ -282,7 +456,7 @@ export function UploadForm() {
         >
           {analysePending ? (
             <>
-              Analyserer<Timer kører={analysePending} />
+              Analyserer<Timer />
             </>
           ) : sagsakterAendretEfterAnalyse ? (
             "Re-kør førstevurdering med ny kontekst"
@@ -292,15 +466,62 @@ export function UploadForm() {
         </Button>
       </div>
 
-      {analysePending && (
-        <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-900">
-          AI&apos;en arbejder: udtrækker klagepunkter → finder præcedens via
-          RAG → genererer 6-sektion juridisk analyse. Forlad ikke siden.
+      {/* Progress-linje med trin der animerer mens analysen kører */}
+      {analysePending && <AnalyseProgress />}
+
+      {/* Persistent fejl-banner — vises hvis API-kaldet fejlede.
+          Forsvinder ikke som toast, og giver brugeren en retry-knap så
+          filerne ikke skal genvælges. */}
+      {analyseFejl && !analysePending && (
+        <div className="rounded-md border border-red-300 bg-red-50 p-4 space-y-3">
+          <div className="flex items-start gap-3">
+            <span className="text-lg leading-none">⚠</span>
+            <div className="flex-1 space-y-1">
+              <p className="text-sm font-semibold text-red-900">
+                Analysen fejlede — dine filer er bevaret
+              </p>
+              <p className="text-sm text-red-800">{analyseFejl.besked}</p>
+              {analyseFejl.detalje && (
+                <details className="text-xs text-red-700">
+                  <summary className="cursor-pointer hover:text-red-900">
+                    Tekniske detaljer
+                  </summary>
+                  <pre className="mt-1 whitespace-pre-wrap font-mono">
+                    {analyseFejl.detalje}
+                  </pre>
+                </details>
+              )}
+              {analyseFejl.status && analyseFejl.status >= 500 && (
+                <p className="text-xs text-red-700 italic">
+                  5xx-fejl indikerer et server-problem (typisk timeout eller
+                  Anthropic-credits løbet tør). Prøv igen om et par sekunder.
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              size="sm"
+              onClick={håndterAnalyse}
+              disabled={valgteFiler.length === 0}
+            >
+              Prøv igen
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={() => sætAnalyseFejl(null)}
+            >
+              Luk
+            </Button>
+          </div>
         </div>
       )}
 
-      {/* Sag klar til analyse — opsummerings-bar */}
-      {resultater && resultater.length > 0 && (
+      {/* Sag klar til analyse — opsummerings-bar (vises før + under analyse) */}
+      {!analyse && resultater && resultater.length > 0 && (
         <SagKlarBar resultater={resultater} />
       )}
 
@@ -314,9 +535,33 @@ export function UploadForm() {
         </div>
       )}
 
-      {/* Sektion 9: Sagsakter (vises altid når der er filer) */}
-      {valgteFiler.length > 0 && (
-        <div className="border-t border-zinc-200 pt-4">
+      {/* Sektion 9-13 vises FØRST når analysen er kørt — ellers kan
+          brugeren risikere at udfylde sagsakter, vælge bilag osv.
+          før der er noget at re-analysere imod.
+
+          Hver sektion får en farvet Apple Health-pillar som "header"
+          (titel + beskrivelse) over selve form-indholdet. */}
+
+      {/* Sektion 9: Sagsakter */}
+      {analyse && (
+        <div className="space-y-4">
+          <Pillar
+            farve="lavender"
+            nummer={9}
+            titel="Sagsakter til denne sag"
+            beskrivelse={
+              <>
+                Her kan du uploade yderligere filer om sagen, såsom
+                mailkorrespondancer, tekstbeskeder, bookingdetaljer,
+                screenshots m.m. — altså information som juriitech PAX
+                ikke automatisk har adgang til.
+                <br />
+                <br />
+                Når du tilføjer sagsakter, genberegnes analysen automatisk,
+                så vurderingen tager højde for ny information.
+              </>
+            }
+          />
           <SagsakterSektion
             vaerdi={sagsakter}
             onAendret={sætSagsakter}
@@ -326,15 +571,39 @@ export function UploadForm() {
       )}
 
       {/* Anonymiser-sektion (10) */}
-      {valgteFiler.length > 0 && (
-        <div className="space-y-3 border-t border-zinc-200 pt-4">
+      {analyse && (
+        <div className="space-y-4">
+          <Pillar
+            farve="rose"
+            nummer={10}
+            titel="Anonymisér bilag til Nævnet"
+            beskrivelse={
+              <>
+                Vælg de bilag du ønsker at anonymisere — både sagsfiler og
+                sagsakter du selv har uploadet. juriitech PAX producerer
+                anonymiserede versioner efter Pakkerejse-Ankenævnets
+                retningslinjer (Klager for klager, medrejsende for
+                bipersoner, CPR-numre fjernes osv.).
+                <br />
+                <br />
+                Nye sagsakter du uploader dukker automatisk op i listen
+                herunder.
+              </>
+            }
+          />
           <AnonymiserSektion filer={valgteFiler} />
         </div>
       )}
 
-      {/* Sektion 11: Bilag til svarbrevet — output bruges i sektion 13 */}
-      {valgteFiler.length > 0 && (
-        <div className="border-t border-zinc-200 pt-4">
+      {/* Sektion 11: Bilag til svarbrevet */}
+      {analyse && (
+        <div className="space-y-4">
+          <Pillar
+            farve="amber"
+            nummer={11}
+            titel="Bilag til svarbrevet"
+            beskrivelse="Vælg hvilke bilag der skal medsendes svarbrevet til Nævnet. Selve svarbrevet er altid første bilag. Beskrivelserne er auto-foreslået af PAX — ret dem hvis de skal være anderledes."
+          />
           <BilagTilSvarbrevSektion
             filer={valgteFiler.map((f) => ({ filnavn: f.name }))}
             startBogstav={bilagStartBogstav}
@@ -346,15 +615,27 @@ export function UploadForm() {
       )}
 
       {/* Tjekliste-sektion (12) */}
-      {valgteFiler.length > 0 && (
-        <div className="space-y-3 border-t border-zinc-200 pt-4">
+      {analyse && (
+        <div className="space-y-4">
+          <Pillar
+            farve="indigo"
+            nummer={12}
+            titel="Tjekliste mod høringsbrev"
+            beskrivelse="AI'en gennemgår høringsbrevet og markerer hvilke ønskede oplysninger der er dækket af bilagene, og hvad der mangler. Kør den inden svarbrevet — så du ved hvad du skal hente fra rejseselskabets systemer først."
+          />
           <TjeklisteSektion filer={valgteFiler} />
         </div>
       )}
 
-      {/* Svarbrev-sektion (13) — modtager bilag-listen fra sektion 11 */}
-      {valgteFiler.length > 0 && (
-        <div className="space-y-3 border-t border-zinc-200 pt-4">
+      {/* Svarbrev-sektion (13) */}
+      {analyse && (
+        <div className="space-y-4">
+          <Pillar
+            farve="emerald"
+            nummer={13}
+            titel="Generér svarbrev"
+            beskrivelse="juriitech PAX skriver et færdigformateret svarbrev på baggrund af analysen, klagepunkterne og tidsforholdene. Du kan downloade resultatet som Word-fil og rette manuelt før afsendelse."
+          />
           <SvarbrevSektion
             filer={valgteFiler}
             klagepunkter={analyse?.klagepunkter}

@@ -1,20 +1,11 @@
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { buttonVariants } from "@/components/ui/button";
 import { UploadForm } from "@/components/upload-form";
 import Link from "next/link";
 
-// Server Component — proxy.ts har allerede beskyttet ruten med
-// auth-redirect, så vi ved brugeren er logget ind.
 export default function NySagPage() {
   return (
-    <main className="flex flex-1 items-start justify-center bg-zinc-50 px-6 py-12">
-      <div className="w-full max-w-2xl space-y-4">
+    <main className="flex-1 bg-zinc-50 px-6 py-10">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
         <div className="flex items-center justify-between">
           <Link
             href="/"
@@ -30,26 +21,19 @@ export default function NySagPage() {
           </Link>
         </div>
 
-        <Card className="border-zinc-200 shadow-sm">
-          <CardHeader className="space-y-2">
-            <CardTitle className="text-2xl font-semibold tracking-tight">
-              Upload klage + bilag
-            </CardTitle>
-            <CardDescription className="text-zinc-600">
-              Træk filer ind, eller klik for at vælge. PDF, DOCX, PNG, JPG
-              understøttes. Filerne sendes til FastAPI-broen som bruger den
-              eksisterende <code>processor.py</code> til at læse indholdet.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <UploadForm />
-          </CardContent>
-        </Card>
+        <header className="space-y-2">
+          <h1 className="font-serif text-4xl sm:text-5xl font-bold tracking-tight text-zinc-900">
+            Ny sag
+          </h1>
+          <p className="text-zinc-600 max-w-3xl">
+            Upload klage og bilag (PDF, DOCX, PNG, JPG eller ZIP). juriitech
+            PAX kører en grundig analyse, finder præcedens i Pakkerejse-
+            Ankenævnets afgørelser og hjælper dig hele vejen til et
+            færdigt svarbrev.
+          </p>
+        </header>
 
-        <p className="text-xs text-zinc-500 text-center italic">
-          Step 6 af migrationen: kun upload + parse, ingen DB-write endnu.
-          Filerne forsvinder når du forlader siden.
-        </p>
+        <UploadForm />
       </div>
     </main>
   );

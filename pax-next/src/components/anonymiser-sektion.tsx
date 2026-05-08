@@ -4,13 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 
 type AnonymResultat = {
@@ -105,7 +99,12 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
   const [valgte, sætValgte] = useState<Record<string, boolean>>({});
 
   useEffect(() => {
-    // Synkronisér valgte-map når filer ændres
+    // Prop-sync: når 'filer'-prop'en ændres skal vi opdatere det interne
+    // valgte-map (tilføj nye filer, fjern gamle, bevar brugerens
+    // checkmarks for filer der stadig er der). Lint-reglen mod
+    // setState-i-effect rammer her — men for prop-sync til afledt
+    // intern state er useEffect den korrekte mekanisme.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     sætValgte((prev) => {
       const ny: Record<string, boolean> = {};
       for (const f of filer) {
@@ -211,19 +210,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">
-          10. Anonymisér bilag til Nævnet
-        </CardTitle>
-        <CardDescription className="text-xs">
-          Vælg de bilag du ønsker at anonymisere — både sagsfiler og
-          sagsakter du selv har uploadet. juriitech PAX producerer
-          anonymiserede versioner efter Pakkerejse-Ankenævnets
-          retningslinjer (Klager for klager, medrejsende for bipersoner,
-          CPR-numre fjernes osv.).
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 pt-6">
         {/* Bekræft klager(e) + medrejsende */}
         <div className="space-y-2">
           <Label className="text-sm font-semibold">

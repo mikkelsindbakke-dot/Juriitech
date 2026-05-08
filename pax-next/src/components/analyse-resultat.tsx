@@ -1,14 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Pillar } from "@/components/ui/pillar";
 
 export type Sandsynligheder = {
   fuld_medhold_til_klager?: number;
@@ -311,7 +305,12 @@ function RelevantSagKort({
   const begrundelser = info.match_begrundelse ?? [];
   const harBeloeb = !!klagersKrav || !!tilkendt;
   const harBegrundelser = begrundelser.length > 0;
-  const raaTekst = (sag.indhold ?? "").slice(0, 2000);
+  // De første ~3 sider. PDF'er pakkes uden form-feed-markører, så vi
+  // bruger en char-baseret heuristik: 3500 tegn ≈ én A4-side med
+  // juridisk pakkerejse-formatering. 10500 tegn ≈ 3 sider.
+  const TRE_SIDER_TEGN = 10500;
+  const raaTekst = (sag.indhold ?? "").slice(0, TRE_SIDER_TEGN);
+  const harMere = (sag.indhold?.length ?? 0) > TRE_SIDER_TEGN;
 
   return (
     <div className="rounded-md border border-zinc-200 bg-white">
@@ -389,10 +388,15 @@ function RelevantSagKort({
                 {visRaaTekst ? "Skjul rå tekst" : "Se rå tekst fra afgørelsen"}
               </Button>
               {visRaaTekst && (
-                <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-md border border-zinc-200 bg-white p-3 text-xs text-zinc-700 font-sans leading-relaxed">
-                  {raaTekst}
-                  {(sag.indhold?.length ?? 0) > 2000 && "..."}
-                </pre>
+                <div className="mt-2 space-y-1">
+                  <p className="text-[0.65rem] uppercase tracking-wider text-zinc-500">
+                    De første ~3 sider af afgørelsen
+                  </p>
+                  <pre className="max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-md border border-zinc-200 bg-white p-3 text-xs text-zinc-700 font-sans leading-relaxed">
+                    {raaTekst}
+                    {harMere && "\n\n[...resten af afgørelsen er ikke vist]"}
+                  </pre>
+                </div>
               )}
             </div>
           )}
@@ -432,19 +436,16 @@ export function AnalyseResultat({
 
       {/* 1. Resumé — to-kolonne hvis sagsresumé findes */}
       {sagsresume && (sagsresume.emne || sagsresume.klagepunkter?.length) && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">1. Resumé</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
+        <Pillar farve="sky" nummer={1} titel="Resumé">
+          <div className="space-y-4">
             {sagsresume.emne && (
-              <p className="text-sm text-zinc-700 leading-relaxed">
+              <p className="text-sm sm:text-base text-zinc-800 leading-relaxed">
                 {renderTekstMedBilagPiller(sagsresume.emne)}
               </p>
             )}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-md bg-white border border-zinc-200 p-3">
-                <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
+              <div className="rounded-2xl bg-white/70 border border-white p-4">
+                <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2 font-medium">
                   Klagepunkter
                 </p>
                 {sagsresume.klagepunkter && sagsresume.klagepunkter.length > 0 ? (
@@ -459,8 +460,8 @@ export function AnalyseResultat({
                   </p>
                 )}
               </div>
-              <div className="rounded-md bg-white border border-zinc-200 p-3">
-                <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2">
+              <div className="rounded-2xl bg-white/70 border border-white p-4">
+                <p className="text-xs uppercase tracking-wider text-zinc-500 mb-2 font-medium">
                   Klagers krav
                 </p>
                 <p className="text-sm text-zinc-800 leading-relaxed">
@@ -469,32 +470,28 @@ export function AnalyseResultat({
               </div>
             </div>
             {sagsresume.forventet_udfald && (
-              <div className="rounded-md border-l-4 border-emerald-400 bg-emerald-50 px-4 py-2 text-sm text-emerald-900">
-                <p className="text-[0.65rem] uppercase tracking-wider opacity-75">
+              <div className="rounded-xl border-l-4 border-emerald-500 bg-white/70 px-4 py-2 text-sm text-zinc-900">
+                <p className="text-[0.65rem] uppercase tracking-wider text-zinc-500">
                   Forventet udfald
                 </p>
                 <p className="font-medium">{sagsresume.forventet_udfald}</p>
               </div>
             )}
-          </CardContent>
-        </Card>
+          </div>
+        </Pillar>
       )}
 
       {/* 2. Tidsforhold */}
       {data.tidsforhold &&
         data.tidsforhold.har_problematisk_forsinkelse &&
         !data.tidsforhold.kunne_ikke_udledes && (
-          <Card className="border-amber-200 bg-amber-50">
-            <CardHeader>
-              <CardTitle className="text-base font-semibold text-amber-900">
-                2. Tidsforhold og rettidig kommunikation
-              </CardTitle>
-              <CardDescription className="text-xs text-amber-800">
-                juriitech PAX har identificeret følgende relevante tidsforhold
-                der bør indgå som forsvarsargument.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="text-sm text-amber-900 space-y-2">
+          <Pillar
+            farve="amber"
+            nummer={2}
+            titel="Tidsforhold og rettidig kommunikation"
+            beskrivelse="juriitech PAX har identificeret følgende relevante tidsforhold der bør indgå som forsvarsargument."
+          >
+            <div className="text-sm text-zinc-800 space-y-2">
               {data.tidsforhold.samlet_vurdering && (
                 <p>{renderTekstMedBilagPiller(data.tidsforhold.samlet_vurdering)}</p>
               )}
@@ -506,89 +503,59 @@ export function AnalyseResultat({
                     ))}
                   </ul>
                 )}
-            </CardContent>
-          </Card>
+            </div>
+          </Pillar>
         )}
 
       {/* 3. Klagens kernepunkter */}
       {a.klagens_kernepunkter && a.klagens_kernepunkter.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              3. Klagens kernepunkter
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ul className="space-y-2 list-disc pl-5">
-              {a.klagens_kernepunkter.map((punkt, i) => (
-                <KlagepunktItem key={i} punkt={punkt} />
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
+        <Pillar farve="rose" nummer={3} titel="Klagens kernepunkter">
+          <ul className="space-y-2 list-disc pl-5">
+            {a.klagens_kernepunkter.map((punkt, i) => (
+              <KlagepunktItem key={i} punkt={punkt} />
+            ))}
+          </ul>
+        </Pillar>
       )}
 
       {/* 4. Yderligere klagepunkter */}
       {a.yderligere_klagepunkter_og_detaljer &&
         a.yderligere_klagepunkter_og_detaljer.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base font-semibold">
-                4. Yderligere klagepunkter og detaljer
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-2 list-disc pl-5">
-                {a.yderligere_klagepunkter_og_detaljer.map((punkt, i) => (
-                  <KlagepunktItem key={i} punkt={punkt} />
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
+          <Pillar farve="lavender" nummer={4} titel="Yderligere klagepunkter og detaljer">
+            <ul className="space-y-2 list-disc pl-5">
+              {a.yderligere_klagepunkter_og_detaljer.map((punkt, i) => (
+                <KlagepunktItem key={i} punkt={punkt} />
+              ))}
+            </ul>
+          </Pillar>
         )}
 
       {/* 5. Rejseselskabets stillingtagen */}
       {a.rejseselskabets_stillingtagen_indtil_nu && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              5. Rejseselskabets stillingtagen indtil nu
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-zinc-700 whitespace-pre-wrap leading-relaxed">
+        <Pillar farve="blue" nummer={5} titel="Rejseselskabets stillingtagen indtil nu">
+          <div className="text-sm text-zinc-800 whitespace-pre-wrap leading-relaxed">
             {renderTekstMedBilagPiller(a.rejseselskabets_stillingtagen_indtil_nu)}
-          </CardContent>
-        </Card>
+          </div>
+        </Pillar>
       )}
 
       {/* 6. Kort juridisk vurdering */}
       {a.kort_juridisk_vurdering && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              6. Kort juridisk vurdering
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-zinc-700 whitespace-pre-wrap leading-relaxed">
+        <Pillar farve="emerald" nummer={6} titel="Kort juridisk vurdering">
+          <div className="text-sm text-zinc-800 whitespace-pre-wrap leading-relaxed">
             {renderTekstMedBilagPiller(a.kort_juridisk_vurdering)}
-          </CardContent>
-        </Card>
+          </div>
+        </Pillar>
       )}
 
       {/* Relevante referencer */}
       {data.relevante_sager && data.relevante_sager.length > 0 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base font-semibold">
-              Relevante tidligere afgørelser
-            </CardTitle>
-            <CardDescription className="text-xs">
-              Tidligere afgørelser fra Pakkerejse-Ankenævnet som juriitech PAX
-              har brugt som juridisk præcedens i vurderingen ovenfor. Klik på
-              en sag for at se beløb, match-begrundelse og rå tekst-uddrag.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
+        <Pillar
+          farve="slate"
+          titel="Relevante tidligere afgørelser"
+          beskrivelse="Tidligere afgørelser fra Pakkerejse-Ankenævnet som juriitech PAX har brugt som juridisk præcedens. Klik på en sag for at se beløb, match-begrundelse og rå tekst-uddrag."
+        >
+          <div className="space-y-3">
             {data.relevante_sager.map((sag, i) => (
               <RelevantSagKort
                 key={i}
@@ -597,19 +564,14 @@ export function AnalyseResultat({
                 info={matchInfo[i] ?? {}}
               />
             ))}
-          </CardContent>
-        </Card>
+          </div>
+        </Pillar>
       )}
 
-      {/* 7. Sandsynlighedsvurdering — inline format som Streamlit */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base font-semibold">
-            7. Sandsynlighedsvurdering
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-sm text-zinc-700 leading-relaxed">
+      {/* 7. Sandsynlighedsvurdering */}
+      <Pillar farve="amber" nummer={7} titel="Sandsynlighedsvurdering">
+        <div className="space-y-3">
+          <p className="text-sm sm:text-base text-zinc-800 leading-relaxed">
             <strong>Fuld medhold til klager:</strong>{" "}
             {s.fuld_medhold_til_klager ?? 0}%{" "}
             <strong className="ml-2">Delvist medhold til klager:</strong>{" "}
@@ -618,25 +580,20 @@ export function AnalyseResultat({
             {s.afvisning_af_klagen ?? 0}%
           </p>
           {s.begrundelse && (
-            <p className="text-sm text-zinc-700 leading-relaxed">
+            <p className="text-sm text-zinc-800 leading-relaxed">
               {renderTekstMedBilagPiller(s.begrundelse)}
             </p>
           )}
-        </CardContent>
-      </Card>
+        </div>
+      </Pillar>
 
-      {/* 8. Konklusion — separat sektion */}
+      {/* 8. Konklusion */}
       {a.konklusion_en_linje && (
-        <Card className="border-emerald-200 bg-emerald-50">
-          <CardHeader>
-            <CardTitle className="text-base font-semibold text-emerald-900">
-              8. Konklusion i én linje
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="text-sm text-emerald-900 leading-relaxed">
+        <Pillar farve="teal" nummer={8} titel="Konklusion i én linje">
+          <p className="text-sm sm:text-base text-zinc-900 leading-relaxed font-medium">
             {renderTekstMedBilagPiller(a.konklusion_en_linje)}
-          </CardContent>
-        </Card>
+          </p>
+        </Pillar>
       )}
 
       {/* Verificeret klagepunkt-liste (debug-info) */}

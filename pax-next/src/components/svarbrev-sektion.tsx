@@ -1,16 +1,10 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import type { Tidsforhold } from "@/components/analyse-resultat";
 import { gemIArkivAction } from "@/app/arkiv/actions";
@@ -63,7 +57,10 @@ export function SvarbrevSektion({
   const [sagsnummer, sætSagsnummer] = useState("");
   const [klagersNavn, sætKlagersNavn] = useState("");
   const [hoeringssvarNr, sætHoeringssvarNr] = useState<1 | 2 | 3>(1);
-  const [metaHentet, sætMetaHentet] = useState(false);
+  // Guard mod gentagne metadata-kald ved re-renders. useRef i stedet for
+  // useState så vi ikke trigger en re-render når låsen sættes — og så
+  // lint-reglen mod setState-i-effect ikke rammer.
+  const metaHentet = useRef(false);
 
   const [svarbrev, sætSvarbrev] = useState<SvarbrevRespons | null>(null);
 
@@ -71,11 +68,11 @@ export function SvarbrevSektion({
   // filer er valgt. Cacher pr. fil-signatur så vi ikke kalder igen ved
   // hver re-render. Fejler stille — brugeren kan altid skrive selv.
   useEffect(() => {
-    if (metaHentet || filer.length === 0) return;
+    if (metaHentet.current || filer.length === 0) return;
     const url = process.env.NEXT_PUBLIC_API_URL;
     if (!url) return;
 
-    sætMetaHentet(true);
+    metaHentet.current = true;
     startMetaTransition(async () => {
       try {
         const formData = new FormData();
@@ -212,29 +209,12 @@ export function SvarbrevSektion({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">
-          13. Generer svarbrev til Nævnet
-        </CardTitle>
-        <CardDescription className="text-xs">
-          Lav et kompakt udkast til svarbrev. Brevet bliver max 1-2 A4-sider
-          og struktureres som indledning + samlet juridisk vurdering med
-          præcise henvisninger til rejsevilkår, pakkerejseloven og bilag.
-          {klagepunkter && tidsforhold ? (
-            <>
-              {" "}
-              Bruger verificerede klagepunkter + tidsforhold fra
-              førstevurderingen — sparer 2 AI-kald.
-            </>
-          ) : (
-            <>
-              {" "}
-              Vil udlede klagepunkter + tidsforhold internt (~30s ekstra).
-            </>
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+      <CardContent className="space-y-4 pt-6">
+        <p className="text-xs text-zinc-500">
+          {klagepunkter && tidsforhold
+            ? "Bruger verificerede klagepunkter + tidsforhold fra førstevurderingen — sparer 2 AI-kald."
+            : "Vil udlede klagepunkter + tidsforhold internt (~30s ekstra)."}
+        </p>
         {/* Særlige instrukser */}
         <div className="space-y-2">
           <Label>

@@ -1,13 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 
 // Sektion 9: Sagsakter til denne sag.
 //
@@ -33,18 +27,7 @@ export function SagsakterSektion({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">
-          9. Sagsakter til denne sag
-        </CardTitle>
-        <CardDescription className="text-xs">
-          Skriv yderligere kontekst om sagen som juriitech PAX ikke automatisk
-          har adgang til — fx mailkorrespondancer, tekstbeskeder,
-          bookingdetaljer, screenshots m.m. Teksten medsendes alle
-          AI-kald så vurderingen tager højde for den nye information.
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
+      <CardContent className="pt-6">
         <button
           type="button"
           onClick={() => sætAaben((v) => !v)}

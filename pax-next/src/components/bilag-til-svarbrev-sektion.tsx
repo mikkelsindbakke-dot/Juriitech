@@ -3,13 +3,7 @@
 import { useEffect, useMemo } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 
 // Sektion 11: Bilag til svarbrevet.
 //
@@ -133,23 +127,16 @@ export function BilagTilSvarbrevSektion({
 
   return (
     <Card>
-      <CardHeader>
-        <CardTitle className="text-base font-semibold">
-          11. Bilag til svarbrevet
-        </CardTitle>
-        <CardDescription className="text-xs">
-          Vælg hvilke bilag der skal medsendes svarbrevet til Nævnet. Selve
-          svarbrevet er altid Bilag {startUpper}. Beskrivelserne er
-          auto-foreslået — ret dem hvis de skal være anderledes.
+      <CardContent className="space-y-4 pt-6">
+        <p className="text-xs text-zinc-500">
+          Selve svarbrevet er altid Bilag {startUpper}.
           {antalInkluderede > 0 && (
             <>
               {" "}
-              Valgt: <strong>{antalInkluderede} bilag</strong>.
+              Valgt: <strong className="text-zinc-700">{antalInkluderede} bilag</strong>.
             </>
           )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </p>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 items-start">
           <div className="space-y-1">
             <Label htmlFor="startbogstav" className="text-xs">
