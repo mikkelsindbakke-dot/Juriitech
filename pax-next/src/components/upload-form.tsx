@@ -7,6 +7,7 @@ import {
   AnalyseResultat,
   type FoerstevurderingsRespons,
 } from "@/components/analyse-resultat";
+import { SvarbrevSektion } from "@/components/svarbrev-sektion";
 
 type ParsedFil = {
   filnavn: string;
@@ -277,6 +278,17 @@ export function UploadForm() {
             Førstevurdering
           </h2>
           <AnalyseResultat data={analyse} />
+        </div>
+      )}
+
+      {/* Svarbrev-sektion (kun synlig hvis vi har filer) */}
+      {valgteFiler.length > 0 && (
+        <div className="space-y-3 border-t border-zinc-200 pt-4">
+          <SvarbrevSektion
+            filer={valgteFiler}
+            klagepunkter={analyse?.klagepunkter}
+            tidsforhold={analyse?.tidsforhold}
+          />
         </div>
       )}
     </div>

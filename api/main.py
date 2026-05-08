@@ -242,3 +242,99 @@ async def foerstevurdering(
             "antal_relevante_sager": len(rel_sager_clean),
         },
     }
+
+
+@app.post("/api/svarbrev")
+async def svarbrev(
+    filer: List[UploadFile] = File(...),
+    sagsakter: str = Form(""),
+    ekstra_instrukser_json: str = Form("[]"),
+    inkluder_kildehenvisninger: bool = Form(False),
+    verificerede_klagepunkter_json: str = Form("null"),
+    tidsforhold_json: str = Form("null"),
+):
+    """
+    Genererer komplet udkast til svarbrev. Kalder eksisterende
+    ai_engine.generer_svarbrev_til_sag uændret.
+
+    Hvis verificerede_klagepunkter + tidsforhold sendes med (fra et
+    tidligere /api/foerstevurdering-kald), genbruges de — det sparer
+    2 AI-kald. Ellers udleder svarbrev-funktionen dem selv internt.
+
+    Tager 30-60 sekunder pr. kald. Bruger Anthropic-credits.
+    """
+    import json
+
+    from processor import _laes_fra_bytes
+    from ai_engine import generer_svarbrev_til_sag
+
+    # ---------- Parse files ----------
+    parsed_filer = []
+    for fil in filer:
+        data = await fil.read()
+        result = _laes_fra_bytes(fil.filename or "ukendt", data)
+        parsed_filer.append(result)
+    sag = {"filer": parsed_filer}
+
+    # ---------- Decode JSON-Form-felter ----------
+    try:
+        ekstra_instrukser = json.loads(ekstra_instrukser_json) or []
+        if not isinstance(ekstra_instrukser, list):
+            ekstra_instrukser = []
+    except Exception:
+        ekstra_instrukser = []
+
+    try:
+        verificerede_klagepunkter = json.loads(verificerede_klagepunkter_json)
+        if verificerede_klagepunkter and not isinstance(
+            verificerede_klagepunkter, list
+        ):
+            verificerede_klagepunkter = None
+    except Exception:
+        verificerede_klagepunkter = None
+
+    try:
+        tidsforhold_dict = json.loads(tidsforhold_json)
+        if tidsforhold_dict and not isinstance(tidsforhold_dict, dict):
+            tidsforhold_dict = None
+    except Exception:
+        tidsforhold_dict = None
+
+    # ---------- Byg ekstra_instrukser-tekst ----------
+    instrukser_tekst = ""
+    if ekstra_instrukser:
+        instrukser_tekst = "\n".join(
+            f"- {instr}" for instr in ekstra_instrukser if instr
+        )
+
+    # ---------- Generer svarbrev ----------
+    try:
+        svarbrev_tekst = generer_svarbrev_til_sag(
+            sag=sag,
+            sagsakter=sagsakter,
+            ekstra_instrukser=instrukser_tekst or None,
+            inkluder_kildehenvisninger=inkluder_kildehenvisninger,
+            verificerede_klagepunkter=verificerede_klagepunkter,
+            tidsforhold=tidsforhold_dict,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"generer_svarbrev_til_sag fejlede: {e}",
+        )
+
+    if not svarbrev_tekst or not svarbrev_tekst.strip():
+        raise HTTPException(
+            status_code=502,
+            detail="AI returnerede tomt svarbrev (kan være credit-problem)",
+        )
+
+    return {
+        "svarbrev": svarbrev_tekst,
+        "metadata": {
+            "antal_filer": len(parsed_filer),
+            "antal_instrukser": len(ekstra_instrukser),
+            "inkluder_kildehenvisninger": inkluder_kildehenvisninger,
+            "tegn": len(svarbrev_tekst),
+        },
+    }
