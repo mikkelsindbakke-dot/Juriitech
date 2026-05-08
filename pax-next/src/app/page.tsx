@@ -8,6 +8,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { hentBrugerMedTenant } from "@/lib/queries/users";
+import { ApiHealthButton } from "@/components/api-health-button";
 import { logout } from "./login/actions";
 
 // Server Component — kører server-side ved hver request.
@@ -96,6 +97,17 @@ export default async function Home() {
               Bed en admin om at invitere dig.
             </div>
           )}
+          <div className="space-y-2">
+            <p className="font-medium text-zinc-900 text-sm">
+              FastAPI-bro til Python-AI
+            </p>
+            <p className="text-xs text-zinc-500">
+              Test at Next.js (port 3000) kan tale med FastAPI (port 8000)
+              som wrapper den eksisterende ai_engine.py.
+            </p>
+            <ApiHealthButton />
+          </div>
+
           <p className="text-zinc-500 italic text-xs">
             Den nuværende PAX kører fortsat på{" "}
             <a
