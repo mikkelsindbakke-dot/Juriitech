@@ -5,6 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
+import {
+  ApiError,
+  anonymiserSchema,
+  postOgValider,
+  sagsmetadataSchema,
+} from "@/lib/api-client";
 
 type AnonymResultat = {
   filnavn: string;
@@ -119,19 +125,15 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
     if (navnHentetRef.current === filSig) return;
     navnHentetRef.current = filSig;
 
-    const url = process.env.NEXT_PUBLIC_API_URL;
-    if (!url) return;
-
     (async () => {
       try {
         const formData = new FormData();
         for (const fil of filer) formData.append("filer", fil);
-        const res = await fetch(`${url}/api/sagsmetadata`, {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) return;
-        const data = (await res.json()) as { klagers_navn?: string };
+        const data = await postOgValider(
+          "/api/sagsmetadata",
+          sagsmetadataSchema,
+          { formData, retries: 2 },
+        );
         if (data.klagers_navn) sætKlagersNavn(data.klagers_navn);
       } catch (e) {
         console.warn("Auto-udtrækning af klagers navn fejlede:", e);
@@ -163,34 +165,30 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
     const klagerNavneListe = klagersNavn.trim() ? [klagersNavn.trim()] : [];
 
     startTransition(async () => {
-      const url = process.env.NEXT_PUBLIC_API_URL;
-      if (!url) {
-        toast.error("NEXT_PUBLIC_API_URL ikke sat.");
-        return;
-      }
       const formData = new FormData();
       for (const fil of filerAtSende) formData.append("filer", fil);
       formData.append("klager_navne_json", JSON.stringify(klagerNavneListe));
 
       try {
-        const res = await fetch(`${url}/api/anonymiser`, {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) {
-          const fejl = await res.text();
-          toast.error(`API svarede ${res.status}: ${fejl.slice(0, 200)}`);
-          return;
-        }
-        const data = (await res.json()) as AnonymRespons;
+        const data = (await postOgValider(
+          "/api/anonymiser",
+          anonymiserSchema,
+          { formData, retries: 3 },
+        )) as AnonymRespons;
         sætResultater(data);
         toast.success(
           `${data.metadata.antal_anonymiseret_ok} af ${data.metadata.antal_input} bilag anonymiseret.`,
         );
       } catch (e) {
-        toast.error(
-          `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
-        );
+        if (e instanceof ApiError) {
+          toast.error(
+            e.detalje ? `${e.message}: ${e.detalje.slice(0, 100)}` : e.message,
+          );
+        } else {
+          toast.error(
+            `Uventet fejl: ${e instanceof Error ? e.message : "ukendt"}`,
+          );
+        }
       }
     });
   }

@@ -8,6 +8,11 @@ import {
   AnalyseResultat,
   type FoerstevurderingsRespons,
 } from "@/components/analyse-resultat";
+import {
+  ApiError,
+  foerstevurderingSchema,
+  postOgValider,
+} from "@/lib/api-client";
 import { SvarbrevSektion } from "@/components/svarbrev-sektion";
 import { AnonymiserSektion } from "@/components/anonymiser-sektion";
 import { TjeklisteSektion } from "@/components/tjekliste-sektion";
@@ -151,37 +156,18 @@ export function UploadForm() {
     }
     sætAnalyseFejl(null); // ryd evt. tidligere fejl
     startAnalyseTransition(async () => {
-      const url = process.env.NEXT_PUBLIC_API_URL;
-      if (!url) {
-        const fejl: AnalyseFejl = {
-          besked: "NEXT_PUBLIC_API_URL er ikke sat",
-          detalje: "Kontakt en administrator — environment-variablen mangler.",
-        };
-        sætAnalyseFejl(fejl);
-        toast.error(fejl.besked);
-        return;
-      }
       const formData = new FormData();
       for (const fil of valgteFiler) formData.append("filer", fil);
       if (sagsakter.trim()) formData.append("sagsakter", sagsakter);
       try {
-        const res = await fetch(`${url}/api/foerstevurdering`, {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) {
-          const fejlTekst = await res.text().catch(() => "");
-          const fejl: AnalyseFejl = {
-            besked: `API svarede ${res.status} ${res.statusText || ""}`.trim(),
-            detalje: fejlTekst.slice(0, 500),
-            status: res.status,
-          };
-          console.error("[foerstevurdering] non-ok:", fejl);
-          sætAnalyseFejl(fejl);
-          toast.error(fejl.besked);
-          return;
-        }
-        const data = (await res.json()) as FoerstevurderingsRespons;
+        // postOgValider giver os: p-retry på 5xx (3 forsøg, eksponentielt
+        // backoff 1s/2s/4s) + Zod-validering af responsen + struktureret
+        // ApiError ved alle fejl-tilstande.
+        const data = (await postOgValider(
+          "/api/foerstevurdering",
+          foerstevurderingSchema,
+          { formData, retries: 3 },
+        )) as FoerstevurderingsRespons;
         sætAnalyse(data);
         sætAnalyseFejl(null);
         toast.success(
@@ -189,14 +175,20 @@ export function UploadForm() {
             `${data.metadata.antal_relevante_sager} præcedens-matches.`,
         );
       } catch (e) {
-        const detalje = e instanceof Error ? e.message : String(e);
-        console.error("[foerstevurdering] fetch fejl:", e);
-        const fejl: AnalyseFejl = {
-          besked: "Kan ikke nå analyse-API'en",
-          detalje,
-        };
+        const fejl: AnalyseFejl =
+          e instanceof ApiError
+            ? {
+                besked: e.message,
+                detalje: e.detalje,
+                status: e.status,
+              }
+            : {
+                besked: "Uventet fejl ved analyse",
+                detalje: e instanceof Error ? e.message : String(e),
+              };
+        console.error("[foerstevurdering]", fejl);
         sætAnalyseFejl(fejl);
-        toast.error(`${fejl.besked}: ${detalje}`);
+        toast.error(fejl.besked);
       }
     });
   }

@@ -8,6 +8,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import type { Tidsforhold } from "@/components/analyse-resultat";
 import { gemIArkivAction } from "@/app/arkiv/actions";
+import {
+  ApiError,
+  postOgValider,
+  sagsmetadataSchema,
+  svarbrevSchema,
+} from "@/lib/api-client";
 
 type SvarbrevRespons = {
   svarbrev: string;
@@ -23,11 +29,6 @@ type SvarbrevRespons = {
     antal_bilag?: number;
     tegn: number;
   };
-};
-
-type Sagsmetadata = {
-  sagsnummer: string;
-  klagers_navn: string;
 };
 
 export type BilagItem = {
@@ -69,24 +70,22 @@ export function SvarbrevSektion({
   // hver re-render. Fejler stille — brugeren kan altid skrive selv.
   useEffect(() => {
     if (metaHentet.current || filer.length === 0) return;
-    const url = process.env.NEXT_PUBLIC_API_URL;
-    if (!url) return;
-
     metaHentet.current = true;
     startMetaTransition(async () => {
       try {
         const formData = new FormData();
         for (const fil of filer) formData.append("filer", fil);
-        const res = await fetch(`${url}/api/sagsmetadata`, {
-          method: "POST",
-          body: formData,
-        });
-        if (res.ok) {
-          const data = (await res.json()) as Sagsmetadata;
-          if (data.sagsnummer && !sagsnummer) sætSagsnummer(data.sagsnummer);
-          if (data.klagers_navn && !klagersNavn)
-            sætKlagersNavn(data.klagers_navn);
-        }
+        // Kort kald (~3s). Færre retries — ingen grund til at brugeren
+        // venter længere på et auto-udfyldt felt der bare kan rettes
+        // manuelt.
+        const data = await postOgValider(
+          "/api/sagsmetadata",
+          sagsmetadataSchema,
+          { formData, retries: 2 },
+        );
+        if (data.sagsnummer && !sagsnummer) sætSagsnummer(data.sagsnummer);
+        if (data.klagers_navn && !klagersNavn)
+          sætKlagersNavn(data.klagers_navn);
       } catch (e) {
         console.warn("Auto-udtrækning af brevhoved fejlede:", e);
       }
@@ -111,11 +110,6 @@ export function SvarbrevSektion({
       return;
     }
     startTransition(async () => {
-      const url = process.env.NEXT_PUBLIC_API_URL;
-      if (!url) {
-        toast.error("NEXT_PUBLIC_API_URL ikke sat.");
-        return;
-      }
       const formData = new FormData();
       for (const fil of filer) formData.append("filer", fil);
       formData.append("ekstra_instrukser_json", JSON.stringify(instrukser));
@@ -137,16 +131,11 @@ export function SvarbrevSektion({
       }
 
       try {
-        const res = await fetch(`${url}/api/svarbrev`, {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) {
-          const fejl = await res.text();
-          toast.error(`API svarede ${res.status}: ${fejl.slice(0, 200)}`);
-          return;
-        }
-        const data = (await res.json()) as SvarbrevRespons;
+        const data = (await postOgValider(
+          "/api/svarbrev",
+          svarbrevSchema,
+          { formData, retries: 3 },
+        )) as SvarbrevRespons;
         sætSvarbrev(data);
         toast.success(`Svarbrev genereret (${data.metadata.tegn} tegn).`);
 
@@ -164,9 +153,15 @@ export function SvarbrevSektion({
           console.warn("Auto-arkiv fejlede:", arkivResultat.fejl);
         }
       } catch (e) {
-        toast.error(
-          `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
-        );
+        if (e instanceof ApiError) {
+          toast.error(
+            e.detalje ? `${e.message}: ${e.detalje.slice(0, 100)}` : e.message,
+          );
+        } else {
+          toast.error(
+            `Uventet fejl: ${e instanceof Error ? e.message : "ukendt"}`,
+          );
+        }
       }
     });
   }

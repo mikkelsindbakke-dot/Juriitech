@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import { gemIArkivAction } from "@/app/arkiv/actions";
+import { ApiError, postOgValider, tjeklisteSchema } from "@/lib/api-client";
 
 type TjeklisteRespons = {
   tjekliste: string;
@@ -25,25 +26,15 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
       return;
     }
     startTransition(async () => {
-      const url = process.env.NEXT_PUBLIC_API_URL;
-      if (!url) {
-        toast.error("NEXT_PUBLIC_API_URL ikke sat.");
-        return;
-      }
       const formData = new FormData();
       for (const fil of filer) formData.append("filer", fil);
 
       try {
-        const res = await fetch(`${url}/api/tjekliste`, {
-          method: "POST",
-          body: formData,
-        });
-        if (!res.ok) {
-          const fejl = await res.text();
-          toast.error(`API svarede ${res.status}: ${fejl.slice(0, 200)}`);
-          return;
-        }
-        const data = (await res.json()) as TjeklisteRespons;
+        const data = (await postOgValider(
+          "/api/tjekliste",
+          tjeklisteSchema,
+          { formData, retries: 3 },
+        )) as TjeklisteRespons;
         sætResultat(data);
         toast.success(`Tjekliste klar (${data.metadata.tegn} tegn).`);
 
@@ -58,9 +49,15 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
           console.warn("Auto-arkiv fejlede:", arkivResultat.fejl);
         }
       } catch (e) {
-        toast.error(
-          `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
-        );
+        if (e instanceof ApiError) {
+          toast.error(
+            e.detalje ? `${e.message}: ${e.detalje.slice(0, 100)}` : e.message,
+          );
+        } else {
+          toast.error(
+            `Uventet fejl: ${e instanceof Error ? e.message : "ukendt"}`,
+          );
+        }
       }
     });
   }
