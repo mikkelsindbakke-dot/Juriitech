@@ -2855,8 +2855,7 @@ if st.session_state.get("aktuel_sag"):
             _tf_accent = "#D97706"  # orange
             _tf_intro_html = (
                 '<p style="font-weight: 600; color: #92400E;">'
-                'Pakkerejse-Ankenævnet vægter rettidig reklamation '
-                'højt. juriitech PAX har identificeret følgende '
+                'juriitech PAX har identificeret følgende '
                 'relevante tidsforhold der bør indgå som '
                 'forsvarsargument:</p>'
             )
@@ -2865,7 +2864,6 @@ if st.session_state.get("aktuel_sag"):
             _tf_accent = "#007AFF"  # blå
             _tf_intro_html = (
                 '<p style="font-weight: 500; color: #1E40AF;">'
-                'Pakkerejse-Ankenævnet vægter rettidig reklamation højt. '
                 'Følgende tidsforhold er identificeret i sagen:</p>'
             )
         else:
