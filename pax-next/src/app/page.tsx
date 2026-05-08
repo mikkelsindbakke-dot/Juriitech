@@ -119,6 +119,12 @@ export default async function Home() {
             >
               Gemte sager
             </Link>
+            <Link
+              href="/arkiv"
+              className={buttonVariants({ variant: "outline" })}
+            >
+              Arkiv
+            </Link>
           </div>
 
           <p className="text-zinc-500 italic text-xs">

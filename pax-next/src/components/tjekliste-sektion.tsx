@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { toast } from "sonner";
+import { gemIArkivAction } from "@/app/arkiv/actions";
 
 type TjeklisteRespons = {
   tjekliste: string;
@@ -50,6 +51,18 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
         const data = (await res.json()) as TjeklisteRespons;
         sætResultat(data);
         toast.success(`Tjekliste klar (${data.metadata.tegn} tegn).`);
+
+        // Auto-save i arkiv
+        const klageFn = filer[0]?.name ?? null;
+        const arkivResultat = await gemIArkivAction({
+          titel: klageFn ? `Tjekliste — ${klageFn}` : "Tjekliste",
+          type: "tjekliste",
+          indhold: data.tjekliste,
+          klageFilnavn: klageFn,
+        });
+        if (!arkivResultat.ok) {
+          console.warn("Auto-arkiv fejlede:", arkivResultat.fejl);
+        }
       } catch (e) {
         toast.error(
           `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,

@@ -15,6 +15,7 @@ import { toast } from "sonner";
 import type {
   Tidsforhold,
 } from "@/components/analyse-resultat";
+import { gemIArkivAction } from "@/app/arkiv/actions";
 
 type SvarbrevRespons = {
   svarbrev: string;
@@ -90,6 +91,20 @@ export function SvarbrevSektion({
         const data = (await res.json()) as SvarbrevRespons;
         sætSvarbrev(data);
         toast.success(`Svarbrev genereret (${data.metadata.tegn} tegn).`);
+
+        // Auto-save i arkiv (parity med Streamlit-PAX)
+        const klageFn = filer[0]?.name ?? null;
+        const arkivResultat = await gemIArkivAction({
+          titel: klageFn ? `Svarbrev — ${klageFn}` : "Svarbrev",
+          type: "svarbrev",
+          indhold: data.svarbrev,
+          klageFilnavn: klageFn,
+          ekstraInstrukser:
+            instrukser.length > 0 ? instrukser.join("\n") : null,
+        });
+        if (!arkivResultat.ok) {
+          console.warn("Auto-arkiv fejlede:", arkivResultat.fejl);
+        }
       } catch (e) {
         toast.error(
           `Kan ikke nå API: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
