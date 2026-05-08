@@ -1157,6 +1157,7 @@ _PERSISTED_STATIC_KEYS = [
     "sidste_klage_filnavn",
     "sidste_sagsfil_signatur",
     "sagsakter",
+    "sagsakter_filer",
     "sagsakter_signatur",
     "sagsakter_opdaterede_vurdering",
     "aktiv_gemt_sag_id",
@@ -1175,34 +1176,74 @@ _PERSISTED_DYNAMIC_PREFIXES = (
 )
 
 
+_BYTES_MARKER = "__b64bytes__"
+
+
+def _kod_bytes_rekursivt(value):
+    """
+    Walker værdien rekursivt og base64-encoder enhver bytes/bytearray
+    som et marker-dict {"__b64bytes__": "<base64-streng>"}. Bevarer
+    alle øvrige typer urørt. Bruges før JSON-serialisering så
+    anonymiserede PDF'er, billede-bytes mv. kan persisteres og
+    rekonstrueres bit-præcist.
+    """
+    import base64 as _b64
+    if isinstance(value, (bytes, bytearray)):
+        return {_BYTES_MARKER: _b64.b64encode(bytes(value)).decode("ascii")}
+    if isinstance(value, dict):
+        return {k: _kod_bytes_rekursivt(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_kod_bytes_rekursivt(v) for v in value]
+    if isinstance(value, tuple):
+        return [_kod_bytes_rekursivt(v) for v in value]
+    return value
+
+
+def _afkod_bytes_rekursivt(value):
+    """Modsat: dekoder marker-dicts tilbage til bytes ved restore."""
+    import base64 as _b64
+    if isinstance(value, dict):
+        if _BYTES_MARKER in value and len(value) == 1:
+            try:
+                return _b64.b64decode(value[_BYTES_MARKER])
+            except Exception:
+                return b""
+        return {k: _afkod_bytes_rekursivt(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_afkod_bytes_rekursivt(v) for v in value]
+    return value
+
+
 def _byg_session_state_snapshot():
     """
     Bygger et JSON-serialiserbart dict af relevante session-state
-    keys. Bruges til at gemme tilstanden så den kan genoprettes
-    efter Streamlit-reconnect.
+    keys. Bytes (fx anonymiserede PDF'er) base64-encodes så de
+    overlever JSON round-trip uden korruption.
     """
     snapshot = {}
     for k in _PERSISTED_STATIC_KEYS:
         v = st.session_state.get(k)
         if v is None:
             continue
-        snapshot[k] = v
+        snapshot[k] = _kod_bytes_rekursivt(v)
     for k in list(st.session_state.keys()):
         if isinstance(k, str) and k.startswith(_PERSISTED_DYNAMIC_PREFIXES):
             v = st.session_state.get(k)
             if v is not None:
-                snapshot[k] = v
+                snapshot[k] = _kod_bytes_rekursivt(v)
     return snapshot
 
 
 def _restore_session_state_fra_snapshot(snapshot):
     """Læs gemt snapshot tilbage i session_state — kun keys der ikke
-    allerede har en værdi (så user-input ikke overskrives)."""
+    allerede har en værdi (så user-input ikke overskrives). Base64-
+    encodede bytes-markers dekodes tilbage til ægte bytes."""
     if not snapshot:
         return
     for k, v in snapshot.items():
         if k in st.session_state:
             continue
+        v = _afkod_bytes_rekursivt(v)
         # tuples bliver til lister via JSON — konvertér tilbage hvor
         # det betyder noget for andre kodestier
         if k == "sidste_sagsfil_signatur" and isinstance(v, list):
@@ -3547,6 +3588,9 @@ if st.session_state.get("aktuel_sag"):
                     "bytes": data,
                     "media_type": None,
                 })
+        # Persistér uploadede sagsakter (inkl. bytes) så de overlever
+        # server-restart
+        _persist_aktuel_sag_til_db()
 
     # Vis liste af uploadede sagsakter med fjern-knapper
     if st.session_state.sagsakter_filer:
@@ -3594,6 +3638,8 @@ if st.session_state.get("aktuel_sag"):
                                 st.session_state.auto_vurdering_for_signatur = (
                                     _beregn_kombineret_signatur_top()
                                 )
+                            # Persistér rename så det overlever restart
+                            _persist_aktuel_sag_til_db()
                         # Ryd rename-tilstand uanset
                         st.session_state[_rename_aktiv_key] = False
                         if _nyt_navn_key in st.session_state:
@@ -3657,6 +3703,8 @@ if st.session_state.get("aktuel_sag"):
 
         if _fil_til_fjern is not None:
             st.session_state.sagsakter_filer.pop(_fil_til_fjern)
+            # Persistér fjernelsen så den overlever restart
+            _persist_aktuel_sag_til_db()
             # Opdatér auto_vurdering_for_signatur til den NYE state.
             # Uden det ville signaturen være ændret → skal_auto_vurdere
             # blev True → hele førstevurderingen re-trigger automatisk
@@ -4123,6 +4171,11 @@ if st.session_state.get("aktuel_sag"):
                 st.session_state["_netop_anonymiserede"] = (
                     netop_anonymiserede_filnavne
                 )
+
+                # Persistér anonymiserings-resultater (inkl. PDF-bytes,
+                # base64-encoded af _kod_bytes_rekursivt) så de overlever
+                # Streamlit-reconnect efter server-restart.
+                _persist_aktuel_sag_til_db()
 
         # ---------- RESULTAT-BOKSE ----------
         resultater_map = st.session_state.anon_resultater_per_fil
@@ -4617,6 +4670,8 @@ if st.session_state.get("aktuel_sag"):
                 indhold=tjekliste,
                 klage_filnavn=klage_fn,
             )
+            # Persistér så tjekliste overlever Streamlit-reconnect
+            _persist_aktuel_sag_til_db()
 
     if st.session_state.seneste_tjekliste:
         st.markdown("---")
