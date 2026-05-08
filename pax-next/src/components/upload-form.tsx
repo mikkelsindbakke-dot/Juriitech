@@ -8,6 +8,7 @@ import {
   type FoerstevurderingsRespons,
 } from "@/components/analyse-resultat";
 import { SvarbrevSektion } from "@/components/svarbrev-sektion";
+import { AnonymiserSektion } from "@/components/anonymiser-sektion";
 
 type ParsedFil = {
   filnavn: string;
@@ -289,6 +290,13 @@ export function UploadForm() {
             klagepunkter={analyse?.klagepunkter}
             tidsforhold={analyse?.tidsforhold}
           />
+        </div>
+      )}
+
+      {/* Anonymiser-sektion */}
+      {valgteFiler.length > 0 && (
+        <div className="space-y-3 border-t border-zinc-200 pt-4">
+          <AnonymiserSektion filer={valgteFiler} />
         </div>
       )}
     </div>

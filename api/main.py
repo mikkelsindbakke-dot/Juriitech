@@ -338,3 +338,99 @@ async def svarbrev(
             "tegn": len(svarbrev_tekst),
         },
     }
+
+
+@app.post("/api/anonymiser")
+async def anonymiser(
+    filer: List[UploadFile] = File(...),
+    klager_navne_json: str = Form("[]"),
+):
+    """
+    Sort-bjælke-anonymisering af PDF-bilag. Kalder eksisterende
+    anonymisering_pdf.anonymiser_pdf_fil uændret.
+
+    Regler (defineret i Python-modulet):
+      - Klagers navne (i klager_navne_json) bevares fuldt
+      - Andre fornavne beholdes, efternavne sorbjælkes
+      - Email: lokal del sorbjælkes, domæne bevares
+      - Telefon: områdekode bevares, resten sorbjælkes
+      - CPR: fuldt sorbjælkes
+      - Adresse: gade+husnr sorbjælkes, postnr+by bevares
+
+    Returnerer per fil:
+      - status: 'ok' | 'scannet' | 'fejl_aaben' | 'fejl_redaktion'
+      - anonymiseret_pdf_base64: base64-encoded redacted PDF (kun ved 'ok')
+      - bemaerkning: forklarende tekst
+
+    Bytes base64-encodes så de kan transporteres i JSON.
+    """
+    import base64
+    import json
+
+    from anonymisering_pdf import anonymiser_pdf_fil
+
+    try:
+        klager_navne = json.loads(klager_navne_json) or []
+        if not isinstance(klager_navne, list):
+            klager_navne = []
+    except Exception:
+        klager_navne = []
+
+    resultater = []
+    for fil in filer:
+        data = await fil.read()
+        filnavn = fil.filename or "ukendt.pdf"
+
+        if not filnavn.lower().endswith(".pdf"):
+            resultater.append({
+                "filnavn": filnavn,
+                "status": "ikke_pdf",
+                "anonymiseret_pdf_base64": None,
+                "antal_bytes_input": len(data),
+                "antal_bytes_output": 0,
+                "bemaerkning": "Kun PDF-filer understøttes af sort-bjælke-anonymisering",
+            })
+            continue
+
+        try:
+            output_pdf, status = anonymiser_pdf_fil(data, klager_navne)
+        except Exception as e:
+            resultater.append({
+                "filnavn": filnavn,
+                "status": "exception",
+                "anonymiseret_pdf_base64": None,
+                "antal_bytes_input": len(data),
+                "antal_bytes_output": 0,
+                "bemaerkning": f"{type(e).__name__}: {e}",
+            })
+            continue
+
+        bemaerkning_map = {
+            "ok": "Sort-bjælke-anonymiseret PDF med bevaret layout",
+            "scannet": "Scannet PDF (intet tekst-lag) — sort-bjælke ikke muligt",
+            "fejl_aaben": "PDF kunne ikke åbnes",
+            "fejl_redaktion": "Redaction fejlede internt",
+        }
+
+        resultater.append({
+            "filnavn": filnavn,
+            "status": status,
+            "anonymiseret_pdf_base64": (
+                base64.b64encode(output_pdf).decode("ascii")
+                if output_pdf and status == "ok"
+                else None
+            ),
+            "antal_bytes_input": len(data),
+            "antal_bytes_output": len(output_pdf) if output_pdf else 0,
+            "bemaerkning": bemaerkning_map.get(status, status),
+        })
+
+    antal_ok = sum(1 for r in resultater if r["status"] == "ok")
+    return {
+        "filer": resultater,
+        "metadata": {
+            "antal_input": len(filer),
+            "antal_anonymiseret_ok": antal_ok,
+            "klager_navne": klager_navne,
+        },
+    }
