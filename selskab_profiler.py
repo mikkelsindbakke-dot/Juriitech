@@ -38,6 +38,37 @@ AKTIV_PROFIL_KEY = "tui"
 # Modul-level cache så vi ikke spammer DB med queries
 _PROFIL_CACHE = {}
 
+# ─── PER-REQUEST OVERRIDE (FastAPI / Next.js) ─────────────────
+# Streamlit bruger st.session_state til at sætte aktiv tenant.
+# FastAPI har ingen session_state, så vi bruger en ContextVar der
+# kan sættes pr. request før AI-kald + svarbrev-DOCX-rendering.
+# Hvis override er sat, vinder den over AKTIV_PROFIL_KEY-fallback.
+from contextvars import ContextVar  # noqa: E402
+
+_aktiv_profil_override: "ContextVar[dict | None]" = ContextVar(
+    "aktiv_profil_override", default=None
+)
+
+
+def saet_aktiv_profil(profil_dict):
+    """
+    Sæt den aktive profil for den nuværende request-context.
+    Returnerer en token som senere skal gives til reset_aktiv_profil()
+    så override'et ryddes igen (typisk i finally-blok).
+
+    Bruges i FastAPI/Next.js-bridgen — i Streamlit-konteksten styres
+    aktiv profil stadig via st.session_state.user.tenant_id.
+    """
+    return _aktiv_profil_override.set(profil_dict)
+
+
+def reset_aktiv_profil(token):
+    """Ryd aktiv-profil-override'et igen efter en request."""
+    try:
+        _aktiv_profil_override.reset(token)
+    except (LookupError, ValueError):
+        pass
+
 
 # ─── PROFIL-LOOKUP ─────────────────────────────────────────────
 
@@ -101,14 +132,20 @@ def hent_aktiv_profil():
     """
     Returnerer den aktive tenant's profil-dict.
 
-    B1: AKTIV_PROFIL_KEY (hardcoded 'tui') styrer hvilken tenant.
-    B3: vil læse fra st.session_state.user.tenant_id efter login.
+    Lookup-rækkefølge:
+      1. ContextVar override (FastAPI/Next.js sætter pr. request)
+      2. Streamlit session_state.user.tenant_id (Streamlit-kontekst)
+      3. AKTIV_PROFIL_KEY-fallback (hardcoded 'tui')
 
-    Falder tilbage til hardcoded TUI-fallback hvis DB er utilgængelig
+    Falder tilbage til hardcoded TUI hvis intet andet kan findes
     (defensivt — bør aldrig ramme i produktion).
     """
-    # B3-prep: hvis Streamlit-session har en logged-in user, brug deres
-    # tenant. I B1 sker dette aldrig fordi vi ikke har login.
+    # Per-request override (FastAPI). Sættes af bridgen før AI-kald.
+    override = _aktiv_profil_override.get()
+    if override:
+        return override
+
+    # Streamlit-kontekst: brug logged-in user's tenant_id
     try:
         import streamlit as st
         user = st.session_state.get("user")
@@ -123,7 +160,7 @@ def hent_aktiv_profil():
     except Exception:
         pass
 
-    # B1-default: hardcoded slug-baseret lookup
+    # Sidste fallback: hardcoded slug-baseret lookup
     profil = _hent_fra_db(AKTIV_PROFIL_KEY)
     if profil:
         return profil
