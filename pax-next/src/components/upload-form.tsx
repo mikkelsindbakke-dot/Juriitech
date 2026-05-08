@@ -162,14 +162,14 @@ export function UploadForm() {
               Klik for at vælge filer
             </span>
             <span className="block mt-1 text-xs">
-              eller træk dem hertil. PDF, DOCX, PNG, JPG.
+              eller træk dem hertil. PDF, DOCX, PNG, JPG, ZIP.
             </span>
           </div>
           <input
             id="filer-input"
             type="file"
             multiple
-            accept=".pdf,.docx,.png,.jpg,.jpeg"
+            accept=".pdf,.docx,.png,.jpg,.jpeg,.zip"
             onChange={håndterFilValg}
             className="sr-only"
           />

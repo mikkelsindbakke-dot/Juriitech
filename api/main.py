@@ -77,6 +77,31 @@ def health():
     }
 
 
+async def _laes_uploads_med_zip_udpakning(filer: List[UploadFile]):
+    """
+    Læser uploads til (filnavn, bytes)-tupler og pakker zip-filer ud
+    inline. Returnerer en flad liste — kalderen ser ingen forskel på
+    om en fil kom direkte fra brugeren eller fra en zip.
+
+    Bruger samme udpak_zip_til_filer-funktion som Streamlit-PAX, så
+    udpaknings-adfærden er bit-præcist ens (springer __MACOSX, skjulte
+    filer og mapper over).
+    """
+    from processor import udpak_zip_til_filer  # lazy import
+
+    flad_liste = []  # liste af (filnavn, bytes)
+    for fil in filer:
+        navn = fil.filename or "ukendt"
+        data = await fil.read()
+        if navn.lower().endswith(".zip"):
+            udpakket = udpak_zip_til_filer(data)
+            for u_navn, u_data in udpakket:
+                flad_liste.append((u_navn, u_data))
+        else:
+            flad_liste.append((navn, data))
+    return flad_liste
+
+
 @app.post("/api/parse-fil")
 async def parse_fil(filer: List[UploadFile] = File(...)):
     """
@@ -94,10 +119,11 @@ async def parse_fil(filer: List[UploadFile] = File(...)):
     """
     from processor import _laes_fra_bytes  # lazy import for testbarhed
 
+    flade_filer = await _laes_uploads_med_zip_udpakning(filer)
+
     resultater = []
-    for fil in filer:
-        data = await fil.read()
-        result = _laes_fra_bytes(fil.filename or "ukendt", data)
+    for navn, data in flade_filer:
+        result = _laes_fra_bytes(navn, data)
         tekst = result.get("tekst") or ""
         resultater.append({
             "filnavn": result.get("filnavn"),
@@ -142,11 +168,8 @@ async def foerstevurdering(
     )
 
     # ---------- 1. Parse files ----------
-    parsed_filer = []
-    for fil in filer:
-        data = await fil.read()
-        result = _laes_fra_bytes(fil.filename or "ukendt", data)
-        parsed_filer.append(result)
+    flade_filer = await _laes_uploads_med_zip_udpakning(filer)
+    parsed_filer = [_laes_fra_bytes(navn, data) for navn, data in flade_filer]
     sag = {"filer": parsed_filer}
 
     # ---------- 2. Verified klagepunkter ----------
@@ -269,11 +292,8 @@ async def svarbrev(
     from ai_engine import generer_svarbrev_til_sag
 
     # ---------- Parse files ----------
-    parsed_filer = []
-    for fil in filer:
-        data = await fil.read()
-        result = _laes_fra_bytes(fil.filename or "ukendt", data)
-        parsed_filer.append(result)
+    flade_filer = await _laes_uploads_med_zip_udpakning(filer)
+    parsed_filer = [_laes_fra_bytes(navn, data) for navn, data in flade_filer]
     sag = {"filer": parsed_filer}
 
     # ---------- Decode JSON-Form-felter ----------
@@ -376,11 +396,10 @@ async def anonymiser(
     except Exception:
         klager_navne = []
 
-    resultater = []
-    for fil in filer:
-        data = await fil.read()
-        filnavn = fil.filename or "ukendt.pdf"
+    flade_filer = await _laes_uploads_med_zip_udpakning(filer)
 
+    resultater = []
+    for filnavn, data in flade_filer:
         if not filnavn.lower().endswith(".pdf"):
             resultater.append({
                 "filnavn": filnavn,
@@ -453,11 +472,8 @@ async def tjekliste(filer: List[UploadFile] = File(...)):
     from processor import _laes_fra_bytes
     from ai_engine import generer_tjekliste
 
-    parsed_filer = []
-    for fil in filer:
-        data = await fil.read()
-        result = _laes_fra_bytes(fil.filename or "ukendt", data)
-        parsed_filer.append(result)
+    flade_filer = await _laes_uploads_med_zip_udpakning(filer)
+    parsed_filer = [_laes_fra_bytes(navn, data) for navn, data in flade_filer]
     sag = {"filer": parsed_filer}
 
     try:
