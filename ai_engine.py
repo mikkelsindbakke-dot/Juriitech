@@ -4156,12 +4156,50 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
             # tilkendt-felt, så sæt det til 'Afvist'. Det dækker de
             # tilfælde hvor regex'en ikke fandt en kanonisk afvisnings-
             # frase (fx fordi den er formuleret atypisk).
-            udfald_str = str(item.get("udfald", "")).strip().lower()
+            udfald_str_raw = str(item.get("udfald", "")).strip()
+            udfald_str = udfald_str_raw.lower()
             if (
                 tilkendt_beloeb.lower() in ("", "ukendt")
                 and udfald_str == "afvist"
             ):
                 tilkendt_beloeb = "Afvist"
+
+            # Spejlvendt: hvis AI'en returnerer Ukendt (eller tom) for
+            # udfald-feltet, men selve afgørelses-teksten indeholder en
+            # kanonisk afvisnings-formulering ("Klagen afvises", "Klagers
+            # krav tages ikke til følge", "Indklagede frifindes" osv.),
+            # så override vi med "Afvist". Brugeren bad eksplicit om at
+            # vi læste teksten igennem og ikke nøjedes med AI'ens
+            # forsigtige "Ukendt"-fallback.
+            udfald_endelig = udfald_str_raw or "Ukendt"
+            if udfald_str in ("", "ukendt"):
+                # Allerede i regex-pathen kan tilkendt_beloeb være sat
+                # til "Afvist" — det er stærkeste signal.
+                if tilkendt_beloeb == "Afvist":
+                    udfald_endelig = "Afvist"
+                else:
+                    # Ellers: scanner vi den fulde tekst direkte.
+                    try:
+                        if idx < len(relevante_sager):
+                            sag_match2 = relevante_sager[idx]
+                            er_chunk2 = (
+                                "chunk_index" in sag_match2
+                                and sag_match2.get("chunk_index") is not None
+                            )
+                            if er_chunk2:
+                                filnavn2 = sag_match2.get("filnavn") or ""
+                                fuld_tekst2 = (
+                                    hent_dokument_indhold(filnavn2)
+                                    if filnavn2 else ""
+                                )
+                            else:
+                                fuld_tekst2 = sag_match2.get("indhold") or ""
+                            if fuld_tekst2 and _check_klagen_afvist(fuld_tekst2):
+                                udfald_endelig = "Afvist"
+                                if tilkendt_beloeb.lower() in ("", "ukendt"):
+                                    tilkendt_beloeb = "Afvist"
+                    except Exception as _af_e:
+                        print(f"DEBUG: udfald-afvisnings-tekst-scan fejlede: {_af_e}")
 
             resultat.append({
                 "sagsnummer": str(item.get("sagsnummer", "")).strip(),
@@ -4169,7 +4207,7 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
                 "rejsearrangoer": str(item.get("rejsearrangoer", "")).strip(),
                 "klagers_krav": klagers_krav,
                 "tilkendt_beloeb": tilkendt_beloeb,
-                "udfald": str(item.get("udfald", "Ukendt")).strip(),
+                "udfald": udfald_endelig,
                 "juridisk_relevant_match": juridisk_relevant,
                 "match_begrundelse": [
                     str(b).strip()
