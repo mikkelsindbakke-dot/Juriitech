@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -17,6 +18,7 @@ type TjeklisteRespons = {
 };
 
 export function TjeklisteSektion({ filer }: { filer: File[] }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [resultat, sætResultat] = useState<TjeklisteRespons | null>(null);
 
@@ -37,6 +39,9 @@ export function TjeklisteSektion({ filer }: { filer: File[] }) {
         )) as TjeklisteRespons;
         sætResultat(data);
         toast.success(`Tjekliste klar (${data.metadata.tegn} tegn).`);
+
+        // Pre-warm /arkiv — auto-arkiverede tjeklister findes der.
+        router.prefetch("/arkiv");
 
         const klageFn = filer[0]?.name ?? null;
         const arkivResultat = await gemIArkivAction({

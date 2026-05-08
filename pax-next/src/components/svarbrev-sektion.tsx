@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -47,6 +48,7 @@ export function SvarbrevSektion({
   tidsforhold?: Tidsforhold;
   bilagListe?: BilagItem[];
 }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [meta_pending, startMetaTransition] = useTransition();
 
@@ -138,6 +140,11 @@ export function SvarbrevSektion({
         )) as SvarbrevRespons;
         sætSvarbrev(data);
         toast.success(`Svarbrev genereret (${data.metadata.tegn} tegn).`);
+
+        // Pre-warm /arkiv — brugeren navigerer ofte dertil bagefter
+        // for at finde det auto-arkiverede svarbrev. Prefetch giver
+        // instant client-side overgang.
+        router.prefetch("/arkiv");
 
         // Auto-arkivér
         const klageFn = filer[0]?.name ?? null;
