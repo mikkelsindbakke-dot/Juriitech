@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
+import { hentBrugerMedTenant } from "@/lib/queries/users";
 import { logout } from "./login/actions";
 
 // Server Component — kører server-side ved hver request.
@@ -17,6 +18,11 @@ export default async function Home() {
   const {
     data: { user },
   } = await supabase.auth.getUser();
+
+  // Slå tenant op via supabase_user_id i vores users-tabel.
+  // Returnerer null hvis brugeren er oprettet i Supabase Auth
+  // men ikke endnu er linket via admin-UI'en.
+  const dbBruger = user ? await hentBrugerMedTenant(user.id) : null;
 
   return (
     <main className="flex flex-1 items-center justify-center bg-zinc-50 px-6 py-20">
@@ -33,21 +39,64 @@ export default async function Home() {
           </CardTitle>
           <CardDescription className="text-base text-zinc-600">
             Logget ind som <strong>{user?.email}</strong>
+            {dbBruger && (
+              <>
+                {" — tenant: "}
+                <strong>{dbBruger.tenant_navn}</strong>
+                <span className="text-zinc-400 text-sm">
+                  {" "}
+                  ({dbBruger.tenant_slug})
+                </span>
+              </>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4 text-sm text-zinc-700">
-          <div className="rounded-md bg-zinc-100 p-4 leading-relaxed">
-            <p className="font-medium text-zinc-900 mb-2">Status</p>
-            <ul className="space-y-1.5">
-              <li>✓ Next.js 16 + TypeScript + Tailwind v4 + App Router</li>
-              <li>✓ shadcn/ui (neutral palette)</li>
-              <li>✓ Space Grotesk font</li>
-              <li>✓ Supabase Auth — du er logget ind</li>
-              <li>· Tenant-opslag — kommer i step 4</li>
-              <li>· FastAPI-bro til ai_engine.py — kommer i step 5</li>
-            </ul>
-          </div>
-          <p className="text-zinc-500 italic">
+          {dbBruger ? (
+            <div className="rounded-md bg-zinc-100 p-4 leading-relaxed space-y-3">
+              <div>
+                <p className="font-medium text-zinc-900 mb-1">Bruger-info</p>
+                <ul className="space-y-1">
+                  <li>
+                    <span className="text-zinc-500">Email:</span>{" "}
+                    {dbBruger.email}
+                  </li>
+                  <li>
+                    <span className="text-zinc-500">Navn:</span>{" "}
+                    {dbBruger.fulde_navn || "(ikke sat)"}
+                  </li>
+                  <li>
+                    <span className="text-zinc-500">Rolle:</span>{" "}
+                    {dbBruger.role}
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p className="font-medium text-zinc-900 mb-1">Tenant</p>
+                <ul className="space-y-1">
+                  <li>
+                    <span className="text-zinc-500">Navn:</span>{" "}
+                    {dbBruger.tenant_navn}
+                  </li>
+                  <li>
+                    <span className="text-zinc-500">Slug:</span>{" "}
+                    {dbBruger.tenant_slug}
+                  </li>
+                  <li>
+                    <span className="text-zinc-500">Tenant-id:</span>{" "}
+                    {dbBruger.tenant_id}
+                  </li>
+                </ul>
+              </div>
+            </div>
+          ) : (
+            <div className="rounded-md bg-amber-50 border border-amber-200 p-4 text-sm text-amber-900">
+              Du er logget ind på Supabase Auth, men din konto er ikke
+              endnu linket til en tenant i <code>users</code>-tabellen.
+              Bed en admin om at invitere dig.
+            </div>
+          )}
+          <p className="text-zinc-500 italic text-xs">
             Den nuværende PAX kører fortsat på{" "}
             <a
               href="https://pax.juriitech.com"
