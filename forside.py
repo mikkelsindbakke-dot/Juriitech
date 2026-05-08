@@ -1235,17 +1235,109 @@ def _beregn_kombineret_signatur_top():
 
 def _persist_aktuel_sag_til_db():
     """
-    No-op. Tidligere persistede vi en kopi af analyse + svarbrev i
-    users.aktiv_sag_state JSONB så vi kunne genoprette ved Streamlit-
-    reconnect. Det er fjernet per brugerønske: når browseren lukkes
-    er sessionen forbi, og der er derfor ingen grund til at gemme en
-    skygge-kopi af personrelaterede data uden for det normale
-    24-timers-anonymiseringsvindue.
+    Gemmer aktuel sags filnavne + komplet session-state-snapshot på
+    brugerens users-row, så analyse + svarbrev + instrukser + brevhoved-
+    felter overlever Streamlit-reconnect efter server-restart (Fly-
+    deploy, OOM, suspend → wake).
 
-    Funktionen beholdes som no-op så de ~6 eksisterende kaldssites i
-    forside.py stadig virker uden at vi skal redigere alle steder.
+    Snapshot persisteres med 24-timers cleanup (built-in i
+    hent_aktiv_sag_state), så data har samme levetid som klagedata
+    i mine_dokumenter — ingen skygge-kopi uden for det normale vindue.
     """
-    return
+    try:
+        from auth import current_user
+        from database import gem_aktiv_sag_state
+        u = current_user()
+        if not u or not u.get("id"):
+            return
+        sag = st.session_state.get("aktuel_sag")
+        filnavne = []
+        if sag:
+            filnavne = [
+                f.get("filnavn") for f in (sag.get("filer") or [])
+                if f.get("filnavn")
+            ]
+        snapshot = _byg_session_state_snapshot() if filnavne else None
+        gem_aktiv_sag_state(u["id"], filnavne or None, snapshot)
+    except Exception as _e:
+        print(f"DEBUG: persist aktuel_sag fejlede: {_e}")
+
+
+def _genopret_aktuel_sag_fra_db():
+    """
+    Hvis session_state.aktuel_sag er tom OG brugeren har en gemt
+    aktiv-sag-pointer (yngre end 24t), så hent filnavnene + state-
+    snapshot fra DB og rekonstruér både aktuel_sag og UI-tilstand
+    (svarbrev, analyse, instrukser, brevhoved-felter).
+
+    Returnerer True hvis genoprettelse skete.
+
+    Note: PDF/billede-bytes restoreres fra mine_dokumenter.fil_bytes.
+    Hvis dokumentet ikke længere findes (fx ryddet via 24t-cleanup),
+    skippes den fil — brugeren kan re-uploade.
+    """
+    if st.session_state.get("aktuel_sag"):
+        return False
+    try:
+        from auth import current_user
+        from database import (
+            hent_aktiv_sag_state,
+            hent_dokumenter_by_filnavne,
+        )
+        u = current_user()
+        if not u or not u.get("id"):
+            return False
+        gemt = hent_aktiv_sag_state(u["id"])
+        if not gemt:
+            return False
+        filnavne = gemt.get("filnavne") or []
+        state_snapshot = gemt.get("state") or {}
+        if not filnavne:
+            return False
+        rows = hent_dokumenter_by_filnavne(filnavne, u.get("tenant_id"))
+        if not rows:
+            return False
+        navn_til_row = {r["filnavn"]: r for r in rows}
+        rekonstruerede_filer = []
+        for fn in filnavne:
+            r = navn_til_row.get(fn)
+            if not r:
+                continue
+            indhold = r.get("indhold") or ""
+            er_scannet = indhold.startswith("[Scannet sagsbilag")
+            mime = r.get("fil_mime") or ""
+            er_billede = er_scannet and mime.startswith("image/")
+            if er_scannet:
+                fil_type = "image_bytes" if er_billede else "pdf_bytes"
+            else:
+                fil_type = "tekst"
+            rekonstruerede_filer.append({
+                "filnavn": fn,
+                "type": fil_type,
+                "tekst": "" if er_scannet else indhold,
+                "bytes": r.get("fil_bytes"),
+                "media_type": mime or None,
+                "rolle": "ukendt",
+                "_genoprettet_fra_db": True,
+            })
+        if not rekonstruerede_filer:
+            return False
+        st.session_state.aktuel_sag = {"filer": rekonstruerede_filer}
+        st.session_state.sidste_sagsfil_signatur = tuple(sorted(
+            (f["filnavn"], len(f.get("tekst") or ""))
+            for f in rekonstruerede_filer
+        ))
+        _restore_session_state_fra_snapshot(state_snapshot)
+        return True
+    except Exception as _e:
+        print(f"DEBUG: genopret aktuel_sag fejlede: {_e}")
+        return False
+
+
+# Forsøg at genoprette aktuel sag + UI-tilstand fra DB hvis Streamlit-
+# session_state er tom (fx efter Fly-deploy, OOM, suspend → wake).
+# Cleanup på 24 timer (jf. hent_aktiv_sag_state max_alder_timer=24).
+_genopret_aktuel_sag_fra_db()
 
 
 # ───────────────────────────────────────────────────────────────
