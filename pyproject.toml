@@ -1,0 +1,25 @@
+# Test-konfiguration. Kun pytest-relateret — vi bruger ikke pyproject
+# til pakke-build (projektet kører via Streamlit + FastAPI direkte).
+
+[tool.pytest.ini_options]
+# Kun teste filer i tests/ — eksisterende test_*.py i roden er
+# integration-scripts (test_b1_isolation, test_gdpr_*) der kræver
+# DB-forbindelse og Anthropic-credits og kører manuelt.
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Kortere outputs ved succes — kun røde tests vises i detaljer.
+addopts = [
+    "-q",
+    "--strict-markers",
+    "--tb=short",
+]
+
+# Markers vi bruger til at gruppere tests.
+markers = [
+    "regex: tests for regex-mønstre (anonymisering, beløb, sagsnummer)",
+    "logic: tests for ren forretningslogik (afvist-detektion, fil-rolle)",
+    "slow: tests der tager >1 sek — fx PDF-redaction",
+]

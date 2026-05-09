@@ -241,7 +241,7 @@ function TopDashboard({ s }: { s: Sandsynligheder }) {
 
 // ─────────── Klagepunkt-rendering med bold titel ───────────
 
-function splitKlagepunkt(raw: string): { titel: string; rest: string } {
+export function splitKlagepunkt(raw: string): { titel: string; rest: string } {
   let tekst = raw.trim();
   tekst = tekst.replace(
     /^(?:klagepunkt\s*\d+\s*[:.\-]|punkt\s*\d+\s*[:.\-]|sekundært\s+punkt\s+[a-zæøå]\s*[:.\-]|\d+\s*[:.\-])\s*/i,
@@ -313,11 +313,11 @@ function erOverskrift(linje: string): boolean {
   );
 }
 
-type AfgBlok =
+export type AfgBlok =
   | { type: "overskrift"; tekst: string }
   | { type: "afsnit"; tekst: string };
 
-function parseAfgoerelse(raaTekst: string): AfgBlok[] {
+export function parseAfgoerelse(raaTekst: string): AfgBlok[] {
   const blokke: AfgBlok[] = [];
   let aktueltAfsnit: string[] = [];
 
