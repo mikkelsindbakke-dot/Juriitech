@@ -509,6 +509,49 @@ def opret_tabeller():
             ON analyse_arkiv (tenant_id)
         """)
 
+        # GDPR Fase 2: anonymiserings_status + anonymiseres_efter på
+        # analyse_arkiv. AI-genererede analyser indeholder klagers navn
+        # og citater fra original-klagen — disse skal også anonymiseres
+        # via gdpr_pipeline.anonymiser_arkiv_entry. 24-timers vindue
+        # samme som mine_dokumenter.
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS anonymiserings_status TEXT
+            DEFAULT 'aktiv'
+        """)
+        cur.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'analyse_arkiv_anon_status_check'
+                ) THEN
+                    ALTER TABLE analyse_arkiv
+                    ADD CONSTRAINT analyse_arkiv_anon_status_check
+                    CHECK (anonymiserings_status IN
+                        ('aktiv', 'anonymiseret'));
+                END IF;
+            END$$
+        """)
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS anonymiseres_efter TIMESTAMPTZ
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_analyse_arkiv_anonym_pending
+            ON analyse_arkiv (anonymiseres_efter)
+            WHERE anonymiserings_status = 'aktiv'
+        """)
+        # Backfill: eksisterende analyser → anonymiseres_efter NOW() + 24t
+        # (Bevidst: gør IKKE eksisterende data straks-klar til pipeline,
+        # giv 24t buffer så vi kan rulle ud uden chock-anonymisering)
+        cur.execute("""
+            UPDATE analyse_arkiv
+            SET anonymiseres_efter = NOW() + INTERVAL '24 hours'
+            WHERE anonymiseres_efter IS NULL
+              AND anonymiserings_status = 'aktiv'
+        """)
+
         # gemte_sager: tenant_id altid sat (sag-state er ALTID private)
         cur.execute("""
             ALTER TABLE gemte_sager
@@ -518,6 +561,29 @@ def opret_tabeller():
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_gemte_sager_tenant_id
             ON gemte_sager (tenant_id)
+        """)
+
+        # GDPR Fase 2: slet_efter på gemte_sager. state_json indeholder
+        # base64-encoded fil-bytes + fuldt session-snapshot — for
+        # komplekst at anonymisere meningsfuldt. I stedet: TTL-based
+        # auto-deletion via gdpr_pipeline.slet_gamle_gemte_sager.
+        # Default 90 dage så brugeren har god tid til at færdiggøre
+        # arbejde på en sag før den ryger.
+        cur.execute("""
+            ALTER TABLE gemte_sager
+            ADD COLUMN IF NOT EXISTS slet_efter TIMESTAMPTZ
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gemte_sager_slet_efter
+            ON gemte_sager (slet_efter)
+            WHERE slet_efter IS NOT NULL
+        """)
+        # Backfill: eksisterende rækker → 90 dage fra nu (giver brugere
+        # transition-vindue inden den første sletning rammer)
+        cur.execute("""
+            UPDATE gemte_sager
+            SET slet_efter = NOW() + INTERVAL '90 days'
+            WHERE slet_efter IS NULL
         """)
 
         # ═════════════════════════════════════════════════════════════
@@ -1912,11 +1978,41 @@ def hent_arkiv(begraens=50, tenant_id=None):
         return []
 
 
+def _skriv_sletnings_audit(conn, sag_id, tenant_id, type_, metadata):
+    """
+    Best-effort audit-log af manuelle sletninger. Fejler ALDRIG på
+    en måde der ruller en igangværende DELETE tilbage — sletningen
+    er vigtigere end audit-loggen.
+
+    Args:
+        conn: åben psycopg2-forbindelse i samme transaktion som DELETE
+        sag_id: ID på det slettede objekt (som streng)
+        tenant_id: tenant-ejer
+        type_: 'analyse_arkiv' eller 'gemte_sager_manuel' eller andet
+        metadata: dict — yderligere kontekst (titel, type, oprettet_dato)
+    """
+    try:
+        import json as _json
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO gdpr_audit_log (sag_id, tenant_id, handling, metadata)
+            VALUES (%s, %s, 'sletning', %s::jsonb)
+        """, (str(sag_id), tenant_id, _json.dumps({"type": type_, **metadata})))
+        cur.close()
+    except Exception as e:
+        # Best-effort: log fejlen men lad sletningen gå igennem.
+        # Audit-tabellen er en supplering, ikke en blocker.
+        print(f"DEBUG: audit-log for sletning fejlede: {e}")
+
+
 def slet_arkiv_entry(entry_id, tenant_id=None):
     """
     Sletter en arkiv-indgang — KUN hvis den tilhører den aktive tenant.
     Returnerer True hvis sletning lykkedes; False hvis entry_id ikke
     findes ELLER tilhører en anden tenant.
+
+    Skriver en audit-log-row (best-effort) før commit så vi har
+    revisionsspor af manuelle sletninger.
     """
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
@@ -1925,11 +2021,29 @@ def slet_arkiv_entry(entry_id, tenant_id=None):
     try:
         conn = _connect()
         cur = conn.cursor()
+        # Hent metadata FØR DELETE så vi kan logge det i audit
+        cur.execute(
+            "SELECT titel, type, oprettet_dato FROM analyse_arkiv "
+            "WHERE id = %s AND tenant_id = %s",
+            (entry_id, tenant_id),
+        )
+        meta_row = cur.fetchone()
         cur.execute(
             "DELETE FROM analyse_arkiv WHERE id = %s AND tenant_id = %s",
             (entry_id, tenant_id),
         )
         slettet = cur.rowcount > 0
+        if slettet and meta_row:
+            _skriv_sletnings_audit(
+                conn, entry_id, tenant_id, "analyse_arkiv",
+                {
+                    "titel": meta_row[0],
+                    "type": meta_row[1],
+                    "oprettet_dato": (
+                        meta_row[2].isoformat() if meta_row[2] else None
+                    ),
+                },
+            )
         conn.commit()
         cur.close()
         conn.close()
@@ -2072,6 +2186,9 @@ def slet_gemt_sag(sag_id, tenant_id=None):
     """
     Sletter en gemt sag — KUN hvis den tilhører den aktive tenant.
     Returnerer True hvis sletning lykkedes.
+
+    Skriver en audit-log-row (best-effort) før commit så vi har
+    revisionsspor af manuelle sletninger.
     """
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
@@ -2080,11 +2197,28 @@ def slet_gemt_sag(sag_id, tenant_id=None):
     try:
         conn = _connect()
         cur = conn.cursor()
+        # Hent metadata FØR DELETE så vi kan logge det i audit
+        cur.execute(
+            "SELECT titel, oprettet_dato FROM gemte_sager "
+            "WHERE id=%s AND tenant_id=%s",
+            (sag_id, tenant_id),
+        )
+        meta_row = cur.fetchone()
         cur.execute(
             "DELETE FROM gemte_sager WHERE id=%s AND tenant_id=%s",
             (sag_id, tenant_id),
         )
         slettet = cur.rowcount > 0
+        if slettet and meta_row:
+            _skriv_sletnings_audit(
+                conn, sag_id, tenant_id, "gemte_sager_manuel",
+                {
+                    "titel": meta_row[0],
+                    "oprettet_dato": (
+                        meta_row[1].isoformat() if meta_row[1] else None
+                    ),
+                },
+            )
         conn.commit()
         cur.close()
         conn.close()

@@ -34,10 +34,16 @@ def main():
     try:
         result = trigger_auto_anonymisering(maks_per_kørsel=20)
         print(json.dumps(result, indent=2, default=str))
-        # Exit code 1 hvis nogle sager fejlede så Fly kan alerte
-        if result.get("fejlede", 0) > 0:
+
+        # Tæl fejl på tværs af alle tre faser
+        total_fejlede = (
+            result.get("mine_dokumenter", {}).get("fejlede", 0)
+            + result.get("analyse_arkiv", {}).get("fejlede", 0)
+        )
+
+        if total_fejlede > 0:
             print(
-                f"WARNING: {result['fejlede']} sager fejlede under "
+                f"WARNING: {total_fejlede} entries fejlede under "
                 "anonymisering — tjek Sentry"
             )
             return 1

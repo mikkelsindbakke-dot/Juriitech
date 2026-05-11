@@ -268,7 +268,7 @@ def skriv_audit(sag_id, tenant_id, handling, metadata=None, conn=None):
 # KERNE-PIPELINE
 # ----------------------------------------------------------------------
 
-def anonymiser_sag(sag_id, tenant_id):
+def anonymiser_sag(sag_id, tenant_id, dry_run=False):
     """Hovedfunktion. Anonymiser én sag end-to-end.
 
     Args:
@@ -276,15 +276,22 @@ def anonymiser_sag(sag_id, tenant_id):
                 kunde-given sag-identifier — afhænger af hvordan
                 sager grupperes; her bruger vi mine_dokumenter.id)
         tenant_id: Tenant der ejer sagen
+        dry_run: Hvis True, køres AI-anonymisering men intet skrives
+                 til DB. Rapporten returneres så vi kan inspicere
+                 outputtet før vi committer permanent. Koster stadig
+                 Anthropic-credits (ca. $0.30-0.50 pr. kørsel) fordi
+                 selve AI-kaldet udføres.
 
     Returns:
         dict med 'success' (bool) og enten 'rapport' (success-detaljer)
-        eller 'fejl' (fejl-besked).
+        eller 'fejl' (fejl-besked). I dry-run mode inkluderes også
+        'anonymiseret_tekst' så du kan se output uden DB-skrivning.
 
     Pipelinen er TRANSAKTIONEL — hvis nogen del fejler, rollbackes alt
     og sagen forbliver i 'aktiv' state for retry næste cron-cyklus.
     """
-    print(f"INFO: anonymiserer sag_id={sag_id} tenant_id={tenant_id}")
+    mode = "DRY-RUN" if dry_run else "LIVE"
+    print(f"INFO: {mode} anonymiserer sag_id={sag_id} tenant_id={tenant_id}")
 
     conn = _connect()
     try:
@@ -438,7 +445,25 @@ def anonymiser_sag(sag_id, tenant_id):
             "delt_til_shared_patterns": maa_dele,
             "indhold_laengde_foer": len(indhold),
             "indhold_laengde_efter": len(anonym_tekst),
+            "dry_run": dry_run,
         }
+
+        if dry_run:
+            # Ingen audit-log-skrivning, ingen commit — bare rul tilbage
+            # alle ændringer og returnér rapport + anonymiseret tekst
+            # så kalderen kan inspicere outputtet.
+            conn.rollback()
+            print(
+                f"INFO: DRY-RUN færdig for sag_id={sag_id} — "
+                f"intet skrevet til DB. k={k_count}"
+            )
+            return {
+                "success": True,
+                "rapport": rapport,
+                "anonymiseret_tekst": anonym_tekst,
+                "original_tekst_uddrag": indhold[:500],
+            }
+
         skriv_audit(
             str(dok_id), tenant_id,
             "anonymisering",
@@ -465,22 +490,255 @@ def anonymiser_sag(sag_id, tenant_id):
 
 
 # ----------------------------------------------------------------------
+# ANALYSE_ARKIV — anonymisering
+# ----------------------------------------------------------------------
+
+def anonymiser_arkiv_entry(arkiv_id, tenant_id, dry_run=False):
+    """Anonymiserer én række i analyse_arkiv.
+
+    Analyse_arkiv-rækker indeholder AI-genererede analyser og svarbreve
+    der typisk citerer klagers navn, sagsnummer, beløb og datoer. Vi
+    anonymiserer 'indhold' + 'spoergsmaal' + 'sagsakter' + 'ekstra_instrukser'
+    samlet, så semantikken bevares (de hører til samme sag).
+
+    Args:
+        arkiv_id: analyse_arkiv.id
+        tenant_id: ejende tenant
+        dry_run: hvis True skrives intet til DB
+
+    Returns:
+        dict med 'success' og 'rapport' eller 'fejl'.
+    """
+    mode = "DRY-RUN" if dry_run else "LIVE"
+    print(f"INFO: {mode} anonymiserer arkiv_id={arkiv_id} tenant_id={tenant_id}")
+
+    conn = _connect()
+    try:
+        conn.set_isolation_level(2)  # SERIALIZABLE
+        cur = conn.cursor()
+
+        # Lock + fetch
+        cur.execute("""
+            SELECT id, titel, type, klage_filnavn, spoergsmaal,
+                   sagsakter, ekstra_instrukser, indhold
+            FROM analyse_arkiv
+            WHERE id = %s
+              AND tenant_id = %s
+              AND anonymiserings_status = 'aktiv'
+            FOR UPDATE
+        """, (arkiv_id, tenant_id))
+        row = cur.fetchone()
+        if row is None:
+            return {
+                "success": False,
+                "fejl": "Arkiv-entry findes ikke eller er allerede anonymiseret",
+            }
+        ark_id, titel, type_, klage_filnavn, spoergsmaal, sagsakter, ekstra, indhold = row
+
+        # Saml alle PII-felter i ét AI-kald så semantikken bevares.
+        # Vi adskiller med tydelige markører så vi kan splitte resultatet
+        # tilbage i de oprindelige felter.
+        SEP = "\n\n===FELT-SKILLE===\n\n"
+        samlet = (
+            f"[INDHOLD]\n{indhold or ''}{SEP}"
+            f"[SPOERGSMAAL]\n{spoergsmaal or ''}{SEP}"
+            f"[SAGSAKTER]\n{sagsakter or ''}{SEP}"
+            f"[EKSTRA_INSTRUKSER]\n{ekstra or ''}"
+        )
+
+        ai_resultat = _ai_anonymiser_tekst(samlet)
+        if ai_resultat is None or not ai_resultat.get("anonymiseret_tekst"):
+            conn.rollback()
+            return {
+                "success": False,
+                "fejl": "AI-anonymisering fejlede — entry forbliver 'aktiv'",
+            }
+
+        anonym_samlet = ai_resultat["anonymiseret_tekst"]
+
+        # Split tilbage. Hvis AI har "glemt" en sektion, falder vi tilbage
+        # til original (sikrere end at miste data).
+        def _hent_sektion(samlet_txt, navn, fallback):
+            tag = f"[{navn}]"
+            if tag not in samlet_txt:
+                return fallback
+            efter = samlet_txt.split(tag, 1)[1]
+            # Stop ved næste sektion eller SEP
+            for stop_tag in ("[INDHOLD]", "[SPOERGSMAAL]", "[SAGSAKTER]",
+                             "[EKSTRA_INSTRUKSER]", SEP.strip()):
+                if stop_tag != tag and stop_tag in efter:
+                    efter = efter.split(stop_tag, 1)[0]
+            return efter.strip() or fallback
+
+        nyt_indhold = _hent_sektion(anonym_samlet, "INDHOLD", indhold or "")
+        nyt_spoergsmaal = _hent_sektion(anonym_samlet, "SPOERGSMAAL", spoergsmaal or "")
+        nyt_sagsakter = _hent_sektion(anonym_samlet, "SAGSAKTER", sagsakter or "")
+        nyt_ekstra = _hent_sektion(anonym_samlet, "EKSTRA_INSTRUKSER", ekstra or "")
+
+        rapport = {
+            "anonymiseret_dato": datetime.utcnow().isoformat(),
+            "fjernede_navne": ai_resultat.get("fjernede_navne", 0),
+            "generaliserede_datoer": ai_resultat.get("generaliserede_datoer", 0),
+            "generaliserede_beloeb": ai_resultat.get("generaliserede_beloeb", 0),
+            "indhold_laengde_foer": len(indhold or ""),
+            "indhold_laengde_efter": len(nyt_indhold),
+            "dry_run": dry_run,
+        }
+
+        if dry_run:
+            conn.rollback()
+            return {
+                "success": True,
+                "rapport": rapport,
+                "anonymiseret_indhold_uddrag": nyt_indhold[:500],
+                "original_indhold_uddrag": (indhold or "")[:500],
+            }
+
+        # Live: opdater rækken og marker som anonymiseret. klage_filnavn
+        # beholdes som-er fordi det er det filnavn brugeren genkender
+        # sagen ved — det er ikke direkte PII medmindre selve filnavnet
+        # er konstrueret med klagers navn (i givet fald håndteres det
+        # nedstrøms).
+        cur.execute("""
+            UPDATE analyse_arkiv
+            SET indhold = %s,
+                spoergsmaal = %s,
+                sagsakter = %s,
+                ekstra_instrukser = %s,
+                anonymiserings_status = 'anonymiseret'
+            WHERE id = %s AND tenant_id = %s
+        """, (nyt_indhold, nyt_spoergsmaal, nyt_sagsakter, nyt_ekstra,
+              ark_id, tenant_id))
+
+        skriv_audit(
+            str(ark_id), tenant_id,
+            "anonymisering",
+            {"step": "arkiv_anonymiseret", "rapport": rapport},
+            conn=conn,
+        )
+        conn.commit()
+        cur.close()
+        print(f"INFO: arkiv-anonymisering OK arkiv_id={arkiv_id}")
+        return {"success": True, "rapport": rapport}
+
+    except Exception as e:
+        conn.rollback()
+        print(f"FEJL: anonymiser_arkiv_entry({arkiv_id}) fejlede: {e}")
+        traceback.print_exc()
+        return {"success": False, "fejl": str(e)}
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------------------
+# GEMTE_SAGER — TTL-based sletning
+# ----------------------------------------------------------------------
+
+def slet_gamle_gemte_sager(dry_run=False):
+    """Sletter gemte_sager-rækker hvor slet_efter < NOW().
+
+    Vi anonymiserer IKKE state_json fordi den indeholder base64-encoded
+    fil-bytes og dybt-nestede AI-svar — for komplekst at meningsfuldt
+    transformere. I stedet: TTL-based sletning så data ikke akkumuleres
+    indefinitely.
+
+    Default slet_efter er sat ved upload til NOW() + 90 dage (jf.
+    database.opret_tabeller). Brugeren kan forlænge ved at åbne sagen
+    igen (gem_sag_state) eller eksplicit slette via UI.
+
+    Args:
+        dry_run: hvis True returneres KUN listen af kandidater uden DELETE
+
+    Returns:
+        dict med 'antal_kandidater', 'antal_slettet', 'dry_run'.
+    """
+    mode = "DRY-RUN" if dry_run else "LIVE"
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, tenant_id, titel, oprettet_dato, slet_efter
+            FROM gemte_sager
+            WHERE slet_efter IS NOT NULL
+              AND slet_efter < NOW()
+            ORDER BY slet_efter ASC
+        """)
+        kandidater = cur.fetchall()
+        print(
+            f"INFO: {mode} slet_gamle_gemte_sager — "
+            f"fandt {len(kandidater)} kandidater"
+        )
+
+        antal_slettet = 0
+        if not dry_run:
+            for sag_id, tenant_id, titel, oprettet, _slet_efter in kandidater:
+                cur.execute("""
+                    DELETE FROM gemte_sager
+                    WHERE id = %s AND tenant_id = %s
+                """, (sag_id, tenant_id))
+                if cur.rowcount > 0:
+                    antal_slettet += 1
+                    # Audit-log sletningen så vi har en revisionsspor
+                    skriv_audit(
+                        str(sag_id), tenant_id,
+                        "sletning",
+                        {
+                            "type": "gemte_sager_ttl",
+                            "titel": titel,
+                            "oprettet_dato": (
+                                oprettet.isoformat() if oprettet else None
+                            ),
+                        },
+                        conn=conn,
+                    )
+            conn.commit()
+
+        cur.close()
+        return {
+            "antal_kandidater": len(kandidater),
+            "antal_slettet": antal_slettet,
+            "dry_run": dry_run,
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"FEJL: slet_gamle_gemte_sager fejlede: {e}")
+        traceback.print_exc()
+        return {"antal_kandidater": 0, "antal_slettet": 0, "fejl": str(e)}
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------------------
 # CRON-ENTRY POINT
 # ----------------------------------------------------------------------
 
-def trigger_auto_anonymisering(maks_per_kørsel=20):
-    """Find sager der er klar til anonymisering og kør pipelinen.
+def trigger_auto_anonymisering(maks_per_kørsel=20, dry_run=False,
+                                inkluder_arkiv=True,
+                                inkluder_gemte_sager=True):
+    """Find data der er klar til anonymisering/sletning og kør pipelinen.
 
-    Kaldes hver time af cron i Fase 4.
+    Dækker tre tabeller:
+      1. mine_dokumenter — AI-anonymisering af klage-tekst
+      2. analyse_arkiv — AI-anonymisering af AI-genererede analyser/svarbreve
+      3. gemte_sager — TTL-baseret sletning (90 dage default)
+
+    Kaldes hver time af cron via gdpr_cron_runner.py.
 
     Args:
-        maks_per_kørsel: Maks antal sager pr. cron-cyklus. Forhindrer
-                        at en cron-kørsel hænger i timer hvis 1000
-                        sager pludselig skal anonymiseres.
+        maks_per_kørsel: Maks antal per type pr. cron-cyklus.
+        dry_run: hvis True, intet skrives til DB
+        inkluder_arkiv: hvis False springes analyse_arkiv over (kan
+                        bruges hvis arkivet skal beholdes længere af
+                        forretningshensyn)
+        inkluder_gemte_sager: hvis False springes gemte_sager-sletning over
 
     Returns:
-        Dict med 'foersogt', 'lykkedes', 'fejlede' (counts).
+        Dict med tællere for alle tre faser.
     """
+    mode = "DRY-RUN" if dry_run else "LIVE"
+    samlet = {"dry_run": dry_run, "mode": mode}
+
+    # ─── 1) mine_dokumenter ───
     conn = _connect()
     cur = conn.cursor()
     cur.execute("""
@@ -493,28 +751,65 @@ def trigger_auto_anonymisering(maks_per_kørsel=20):
         ORDER BY anonymiseres_efter ASC
         LIMIT %s
     """, (maks_per_kørsel,))
-    rows = cur.fetchall()
+    dok_rows = cur.fetchall()
     cur.close()
     conn.close()
+    print(f"INFO: {mode} mine_dokumenter — fandt {len(dok_rows)} sager")
 
-    print(f"INFO: trigger_auto_anonymisering — fandt {len(rows)} sager")
-
-    foersogt = 0
-    lykkedes = 0
-    fejlede = 0
-    for sag_id, tenant_id in rows:
-        foersogt += 1
-        result = anonymiser_sag(sag_id, tenant_id)
+    dok_lykkedes = dok_fejlede = 0
+    for sag_id, tenant_id in dok_rows:
+        result = anonymiser_sag(sag_id, tenant_id, dry_run=dry_run)
         if result["success"]:
-            lykkedes += 1
+            dok_lykkedes += 1
         else:
-            fejlede += 1
-
-    return {
-        "foersogt": foersogt,
-        "lykkedes": lykkedes,
-        "fejlede": fejlede,
+            dok_fejlede += 1
+    samlet["mine_dokumenter"] = {
+        "foersogt": len(dok_rows),
+        "lykkedes": dok_lykkedes,
+        "fejlede": dok_fejlede,
     }
+
+    # ─── 2) analyse_arkiv ───
+    if inkluder_arkiv:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, tenant_id
+            FROM analyse_arkiv
+            WHERE anonymiserings_status = 'aktiv'
+              AND anonymiseres_efter < NOW()
+              AND tenant_id IS NOT NULL
+            ORDER BY anonymiseres_efter ASC
+            LIMIT %s
+        """, (maks_per_kørsel,))
+        arkiv_rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        print(f"INFO: {mode} analyse_arkiv — fandt {len(arkiv_rows)} entries")
+
+        ark_lykkedes = ark_fejlede = 0
+        for ark_id, tenant_id in arkiv_rows:
+            result = anonymiser_arkiv_entry(ark_id, tenant_id, dry_run=dry_run)
+            if result["success"]:
+                ark_lykkedes += 1
+            else:
+                ark_fejlede += 1
+        samlet["analyse_arkiv"] = {
+            "foersogt": len(arkiv_rows),
+            "lykkedes": ark_lykkedes,
+            "fejlede": ark_fejlede,
+        }
+    else:
+        samlet["analyse_arkiv"] = {"sprunget_over": True}
+
+    # ─── 3) gemte_sager ───
+    if inkluder_gemte_sager:
+        result = slet_gamle_gemte_sager(dry_run=dry_run)
+        samlet["gemte_sager"] = result
+    else:
+        samlet["gemte_sager"] = {"sprunget_over": True}
+
+    return samlet
 
 
 # ----------------------------------------------------------------------
@@ -559,14 +854,25 @@ def generer_anonymiserings_rapport(sag_id, tenant_id):
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) == 3:
-        sag_id = int(sys.argv[1])
-        tenant_id = int(sys.argv[2])
+    args = sys.argv[1:]
+    dry_run = "--dry-run" in args
+    if dry_run:
+        args.remove("--dry-run")
+
+    if len(args) == 2:
+        sag_id = int(args[0])
+        tenant_id = int(args[1])
         print(json.dumps(
-            anonymiser_sag(sag_id, tenant_id), indent=2, default=str
+            anonymiser_sag(sag_id, tenant_id, dry_run=dry_run),
+            indent=2, default=str
+        ))
+    elif len(args) == 0:
+        # Ingen sag-id: kør trigger_auto_anonymisering på alle ventende
+        print(json.dumps(
+            trigger_auto_anonymisering(dry_run=dry_run),
+            indent=2, default=str
         ))
     else:
-        print("Bruges: python3 gdpr_pipeline.py <sag_id> <tenant_id>")
-        print("Eller: python3 -c 'from gdpr_pipeline import "
-              "trigger_auto_anonymisering; "
-              "print(trigger_auto_anonymisering())'")
+        print("Bruges:")
+        print("  python3 gdpr_pipeline.py [--dry-run]                 # alle ventende sager")
+        print("  python3 gdpr_pipeline.py [--dry-run] <sag_id> <tenant_id>  # én bestemt sag")
