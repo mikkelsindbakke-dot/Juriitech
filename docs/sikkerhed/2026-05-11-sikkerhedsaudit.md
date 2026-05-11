@@ -205,11 +205,12 @@ For ikke at miste perspektivet — meget er allerede gjort rigtigt:
 
 ## 4. Anbefalet køreplan
 
-**Fase 1 — Quick wins (en arbejdsdag)**
-1. Stop Sentry-PII-lækage: sæt `send_default_pii=False` eller registrér `before_send`-scrubber
-2. Mask emails + PII i alle DEBUG-prints (`auth.py:173`, `anonymisering_pdf.py:134`)
-3. Roter alle credentials i `.env` + opsæt 1Password CLI til lokal dev
-4. Tilføj filsize-validering klient-side + ZIP-bomb-loft
+**Fase 1 — Quick wins (en arbejdsdag)** ✅ **Delvis gennemført 2026-05-11** på branch `sikkerhed/fase-1-quick-wins` (commit 7f72701):
+1. ✅ Stop Sentry-PII-lækage — `send_default_pii=False` + `before_send`-scrubber implementeret i `app.py` (5 unit-tests passerer)
+2. ✅ Mask emails i DEBUG-prints — ny `_mask_email()` helper i `auth.py` og `database.py`, anvendt på 4 print-statements
+3. ✅ Fjern PII-streng-print i `anonymisering_pdf.py:134` — logger kun count nu
+4. ⏳ **Roter credentials** — MANUEL OPGAVE (se sektion 7 nedenfor)
+5. ⏳ **Filsize-validering + ZIP-bomb-loft** — UDSAT (Mikkel har igangværende refactor i `processor.py` og `pax-next/upload-form.tsx` — skal committes først for at undgå konflikt)
 
 **Fase 2 — Anonymisering aktiveres (1-2 dage)**
 5. Aktivér GDPR-pipelinen via Fly cron (kør hver time)
@@ -250,7 +251,71 @@ For ikke at miste perspektivet — meget er allerede gjort rigtigt:
 
 ---
 
-## 6. Referencer (kilde-citater fra agenter)
+## 7. Manuelle opgaver der venter på Mikkel
+
+Disse kan jeg ikke gøre via kode — de kræver login til eksterne dashboards/services.
+
+### 7.1 Roter alle credentials (kritisk)
+
+`.env` (root) og `pax-next/.env.local` indeholder live prod-credentials der har ligget plaintext på laptop og potentielt været synkroniseret via iCloud/Time Machine. Roter:
+
+| Credential | Hvor roteres | Husk at opdatere |
+|---|---|---|
+| `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys | `.env` lokal + `fly secrets set` for prod |
+| `VOYAGE_API_KEY` | https://dashboard.voyageai.com/api-keys | `.env` lokal + `fly secrets set` for prod |
+| `SUPABASE_SERVICE_KEY` | Supabase Dashboard → Settings → API → "Reset service_role secret" | `.env`, `pax-next/.env.local`, `fly secrets` |
+| `DATABASE_URL` (postgres password) | Supabase Dashboard → Settings → Database → "Reset database password" | Alle steder + Fly secrets |
+| `ADMIN_KEY` | Generér ny: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"` | `.env` + Fly secrets |
+
+Når en nøgle er roteret, **invalider den gamle straks** i hvert dashboard.
+
+### 7.2 Opsæt en bedre secrets-manager til lokal dev
+
+I stedet for plaintext `.env`:
+
+**Option A — direnv + 1Password CLI (anbefalet):**
+```bash
+brew install direnv 1password-cli
+# I projekt-rod, lav .envrc:
+export ANTHROPIC_API_KEY="$(op read 'op://Private/Anthropic API/key')"
+export VOYAGE_API_KEY="$(op read 'op://Private/Voyage AI/key')"
+# ... osv
+# Tilføj .envrc til .gitignore. Kør 'direnv allow' i terminalen.
+```
+Credentials hentes fra 1Password ved hver terminal-start. Ingen plaintext på disk.
+
+**Option B — separat test-Supabase-projekt:**
+Opret et separat Supabase-projekt der KUN bruges til lokal dev. Brug `fly secrets` for prod. Hvis test-credentials lækker, sker der intet med prod-data.
+
+### 7.3 Verificér Anthropic + Voyage DPA-status
+
+Log ind på begge dashboards og bekræft:
+- Underskrevet Data Processing Agreement (DPA)
+- Standard Contractual Clauses (SCC) for EU→US dataoverførsel
+- For Anthropic: aktivér "Zero Data Retention" hvis enterprise-aftale tillader (kræver typisk separat anmodning)
+
+Gem PDF-kopier i `docs/compliance/` for audit-trail.
+
+### 7.4 Bekræft Sentry data-region
+
+Tjek i Sentry Dashboard at jeres organization er hosted i Frankfurt (`.de.sentry.io` i DSN-URL). Hvis ikke, kontakt Sentry support om region-migration.
+
+---
+
+## 8. Status efter Fase 1
+
+**Risici lukket:**
+- ✅ P1.1 (Sentry PII-lækage) — scrubber aktiv
+- ✅ P3.5 (Email i logs) — masked
+- ✅ P3.6 (PII-streng-print) — fjernet
+
+**Risici tilbage:** P1.2 (GDPR-pipeline aktivering), P1.3 (RLS-policies), P1.4 (Anthropic/Voyage anonymisering), alle P2-risici, P3.1-P3.4 og P3.7-P3.10.
+
+**Næste prioritet:** Fase 2 (aktivér GDPR-pipelinen) — har størst single impact af alle resterende risici, fordi den fjerner PII fra hvile efter 24 timer i stedet for indefinitely.
+
+---
+
+## 9. Referencer (kilde-citater fra agenter)
 
 Alle fund er bekræftet med fil:linje-citater. De fire fulde rapporter ligger som ChatGPT-output i denne audit-session. Hver enkelt rapport dækker:
 
