@@ -315,6 +315,68 @@ Tjek i Sentry Dashboard at jeres organization er hosted i Frankfurt (`.de.sentry
 
 ---
 
+## 10. Fase 2 — gennemført KODE-mæssigt, venter på cron-aktivering (2026-05-11, commit 3d06087)
+
+### Hvad er gjort
+
+**Pipeline udvidelser:**
+- `--dry-run` mode på `anonymiser_sag` og `trigger_auto_anonymisering` så vi sikkert kan teste én sag uden DB-skrivning. Verificeret mod sag 687 (rigtig klage): 5 navne, 8 datoer, 6 beløb, 3 lokationer, 2 sagsnumre fjernet/generaliseret korrekt.
+- Ny `anonymiser_arkiv_entry()` der dækker `analyse_arkiv.indhold` + `spoergsmaal` + `sagsakter` + `ekstra_instrukser` i ét AI-kald (semantik bevares).
+- Ny `slet_gamle_gemte_sager()` med TTL-baseret sletning (90 dage default for `gemte_sager` fordi `state_json` er for komplekst til praktisk anonymisering).
+- `trigger_auto_anonymisering()` dækker nu alle tre faser med en samlet return-struktur.
+
+**Schema-migration kørt mod prod** (idempotent via `opret_tabeller()`):
+- `analyse_arkiv.anonymiserings_status` (`'aktiv'` | `'anonymiseret'`) + `anonymiseres_efter` TIMESTAMPTZ. 90 eksisterende rækker backfilled med `NOW() + 24t`.
+- `gemte_sager.slet_efter` TIMESTAMPTZ. 1 eksisterende række backfilled med `NOW() + 90 dage`.
+- CHECK constraints + indexes for hurtig cron-query.
+
+**P3.9 audit-log:**
+- `slet_arkiv_entry()` og `slet_gemt_sag()` skriver nu til `gdpr_audit_log` med metadata før commit (best-effort, fejler ikke selve sletningen).
+
+**Cron-scripts:**
+- `scripts/setup-gdpr-cron.sh` — idempotent Fly Cron-machine setup (hourly schedule)
+- `scripts/stop-gdpr-cron.sh` — rollback
+
+### Manuel gennemgang før cron-aktivering
+
+For at inspicere AI-anonymiseringens kvalitet mod flere ægte sager:
+
+```bash
+# Find sager der venter på anonymisering
+python3 -c "
+from database import _connect
+conn = _connect(); cur = conn.cursor()
+cur.execute('''
+    SELECT id, filnavn, LENGTH(indhold)
+    FROM mine_dokumenter
+    WHERE anonymiserings_status = 'aktiv' AND anonymiseres_efter < NOW()
+      AND dokumenttype = 'klage' AND LENGTH(indhold) > 3000
+    ORDER BY oprettet_dato DESC LIMIT 10
+''')
+for row in cur.fetchall():
+    print(f'sag_id={row[0]:>4} laengde={row[2]:>6}  {row[1]}')
+"
+
+# Dry-run mod en specifik sag (koster ~$0.30-0.50 i credits, intet skrives)
+python3 gdpr_pipeline.py --dry-run <sag_id> 1   # tenant_id=1 = TUI
+
+# Når du er tilfreds, aktiver cron:
+bash scripts/setup-gdpr-cron.sh
+```
+
+### Roll-back-options
+
+- **Før cron starter:** intet er ændret i prod-data. Branch kan reverteres uden konsekvenser.
+- **Efter cron starter, før første batch:** `bash scripts/stop-gdpr-cron.sh` indenfor en time
+- **Efter første batch:** anonymiserede sager kan IKKE gendannes. Branchen kan stadig reverteres, men anonymiseret data forbliver anonymiseret.
+
+### Status
+
+✅ Kode på plads, schema migrated, scripts klar.
+⏳ Venter på Mikkels manuelle gennemgang før cron-aktivering.
+
+---
+
 ## 9. Referencer (kilde-citater fra agenter)
 
 Alle fund er bekræftet med fil:linje-citater. De fire fulde rapporter ligger som ChatGPT-output i denne audit-session. Hver enkelt rapport dækker:
