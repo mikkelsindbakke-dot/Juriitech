@@ -21,6 +21,144 @@ def _mask_email(email):
     return f"{lokal[:3]}***@{domaene}"
 
 
+# ────────────────────────────────────────────────────────────────
+# KOLONNE-KRYPTERING (GDPR Fase 3)
+# ────────────────────────────────────────────────────────────────
+# PII-kolonner i mine_dokumenter, analyse_arkiv og gemte_sager
+# krypteres med pgcrypto's pgp_sym_encrypt før de skrives til DB.
+# Når appen læser dem, dekrypteres de in-memory via pgp_sym_decrypt.
+#
+# DESIGN:
+# - pgcrypto kører server-side (Postgres), så ENCRYPTION_KEY skal
+#   sendes til Postgres som SQL-parameter. Det er sikkert fordi
+#   forbindelsen er SSL/TLS-krypteret (Supabase tvinger sslmode=require)
+#   og fordi nøglen aldrig persisterer på Postgres-siden.
+# - Nye kolonner ender på _krypteret og er BYTEA. Gamle TEXT-kolonner
+#   beholdes under transition (dual-write) og fjernes senere.
+# - Hvis ENCRYPTION_KEY mangler, falder appen tilbage til plaintext-
+#   skrivning (lokal udvikling uden secrets). Læs-vej har dual-fallback.
+# ────────────────────────────────────────────────────────────────
+
+_ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+
+
+def _kryptering_aktiv():
+    """Returnér True hvis ENCRYPTION_KEY er sat (= prod-mode)."""
+    return bool(_ENCRYPTION_KEY)
+
+
+def _encrypt_sql_expr(plaintext_placeholder="%s"):
+    """
+    Returnér en SQL-expression der krypterer en plaintext-værdi.
+
+    Brugbar inde i INSERT/UPDATE-statements:
+
+        cur.execute(
+            f"INSERT INTO mine_dokumenter (indhold_krypteret) "
+            f"VALUES ({_encrypt_sql_expr()})",
+            (tekst,)  # plaintext sendes som parameter, krypteres af pgcrypto
+        )
+
+    Hvis ENCRYPTION_KEY mangler (lokal dev uden secrets), returneres
+    plain placeholder så vi falder tilbage til plaintext-skrivning.
+    Det er fint fordi opskaleret prod altid har keyen sat.
+
+    Explicit ::text cast på placeholderen så psycopg2's "unknown"-type
+    ikke forvirrer pgp_sym_encrypt's function-resolution.
+    """
+    if not _kryptering_aktiv():
+        return plaintext_placeholder
+    # pgp_sym_encrypt(plaintext_text, key_text) → bytea
+    # Begge args eksplicit cast til text så pgcrypto's function-resolver
+    # ikke forveksler psycopg2's "unknown"-typer med bytea.
+    return f"pgp_sym_encrypt({plaintext_placeholder}::text, %s::text)"
+
+
+def _encrypt_params(plaintext_value):
+    """
+    Returnér de SQL-parametre der skal bindes til _encrypt_sql_expr().
+    Hvis kryptering er aktiv: (plaintext, nøgle) — to params.
+    Hvis ikke: (plaintext,) — én param.
+
+    Brug i kombination med _encrypt_sql_expr:
+
+        sql = f"INSERT ... VALUES ({_encrypt_sql_expr()})"
+        cur.execute(sql, _encrypt_params(tekst))
+    """
+    if not _kryptering_aktiv():
+        return (plaintext_value,)
+    return (plaintext_value, _ENCRYPTION_KEY)
+
+
+def _decrypt_sql_expr(column_name):
+    """
+    Returnér en SQL-expression der dekrypterer en BYTEA-kolonne tilbage
+    til text. Bruges i SELECT-statements:
+
+        cur.execute(
+            f"SELECT {_decrypt_sql_expr('indhold_krypteret')} FROM ..."
+            params  # nøglen tilføjes til params via _decrypt_params()
+        )
+
+    Hvis ENCRYPTION_KEY mangler, returneres kolonnen som-er (rå bytea
+    cast til text — virker hvis kolonnen var TEXT, ellers giver fejl).
+
+    Explicit ::bytea cast så placeholdere bundet til bytea-værdier
+    også fungerer (vigtigt for test-kode og for at undgå "unknown"-
+    type resolution-fejl).
+    """
+    if not _kryptering_aktiv():
+        return f"{column_name}::text"
+    return f"pgp_sym_decrypt({column_name}::bytea, %s::text)::text"
+
+
+def _decrypt_key_param():
+    """
+    Hvis kryptering er aktiv, returnér (key,) der skal appendes til
+    SQL-params. Hvis ikke, returnér () (intet).
+
+    Eksempel:
+
+        cur.execute(
+            f"SELECT {_decrypt_sql_expr('indhold_krypteret')} "
+            "FROM mine_dokumenter WHERE id = %s",
+            _decrypt_key_param() + (sag_id,)
+        )
+    """
+    if not _kryptering_aktiv():
+        return ()
+    return (_ENCRYPTION_KEY,)
+
+
+def _decrypt_value(bytea_value):
+    """
+    Dekrypter en BYTEA-værdi i Python (bruges når vi læser rå bytes
+    fra DB uden at have dekrypteret i SQL — fx hvis vi henter via
+    en RETURNING-clause).
+
+    Returnerer None hvis input er None. Returnerer plaintext str hvis
+    kryptering ikke er aktiv (antager input er str eller bytes).
+    """
+    if bytea_value is None:
+        return None
+    if not _kryptering_aktiv():
+        # Lokal dev: input er allerede plaintext
+        if isinstance(bytea_value, bytes):
+            return bytea_value.decode("utf-8", errors="replace")
+        return str(bytea_value)
+    # Dekrypter via ny Postgres-forbindelse (overhead — undgå hvor muligt)
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT pgp_sym_decrypt(%s, %s)::text",
+                    (bytea_value, _ENCRYPTION_KEY))
+        result = cur.fetchone()[0]
+        cur.close()
+        return result
+    finally:
+        conn.close()
+
+
 def _connect():
     """
     Opretter en forbindelse til Supabase Postgres og registrerer
@@ -584,6 +722,73 @@ def opret_tabeller():
             UPDATE gemte_sager
             SET slet_efter = NOW() + INTERVAL '90 days'
             WHERE slet_efter IS NULL
+        """)
+
+        # ═════════════════════════════════════════════════════════════
+        # GDPR FASE 3: KOLONNE-KRYPTERING
+        # Nye BYTEA-kolonner til PII der krypteres via pgcrypto ved
+        # skrivning. Gamle TEXT-kolonner beholdes for dual-write
+        # transition og kan droppes når backfill er færdig.
+        # ═════════════════════════════════════════════════════════════
+        # pgcrypto extension — er allerede aktiveret i Supabase (verificeret)
+        # men idempotent CREATE EXTENSION sikrer det også fungerer ved
+        # nye Postgres-instanser.
+        cur.execute("CREATE EXTENSION IF NOT EXISTS pgcrypto")
+
+        # mine_dokumenter.indhold_krypteret + fil_bytes_krypteret
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS indhold_krypteret BYTEA
+        """)
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS fil_bytes_krypteret BYTEA
+        """)
+
+        # analyse_arkiv.indhold_krypteret + sagsakter_krypteret + spoergsmaal_krypteret
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS indhold_krypteret BYTEA
+        """)
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS sagsakter_krypteret BYTEA
+        """)
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS spoergsmaal_krypteret BYTEA
+        """)
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS ekstra_instrukser_krypteret BYTEA
+        """)
+
+        # gemte_sager.state_json_krypteret
+        cur.execute("""
+            ALTER TABLE gemte_sager
+            ADD COLUMN IF NOT EXISTS state_json_krypteret BYTEA
+        """)
+
+        # users.aktiv_sag_state_krypteret (JSONB-snapshot med PII)
+        cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS aktiv_sag_state_krypteret BYTEA
+        """)
+
+        # Krypterings-migration status: en simpel kolonne der fortæller
+        # om en row er migreret til krypteret format. Bruges af læs-
+        # funktioner til at vælge mellem _krypteret og plaintext-kolonne.
+        cur.execute("""
+            ALTER TABLE mine_dokumenter
+            ADD COLUMN IF NOT EXISTS er_krypteret BOOLEAN DEFAULT FALSE
+        """)
+        cur.execute("""
+            ALTER TABLE analyse_arkiv
+            ADD COLUMN IF NOT EXISTS er_krypteret BOOLEAN DEFAULT FALSE
+        """)
+        cur.execute("""
+            ALTER TABLE gemte_sager
+            ADD COLUMN IF NOT EXISTS er_krypteret BOOLEAN DEFAULT FALSE
         """)
 
         # ═════════════════════════════════════════════════════════════
@@ -1290,31 +1495,91 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
         not is_public
         and dokumenttype in ('klage', 'bilag', 'svarbrev', 'vilkaar')
     )
+    # GDPR Fase 3: Dual-write kryptering.
+    # PRIVATE rækker (klage, bilag osv.) krypteres ALTID hvis
+    # ENCRYPTION_KEY er sat. Public dokumenter (afgoerelse, lovgivning,
+    # anonymisering_regler, vilkaar fra scrapere) krypteres IKKE — de er
+    # allerede offentligt tilgængelige + skal kunne søges via
+    # plaintext for RAG-keyword-fallback.
+    skal_krypteres = (
+        _kryptering_aktiv()
+        and not is_public
+        and dokumenttype in ('klage', 'bilag', 'svarbrev')
+    )
     try:
         conn = _connect()
         cur = conn.cursor()
         # psycopg2.Binary wrapper for BYTEA — None hvis der ikke er bytes
         bytes_param = psycopg2.Binary(fil_bytes) if fil_bytes else None
+
+        # Byg krypterings-felter dynamisk (kun for private rækker).
+        # Dual-write: plaintext-kolonne får tom streng for private,
+        # krypteret-kolonne får pgcrypto-output.
+        if skal_krypteres:
+            plaintext_for_db = ""  # Plaintext-kolonne nulstilles
+            indhold_kryp_expr = _encrypt_sql_expr()
+            indhold_kryp_params = _encrypt_params(tekst)
+            er_krypteret_val = True
+            # Filbytes: krypter også
+            if fil_bytes:
+                fil_kryp_expr = _encrypt_sql_expr()
+                # pgp_sym_encrypt forventer text, ikke bytea. Encode bytes
+                # som base64 så vi kan gemme dem krypteret (small overhead).
+                import base64 as _b64
+                fil_b64 = _b64.b64encode(fil_bytes).decode("ascii")
+                fil_kryp_params = _encrypt_params(fil_b64)
+                bytes_param = None  # Nulstil plaintext bytes
+            else:
+                fil_kryp_expr = "NULL"
+                fil_kryp_params = ()
+        else:
+            plaintext_for_db = tekst
+            indhold_kryp_expr = "NULL"
+            indhold_kryp_params = ()
+            fil_kryp_expr = "NULL"
+            fil_kryp_params = ()
+            er_krypteret_val = False
+
         if sa_anonymiseres_efter_24t:
-            cur.execute(
+            sql = (
                 "INSERT INTO mine_dokumenter "
-                "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
+                "(filnavn, indhold, indhold_krypteret, "
+                " dokumenttype, embedding, kilde_url, "
                 " tenant_id, is_public, anonymiserings_status, "
-                " anonymiseres_efter, fil_bytes, fil_mime) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, "
-                " 'aktiv', NOW() + INTERVAL '24 hours', %s, %s)",
-                (filnavn, tekst, dokumenttype, embedding, kilde_url,
-                 tenant_id, bool(is_public), bytes_param, fil_mime),
+                " anonymiseres_efter, fil_bytes, fil_bytes_krypteret, "
+                " fil_mime, er_krypteret) "
+                f"VALUES (%s, %s, {indhold_kryp_expr}, "
+                f" %s, %s, %s, %s, %s, "
+                f" 'aktiv', NOW() + INTERVAL '24 hours', "
+                f" %s, {fil_kryp_expr}, %s, %s)"
+            )
+            params = (
+                (filnavn, plaintext_for_db)
+                + indhold_kryp_params
+                + (dokumenttype, embedding, kilde_url,
+                   tenant_id, bool(is_public), bytes_param)
+                + fil_kryp_params
+                + (fil_mime, er_krypteret_val)
             )
         else:
-            cur.execute(
+            sql = (
                 "INSERT INTO mine_dokumenter "
-                "(filnavn, indhold, dokumenttype, embedding, kilde_url, "
-                " tenant_id, is_public, fil_bytes, fil_mime) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (filnavn, tekst, dokumenttype, embedding, kilde_url,
-                 tenant_id, bool(is_public), bytes_param, fil_mime),
+                "(filnavn, indhold, indhold_krypteret, "
+                " dokumenttype, embedding, kilde_url, "
+                " tenant_id, is_public, fil_bytes, "
+                " fil_bytes_krypteret, fil_mime, er_krypteret) "
+                f"VALUES (%s, %s, {indhold_kryp_expr}, "
+                f" %s, %s, %s, %s, %s, %s, {fil_kryp_expr}, %s, %s)"
             )
+            params = (
+                (filnavn, plaintext_for_db)
+                + indhold_kryp_params
+                + (dokumenttype, embedding, kilde_url,
+                   tenant_id, bool(is_public), bytes_param)
+                + fil_kryp_params
+                + (fil_mime, er_krypteret_val)
+            )
+        cur.execute(sql, params)
         conn.commit()
         cur.close()
         conn.close()
@@ -1564,24 +1829,46 @@ def hent_sager_af_type(dokumenttype, limit=None, tenant_id=None):
 
 # ---------- CHUNKS-FUNKTIONER (forbedret RAG) ----------
 
-def hent_dokument_indhold(filnavn):
+def hent_dokument_indhold(filnavn, tenant_id=None):
     """
     Henter den FULDE indhold-tekst for et dokument via filnavn.
     Bruges af regex-fallbacks når vi ellers kun har en chunk og
     har brug for at scanne hele afgørelsen (fx for at finde beløb
     der står i sektioner som chunken ikke indeholdt).
 
-    Returnerer indhold som streng, eller tom streng hvis ikke fundet.
+    Tenant-isolation: hvis tenant_id ikke angives, bruges aktiv tenant.
+    Public dokumenter (is_public=TRUE) er synlige for alle tenants.
+
+    GDPR Fase 3: Hvis row er krypteret (er_krypteret=TRUE), dekrypteres
+    indhold_krypteret. Ellers læses gammel plaintext-kolonne (fallback
+    under transition).
+
+    Returnerer indhold som streng, eller tom streng hvis ikke fundet
+    eller hvis kalderens tenant ikke ejer dokumentet.
     """
     if not filnavn:
         return ""
+    if tenant_id is None:
+        tenant_id = hent_aktiv_tenant_id()
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute(
-            "SELECT indhold FROM mine_dokumenter WHERE filnavn = %s LIMIT 1",
-            (filnavn,),
-        )
+        # COALESCE: foretræk dekrypteret indhold, fald tilbage til plaintext.
+        # Tenant-guard: kun rows der enten er public ELLER ejet af aktiv tenant.
+        sql = f"""
+            SELECT COALESCE(
+                CASE WHEN er_krypteret THEN
+                    {_decrypt_sql_expr('indhold_krypteret')}
+                ELSE NULL END,
+                indhold
+            )
+            FROM mine_dokumenter
+            WHERE filnavn = %s
+              AND (is_public = TRUE OR tenant_id = %s)
+            LIMIT 1
+        """
+        params = _decrypt_key_param() + (filnavn, tenant_id)
+        cur.execute(sql, params)
         row = cur.fetchone()
         cur.close()
         conn.close()
