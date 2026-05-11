@@ -126,19 +126,23 @@ def find_redaction_targets(
 
     klager_lower = [n.lower() for n in klager_navne if n]
     filtreret: list[dict] = []
+    antal_filtreret = 0
     for t in targets:
         streng_lower = t["streng"].lower()
         skip = False
         for klager in klager_lower:
             if streng_lower in klager or klager in streng_lower:
-                print(
-                    f"DEBUG: filtrerer redaction-target '{t['streng']}' "
-                    f"— matcher klager '{klager}'"
-                )
+                antal_filtreret += 1
                 skip = True
                 break
         if not skip:
             filtreret.append(t)
+
+    if antal_filtreret:
+        print(
+            f"DEBUG: klager-sikkerhedsnet filtrerede {antal_filtreret} "
+            f"redaction-targets (PII-strenge ikke logget)"
+        )
 
     return filtreret
 

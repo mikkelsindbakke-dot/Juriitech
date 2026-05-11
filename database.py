@@ -8,6 +8,19 @@ load_dotenv()
 DB_URL = os.getenv("DATABASE_URL")
 
 
+def _mask_email(email):
+    """Maskerer email til logs: 'mikkel@example.com' → 'mik***@example.com'."""
+    if not email:
+        return "<none>"
+    s = str(email)
+    if "@" not in s:
+        return "<masked>"
+    lokal, _, domaene = s.partition("@")
+    if len(lokal) <= 3:
+        return f"{lokal[:1]}***@{domaene}"
+    return f"{lokal[:3]}***@{domaene}"
+
+
 def _connect():
     """
     Opretter en forbindelse til Supabase Postgres og registrerer
@@ -812,7 +825,7 @@ def hent_user_by_email(email):
             "oprettet_dato": row[6],
         }
     except Exception as e:
-        print(f"DEBUG: Kunne ikke hente user {email}: {e}")
+        print(f"DEBUG: Kunne ikke hente user {_mask_email(email)}: {e}")
         return None
 
 
@@ -852,7 +865,7 @@ def opret_user(email, tenant_id, role="jurist", fulde_navn=None,
         conn.close()
         return ny_id
     except Exception as e:
-        print(f"DEBUG: Kunne ikke oprette user {email}: {e}")
+        print(f"DEBUG: Kunne ikke oprette user {_mask_email(email)}: {e}")
         return None
 
 

@@ -150,6 +150,88 @@ _ADMIN_KEY = os.getenv("ADMIN_KEY", "")
 # DSN læses fra Streamlit secrets eller environment variable. Hvis den
 # mangler (fx ved lokal udvikling uden konfiguration), springes
 # Sentry-initialiseringen over så appen stadig virker.
+
+# Felt-navne der KAN indeholde klagers PII eller fil-bytes. Hvis Sentry
+# fanger en exception med disse i frame-vars/extras, redactes værdien
+# før eventet sendes. Listen er udvidet ved hvert nyt sted vi gemmer PII.
+_PII_FELT_NAVNE = frozenset({
+    "aktuel_sag", "sagsakter", "sagsakter_filer", "filer",
+    "fil_bytes", "bytes", "raw_bytes", "pdf_bytes",
+    "tekst", "indhold", "klage", "klage_tekst", "sag_tekst",
+    "klager_navn", "klagers_navn", "email", "fulde_navn",
+    "auto_vurdering_tekst", "seneste_svarbrev", "seneste_anonymisering",
+    "seneste_tjekliste", "sagsresume", "chat_historik",
+    "state_json", "aktiv_sag_state", "snapshot",
+    "spoergsmaal", "ekstra_instrukser",
+    "password", "access_token", "refresh_token", "api_key",
+})
+
+
+def _scrub_pii(node, _depth=0):
+    """
+    Rekursiv PII-scrubber til Sentry-events. Erstatter værdier af
+    følsomme felter med "[REDACTED]" og trunkerer lange strenge.
+    Max-dybde 8 så vi ikke rammer rekursions-grænse på cykliske
+    referencer eller meget dybe pydantic-modeller.
+    """
+    if _depth > 8:
+        return "[REDACTED:max-depth]"
+    if isinstance(node, dict):
+        out = {}
+        for k, v in node.items():
+            # Felt-navn matcher kendt PII → erstat værdien
+            if isinstance(k, str) and k.lower() in _PII_FELT_NAVNE:
+                out[k] = "[REDACTED]"
+            else:
+                out[k] = _scrub_pii(v, _depth + 1)
+        return out
+    if isinstance(node, (list, tuple)):
+        scrubbed = [_scrub_pii(item, _depth + 1) for item in node]
+        return type(node)(scrubbed) if not isinstance(node, tuple) else tuple(scrubbed)
+    if isinstance(node, bytes):
+        return f"[REDACTED:bytes len={len(node)}]"
+    if isinstance(node, str) and len(node) > 500:
+        # Lange strenge i extras/messages er sandsynligvis tekst-dumps
+        # (klage, AI-svar). Trunkér til 200 tegn + længde-indikator.
+        return node[:200] + f"...[TRUNCATED len={len(node)}]"
+    return node
+
+
+def _sentry_before_send(event, hint):
+    """
+    Renser Sentry-event for PII før det forlader processen. Følger
+    Sentry's officielle before_send-API: returnér modificeret event
+    (eller None for at droppe det helt).
+
+    Beskytter mod 3 lækage-vektorer:
+      1. Stack-frame local vars (`event["exception"]["values"][N]["stacktrace"]["frames"][N]["vars"]`)
+      2. Extra context sat via sentry_sdk.set_context / capture med extras
+      3. Request body hvis Sentry's integration har samlet det op
+    """
+    try:
+        # 1) Stack-frame vars
+        for exc in (event.get("exception") or {}).get("values") or []:
+            for frame in (exc.get("stacktrace") or {}).get("frames") or []:
+                if frame.get("vars"):
+                    frame["vars"] = _scrub_pii(frame["vars"])
+
+        # 2) Extra context og tags
+        if event.get("extra"):
+            event["extra"] = _scrub_pii(event["extra"])
+        if event.get("contexts"):
+            event["contexts"] = _scrub_pii(event["contexts"])
+
+        # 3) Request body (hvis Sentry-integration har samlet form-data op)
+        req = event.get("request") or {}
+        if req.get("data"):
+            req["data"] = _scrub_pii(req["data"])
+    except Exception as e:
+        # Fail-open: hvis scrubberen kaster, vil vi hellere sende et
+        # event uden scrubbing end at miste fejlen helt. Print kort.
+        print(f"DEBUG: Sentry PII-scrubber fejlede: {e}")
+    return event
+
+
 def _init_sentry():
     try:
         # Forsøg først Streamlit secrets (production), falder tilbage til
@@ -168,10 +250,15 @@ def _init_sentry():
         import sentry_sdk
         sentry_sdk.init(
             dsn=sentry_dsn,
-            # Send PII (klage-tekst, brugerinfo) for rigere fejl-kontekst.
-            # Sentry's data-region er Frankfurt (.de.sentry.io) så data
-            # forlader aldrig EU.
-            send_default_pii=True,
+            # PII slået FRA. Tidligere var dette True hvilket sendte
+            # brugerens IP og frame-vars (potentielt klage-tekst og
+            # fil-bytes) til Sentry. Den eksplicitte scrubber nedenfor
+            # er belt-and-suspenders.
+            send_default_pii=False,
+            # before_send fanger alle events før de forlader processen
+            # og redacter kendte PII-felter (aktuel_sag, fil_bytes,
+            # klager_navn, email, m.fl.). Se _sentry_before_send.
+            before_send=_sentry_before_send,
             # Saml 10% af requests til performance-monitoring
             traces_sample_rate=0.1,
             # Tag environment så vi kan skelne prod fra evt. staging

@@ -55,6 +55,31 @@ import streamlit as st
 
 
 # ───────────────────────────────────────────────────────────────
+# PII-MASKERING TIL LOGS
+# DEBUG-prints ender i Fly logs (gemmes ~14 dage). For at undgå at
+# brugeres email ligger som klartekst der bruges _mask_email() før
+# print. Beholder nok information til debug ("hvilken bruger fejlede")
+# uden at lægge fuld email på disken.
+# ───────────────────────────────────────────────────────────────
+
+
+def _mask_email(email):
+    """
+    Maskerer en email til logging: 'mikkel@example.com' → 'mik***@example.com'.
+    Tom/None → '<none>'. Ugyldig (uden @) → '<masked>'.
+    """
+    if not email:
+        return "<none>"
+    s = str(email)
+    if "@" not in s:
+        return "<masked>"
+    lokal, _, domaene = s.partition("@")
+    if len(lokal) <= 3:
+        return f"{lokal[:1]}***@{domaene}"
+    return f"{lokal[:3]}***@{domaene}"
+
+
+# ───────────────────────────────────────────────────────────────
 # SUPABASE-KLIENT
 # Lazy init så manglende env-vars ikke crasher app-import.
 # ───────────────────────────────────────────────────────────────
@@ -170,7 +195,7 @@ def _link_supabase_to_db_user(supabase_user):
 
     # Trin 3: ikke inviteret
     print(
-        f"DEBUG: Login afvist — {email} findes i Supabase men ikke i "
+        f"DEBUG: Login afvist — {_mask_email(email)} findes i Supabase men ikke i "
         "vores users-tabel. Brugeren er ikke inviteret af admin."
     )
     return None
@@ -873,7 +898,7 @@ def admin_delete_user(user_id):
             # (admin har slettet manuelt). Vi fortsætter med DB-sletning.
             if "not found" in msg or "404" in msg or "no rows" in msg:
                 print(
-                    f"DEBUG: Supabase-konto for {db_user['email']} var "
+                    f"DEBUG: Supabase-konto for {_mask_email(db_user['email'])} var "
                     "allerede væk — fortsætter med DB-sletning."
                 )
             else:
