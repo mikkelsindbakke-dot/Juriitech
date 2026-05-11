@@ -1233,16 +1233,31 @@ def gem_aktiv_sag_state(user_id, filnavne, state_snapshot=None):
                 _json.dumps(state_snapshot, default=str)
                 if state_snapshot else None
             )
-            cur.execute(
-                "UPDATE users SET aktiv_sag_filnavne = %s, "
-                "aktiv_sag_state = %s::jsonb, "
-                "aktiv_sag_opdateret = NOW() WHERE id = %s",
-                (list(filnavne), snapshot_json, int(user_id)),
-            )
+            # GDPR Fase 3: state_snapshot indeholder klagers navn + evt.
+            # base64-bytes — krypter hvis ENCRYPTION_KEY er sat. Når vi
+            # krypterer nulstilles plaintext JSONB-kolonnen så ingen
+            # plaintext-PII er i hvile.
+            if _kryptering_aktiv() and snapshot_json:
+                cur.execute(
+                    f"UPDATE users SET aktiv_sag_filnavne = %s, "
+                    f"aktiv_sag_state = NULL, "
+                    f"aktiv_sag_state_krypteret = {_encrypt_sql_expr()}, "
+                    f"aktiv_sag_opdateret = NOW() WHERE id = %s",
+                    (list(filnavne),) + _encrypt_params(snapshot_json) + (int(user_id),),
+                )
+            else:
+                cur.execute(
+                    "UPDATE users SET aktiv_sag_filnavne = %s, "
+                    "aktiv_sag_state = %s::jsonb, "
+                    "aktiv_sag_state_krypteret = NULL, "
+                    "aktiv_sag_opdateret = NOW() WHERE id = %s",
+                    (list(filnavne), snapshot_json, int(user_id)),
+                )
         else:
             cur.execute(
                 "UPDATE users SET aktiv_sag_filnavne = NULL, "
                 "aktiv_sag_state = NULL, "
+                "aktiv_sag_state_krypteret = NULL, "
                 "aktiv_sag_opdateret = NULL WHERE id = %s",
                 (int(user_id),),
             )
@@ -1257,6 +1272,9 @@ def hent_aktiv_sag_state(user_id, max_alder_timer=24):
     """
     Returnerer dict med {filnavne: [...], state: {...}} hvis brugeren
     har en aktiv sag yngre end max_alder_timer. Ellers None.
+
+    GDPR Fase 3: Dekrypterer aktiv_sag_state_krypteret hvis sat.
+    Falder tilbage til plaintext aktiv_sag_state for bagudkompatibilitet.
     """
     if not user_id:
         return None
@@ -1264,21 +1282,38 @@ def hent_aktiv_sag_state(user_id, max_alder_timer=24):
         conn = _connect()
         cur = conn.cursor()
         max_t = int(max_alder_timer)
-        cur.execute(
-            "SELECT aktiv_sag_filnavne, aktiv_sag_state, aktiv_sag_opdateret "
-            "FROM users WHERE id = %s "
-            "AND aktiv_sag_filnavne IS NOT NULL "
-            f"AND aktiv_sag_opdateret > NOW() - INTERVAL '{max_t} hours'",
-            (int(user_id),),
-        )
+        # Dekrypter snapshot inline. Vi prøver krypteret-kolonnen først;
+        # hvis den er NULL, falder vi tilbage til plaintext JSONB.
+        sql = f"""
+            SELECT aktiv_sag_filnavne,
+                   aktiv_sag_state,
+                   CASE WHEN aktiv_sag_state_krypteret IS NOT NULL THEN
+                       {_decrypt_sql_expr('aktiv_sag_state_krypteret')}
+                   ELSE NULL END AS state_krypteret_dec,
+                   aktiv_sag_opdateret
+            FROM users WHERE id = %s
+              AND aktiv_sag_filnavne IS NOT NULL
+              AND aktiv_sag_opdateret > NOW() - INTERVAL '{max_t} hours'
+        """
+        params = _decrypt_key_param() + (int(user_id),)
+        cur.execute(sql, params)
         r = cur.fetchone()
         cur.close()
         conn.close()
         if not r or not r[0]:
             return None
+        # Foretræk dekrypteret state. Hvis None, fald tilbage til plaintext.
+        if r[2]:
+            import json as _json
+            try:
+                state = _json.loads(r[2])
+            except (ValueError, TypeError):
+                state = {}
+        else:
+            state = r[1] or {}
         return {
             "filnavne": list(r[0]),
-            "state": r[1] or {},
+            "state": state,
         }
     except Exception as e:
         print(f"DEBUG: hent_aktiv_sag_state fejlede: {e}")
@@ -1761,13 +1796,24 @@ def hent_alle_sager(tenant_id=None):
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute(
-            "SELECT filnavn, indhold, oprettet_dato, dokumenttype "
-            "FROM mine_dokumenter "
-            "WHERE is_public = TRUE OR tenant_id = %s "
-            "ORDER BY oprettet_dato DESC",
-            (tenant_id,),
-        )
+        # GDPR Fase 3: COALESCE mellem dekrypteret krypteret-kolonne
+        # og gammel plaintext-kolonne. Public docs (afgørelser m.fl.) er
+        # IKKE krypteret — de læses fra plaintext-kolonnen direkte.
+        sql = f"""
+            SELECT filnavn,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('indhold_krypteret')}
+                       ELSE NULL END,
+                       indhold
+                   ) AS indhold_endelig,
+                   oprettet_dato, dokumenttype
+            FROM mine_dokumenter
+            WHERE is_public = TRUE OR tenant_id = %s
+            ORDER BY oprettet_dato DESC
+        """
+        params = _decrypt_key_param() + (tenant_id,)
+        cur.execute(sql, params)
         raekker = cur.fetchall()
         cur.close()
         conn.close()
@@ -1793,23 +1839,34 @@ def hent_sager_af_type(dokumenttype, limit=None, tenant_id=None):
 
     Bruges bl.a. til at hente ALLE anonymiseringsregler som fast kontekst
     til anonymiseringsopgaver (i modsætning til RAG-baseret topp-k-søgning).
+
+    GDPR Fase 3: COALESCE mellem dekrypteret + plaintext-kolonne.
     """
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
     try:
         conn = _connect()
         cur = conn.cursor()
-        base_sql = (
-            "SELECT filnavn, indhold, kilde_url FROM mine_dokumenter "
-            "WHERE dokumenttype = %s "
-            "AND (is_public = TRUE OR tenant_id = %s) "
-            "ORDER BY filnavn ASC"
-        )
+        base_sql = f"""
+            SELECT filnavn,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('indhold_krypteret')}
+                       ELSE NULL END,
+                       indhold
+                   ) AS indhold_endelig,
+                   kilde_url
+            FROM mine_dokumenter
+            WHERE dokumenttype = %s
+              AND (is_public = TRUE OR tenant_id = %s)
+            ORDER BY filnavn ASC
+        """
+        key_params = _decrypt_key_param()
         if limit is not None:
             cur.execute(base_sql + " LIMIT %s",
-                        (dokumenttype, tenant_id, int(limit)))
+                        key_params + (dokumenttype, tenant_id, int(limit)))
         else:
-            cur.execute(base_sql, (dokumenttype, tenant_id))
+            cur.execute(base_sql, key_params + (dokumenttype, tenant_id))
         raekker = cur.fetchall()
         cur.close()
         conn.close()
@@ -2121,6 +2178,12 @@ def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse",
         where = [
             "m.dokumenttype = %s",
             "(m.is_public = TRUE OR m.tenant_id = %s)",
+            # GDPR Fase 3: Skip krypterede parent-dokumenter — deres
+            # chunks indeholder typisk plaintext men sjældent meningsfuldt
+            # match-data (chunks-tabellen er kun bygget for afgørelser
+            # historisk). Hvis chunks senere bygges for klager, skal vi
+            # håndtere det her.
+            "m.er_krypteret = FALSE",
         ]
         params = [dokumenttype, tenant_id]
         for ord_ in ord_liste:
@@ -2198,17 +2261,48 @@ def gem_i_arkiv(
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute(
-            """
-            INSERT INTO analyse_arkiv
-              (titel, type, klage_filnavn, spoergsmaal, sagsakter,
-               ekstra_instrukser, indhold, tenant_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-            """,
-            (titel, type_, klage_filnavn, spoergsmaal, sagsakter,
-             ekstra_instrukser, indhold, tenant_id),
-        )
+        # GDPR Fase 3: Dual-write kryptering for analyse_arkiv.
+        # Hele arkiv-tabellen er PRIVAT (tenant-scoped) og indeholder
+        # AI-genereret indhold der typisk citerer klagers navn/PII.
+        # Hvis ENCRYPTION_KEY er sat: krypter alle tekst-felter og
+        # nul-stil plaintext-kolonnerne.
+        if _kryptering_aktiv():
+            plaintext_arr = ("", "", "", "")  # spoergsmaal, sagsakter, ekstra, indhold
+            cur.execute(
+                f"""
+                INSERT INTO analyse_arkiv
+                  (titel, type, klage_filnavn,
+                   spoergsmaal, sagsakter, ekstra_instrukser, indhold,
+                   spoergsmaal_krypteret, sagsakter_krypteret,
+                   ekstra_instrukser_krypteret, indhold_krypteret,
+                   er_krypteret, tenant_id)
+                VALUES (%s, %s, %s,
+                        %s, %s, %s, %s,
+                        {_encrypt_sql_expr()}, {_encrypt_sql_expr()},
+                        {_encrypt_sql_expr()}, {_encrypt_sql_expr()},
+                        TRUE, %s)
+                RETURNING id
+                """,
+                (titel, type_, klage_filnavn)
+                + plaintext_arr
+                + _encrypt_params(spoergsmaal or "")
+                + _encrypt_params(sagsakter or "")
+                + _encrypt_params(ekstra_instrukser or "")
+                + _encrypt_params(indhold or "")
+                + (tenant_id,)
+            )
+        else:
+            cur.execute(
+                """
+                INSERT INTO analyse_arkiv
+                  (titel, type, klage_filnavn, spoergsmaal, sagsakter,
+                   ekstra_instrukser, indhold, tenant_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+                """,
+                (titel, type_, klage_filnavn, spoergsmaal, sagsakter,
+                 ekstra_instrukser, indhold, tenant_id),
+            )
         ny_id = cur.fetchone()[0]
         conn.commit()
         cur.close()
@@ -2232,17 +2326,29 @@ def hent_arkiv(begraens=50, tenant_id=None):
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute(
-            """
-            SELECT id, titel, type, klage_filnavn, spoergsmaal,
-                   oprettet_dato, indhold, sagsakter, ekstra_instrukser
+        # GDPR Fase 3: COALESCE-dekryptering for tekst-felter
+        sp_expr = _decrypt_sql_expr('spoergsmaal_krypteret')
+        sa_expr = _decrypt_sql_expr('sagsakter_krypteret')
+        ek_expr = _decrypt_sql_expr('ekstra_instrukser_krypteret')
+        in_expr = _decrypt_sql_expr('indhold_krypteret')
+        key_params = _decrypt_key_param()
+        # Hver _decrypt_sql_expr indeholder en %s-placeholder for nøglen
+        # (hvis aktiv). Vi skal sende key_params 4 gange — én per kolonne.
+        sql = f"""
+            SELECT id, titel, type, klage_filnavn,
+                   COALESCE(CASE WHEN er_krypteret THEN {sp_expr} ELSE NULL END, spoergsmaal),
+                   oprettet_dato,
+                   COALESCE(CASE WHEN er_krypteret THEN {in_expr} ELSE NULL END, indhold),
+                   COALESCE(CASE WHEN er_krypteret THEN {sa_expr} ELSE NULL END, sagsakter),
+                   COALESCE(CASE WHEN er_krypteret THEN {ek_expr} ELSE NULL END, ekstra_instrukser)
             FROM analyse_arkiv
             WHERE tenant_id = %s
             ORDER BY oprettet_dato DESC
             LIMIT %s
-            """,
-            (tenant_id, begraens),
-        )
+        """
+        # Params: nøgle for sp, nøgle for in, nøgle for sa, nøgle for ek, tenant_id, begraens
+        params = key_params + key_params + key_params + key_params + (tenant_id, begraens)
+        cur.execute(sql, params)
         raekker = cur.fetchall()
         cur.close()
         conn.close()
@@ -2359,14 +2465,28 @@ def gem_sag_state(titel, state_json, user_id=None, sag_id=None,
     try:
         conn = _connect()
         cur = conn.cursor()
+        # GDPR Fase 3: state_json indeholder hele session-snapshot inkl.
+        # base64-encoded fil-bytes og klagers navn — det er klart PII.
+        # Krypter ved hver skrivning hvis ENCRYPTION_KEY er sat.
+        kryp_aktiv = _kryptering_aktiv()
         if sag_id is not None:
             # Verificér tenant-ejerskab før update
-            cur.execute(
-                "UPDATE gemte_sager SET titel=%s, state_json=%s, "
-                "opdateret_dato=CURRENT_TIMESTAMP "
-                "WHERE id=%s AND tenant_id=%s RETURNING id",
-                (titel, state_json, sag_id, tenant_id),
-            )
+            if kryp_aktiv:
+                cur.execute(
+                    f"UPDATE gemte_sager SET titel=%s, "
+                    f"state_json='', state_json_krypteret={_encrypt_sql_expr()}, "
+                    f"er_krypteret=TRUE, "
+                    f"opdateret_dato=CURRENT_TIMESTAMP "
+                    f"WHERE id=%s AND tenant_id=%s RETURNING id",
+                    (titel,) + _encrypt_params(state_json) + (sag_id, tenant_id),
+                )
+            else:
+                cur.execute(
+                    "UPDATE gemte_sager SET titel=%s, state_json=%s, "
+                    "opdateret_dato=CURRENT_TIMESTAMP "
+                    "WHERE id=%s AND tenant_id=%s RETURNING id",
+                    (titel, state_json, sag_id, tenant_id),
+                )
             row = cur.fetchone()
             ny_id = row[0] if row else None
             if ny_id is None:
@@ -2375,11 +2495,21 @@ def gem_sag_state(titel, state_json, user_id=None, sag_id=None,
                     f"ikke tenant {tenant_id}"
                 )
         else:
-            cur.execute(
-                "INSERT INTO gemte_sager (user_id, titel, state_json, tenant_id) "
-                "VALUES (%s, %s, %s, %s) RETURNING id",
-                (user_id, titel, state_json, tenant_id),
-            )
+            if kryp_aktiv:
+                cur.execute(
+                    f"INSERT INTO gemte_sager "
+                    f"(user_id, titel, state_json, state_json_krypteret, "
+                    f" er_krypteret, tenant_id) "
+                    f"VALUES (%s, %s, '', {_encrypt_sql_expr()}, TRUE, %s) "
+                    f"RETURNING id",
+                    (user_id, titel) + _encrypt_params(state_json) + (tenant_id,),
+                )
+            else:
+                cur.execute(
+                    "INSERT INTO gemte_sager (user_id, titel, state_json, tenant_id) "
+                    "VALUES (%s, %s, %s, %s) RETURNING id",
+                    (user_id, titel, state_json, tenant_id),
+                )
             ny_id = cur.fetchone()[0]
         conn.commit()
         cur.close()
@@ -2447,11 +2577,20 @@ def hent_gemt_sag(sag_id, tenant_id=None):
     try:
         conn = _connect()
         cur = conn.cursor()
-        cur.execute(
-            "SELECT id, titel, state_json, oprettet_dato, opdateret_dato "
-            "FROM gemte_sager WHERE id=%s AND tenant_id=%s",
-            (sag_id, tenant_id),
-        )
+        # GDPR Fase 3: COALESCE mellem dekrypteret + plaintext state_json
+        sql = f"""
+            SELECT id, titel,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('state_json_krypteret')}
+                       ELSE NULL END,
+                       state_json
+                   ) AS state_json,
+                   oprettet_dato, opdateret_dato
+            FROM gemte_sager WHERE id=%s AND tenant_id=%s
+        """
+        params = _decrypt_key_param() + (sag_id, tenant_id)
+        cur.execute(sql, params)
         row = cur.fetchone()
         cur.close()
         conn.close()
@@ -2538,6 +2677,13 @@ def soeg_i_arkiv(stikord=None, dokumenttype=None, begraens=50, tenant_id=None):
         where = ["(is_public = TRUE OR tenant_id = %s)"]
         params = [tenant_id]
         if stikord and stikord.strip():
+            # GDPR Fase 3: Keyword-søgning matcher kun mod plaintext-
+            # kolonnen. Krypterede rækker (private klager) filtreres ud
+            # her — embedding-RAG (find_relevante_sager) er den primære
+            # søgevej for dem, og brugere finder typisk egne klager via
+            # arkivet, ikke keyword-søgning. Public afgørelser krypteres
+            # IKKE, så de fortsætter med at virke fuldt ud.
+            where.append("er_krypteret = FALSE")
             # Split på mellemrum og kræv at alle ord forekommer (case-insensitive)
             ord_liste = [o.strip() for o in stikord.split() if o.strip()]
             for ord_ in ord_liste:
@@ -2550,8 +2696,20 @@ def soeg_i_arkiv(stikord=None, dokumenttype=None, begraens=50, tenant_id=None):
         where_klausul = " WHERE " + " AND ".join(where)
         params.append(begraens)
 
+        # GDPR Fase 3: SELECT-kolonnen for indhold er COALESCE mellem
+        # dekrypteret + plaintext. Selv hvis vi filtrerer krypterede
+        # rows ud i WHERE (når der søges på keyword), kan keyword-fri
+        # listninger stadig vise krypterede rows — de dekrypteres her.
+        indhold_expr = (
+            f"COALESCE("
+            f"  CASE WHEN er_krypteret THEN {_decrypt_sql_expr('indhold_krypteret')} "
+            f"  ELSE NULL END, indhold)"
+        )
+        params = list(_decrypt_key_param()) + params
+
         sql = f"""
-            SELECT filnavn, indhold, oprettet_dato, dokumenttype, kilde_url
+            SELECT filnavn, {indhold_expr} AS indhold_endelig,
+                   oprettet_dato, dokumenttype, kilde_url
             FROM mine_dokumenter
             {where_klausul}
             ORDER BY oprettet_dato DESC
@@ -2609,12 +2767,22 @@ def find_relevante_sager(
         conn = _connect()
         cur = conn.cursor()
 
+        # GDPR Fase 3: SELECT-kolonnen for indhold er COALESCE mellem
+        # dekrypteret + plaintext. Nøglen til dekryptering er den FØRSTE
+        # parameter (hvis kryptering er aktiv).
+        indhold_expr = (
+            f"COALESCE("
+            f"  CASE WHEN er_krypteret THEN {_decrypt_sql_expr('indhold_krypteret')} "
+            f"  ELSE NULL END, indhold)"
+        )
+        key_params = list(_decrypt_key_param())
+
         # Byg WHERE-klausulen dynamisk
         where = [
             "embedding IS NOT NULL",
             "(is_public = TRUE OR tenant_id = %s)",
         ]
-        params = [sporgsmaal_embedding, tenant_id]
+        params = key_params + [sporgsmaal_embedding, tenant_id]
         if udeluk_filnavn:
             where.append("filnavn <> %s")
             params.append(udeluk_filnavn)
@@ -2625,7 +2793,8 @@ def find_relevante_sager(
         params.append(top_k)
 
         sql = f"""
-            SELECT filnavn, indhold, oprettet_dato, dokumenttype, kilde_url,
+            SELECT filnavn, {indhold_expr} AS indhold_endelig,
+                   oprettet_dato, dokumenttype, kilde_url,
                    1 - (embedding <=> %s::vector) AS similarity
             FROM mine_dokumenter
             WHERE {' AND '.join(where)}
