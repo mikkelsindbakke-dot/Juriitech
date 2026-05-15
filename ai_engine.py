@@ -1201,9 +1201,10 @@ def anonymiser_tekst(tekst, filnavn=None):
         # autoritative kilde tilsiger det.
         _navn = _hent_navn()
         _suffix = _hent_anonymisering_suffix()
+        _klageorgan = _hent_klageorgan_navn()
         system_prompt = (
             f"Du forbereder dokumenter til {_navn}'s brug i klagesager hos "
-            f"Pakkerejse-Ankenævnet. Følg de {_navn}-specifikke regler i "
+            f"{_klageorgan}. Følg de {_navn}-specifikke regler i "
             "brugerprompten PRÆCIST — disse regler overstyrer eventuelle "
             "andre anonymiseringsregler du måtte være trænet i. "
             "Hovedreglerne: (1) klagers navn og kontaktoplysninger MÅ "
@@ -2250,9 +2251,10 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
         if not svarbrev_tekst or not svarbrev_tekst.strip():
             return svarbrev_tekst
 
+        _klageorgan = _hent_klageorgan_navn()
         instruktion = (
             "Du modtager et allerede færdigskrevet svarbrev fra "
-            f"{REJSESELSKAB_NAVN} til Pakkerejse-Ankenævnet. Din ENESTE "
+            f"{REJSESELSKAB_NAVN} til {_klageorgan}. Din ENESTE "
             "opgave er at sikre at svarbrevet er fuldt anonymiseret — "
             "klagerens navn og personhenførbare oplysninger MÅ IKKE stå "
             "noget sted.\n\n"
@@ -2287,7 +2289,7 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
         regler = _hent_anonymiseringsregler_tekst()
         system_prompt = (
             "Du er en præcis og regel-tro anonymiseringsassistent for "
-            "rejsearrangører der skal svare Pakkerejse-Ankenævnet. Du er "
+            f"rejsearrangører der skal svare {_klageorgan}. Du er "
             "trænet på de autoritative danske og europæiske anonymiserings-"
             "regler (Datatilsynet, Jurabibliotek, EU Article 29 WP216)."
         )
@@ -2398,8 +2400,9 @@ def _check_og_rens_forbudte_ord(svarbrev_tekst):
     if client is None:
         return svarbrev_tekst
 
+    _klageorgan = _hent_klageorgan_navn()
     instruktion = (
-        "Du modtager et færdigskrevet svarbrev til Pakkerejse-Ankenævnet. "
+        f"Du modtager et færdigskrevet svarbrev til {_klageorgan}. "
         "Din ENESTE opgave er at fjerne to typer af indrømmelses-"
         "formuleringer og erstatte dem med rene faktuelle udsagn — "
         "UDEN at ændre andet i brevet. Bevar struktur, afsnit, "
@@ -2659,11 +2662,12 @@ def udled_sandsynligheder_strukturelt(analyse_tekst):
     if not analyse_tekst or not analyse_tekst.strip():
         return None
 
+    _klageorgan = _hent_klageorgan_navn()
     prompt = (
         "Baseret på nedenstående juridiske analyse af en klagesag fra "
-        "Pakkerejse-Ankenævnet, estimér sandsynligheden for tre mulige "
+        f"{_klageorgan}, estimér sandsynligheden for tre mulige "
         "udfald. Hvis analysen ikke giver tydeligt grundlag, så baser "
-        "estimatet på din viden om Pakkerejse-Ankenævnets praksis og "
+        f"estimatet på din viden om {_klageorgan}s praksis og "
         "pakkerejseloven. Du SKAL give tre tal der summer til 100.\n\n"
         f"ANALYSE:\n{analyse_tekst[:6000]}\n\n"
         "RETURNÉR KUN dette JSON-objekt — intet andet, ingen forklaring, "
@@ -2794,7 +2798,7 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
             temperature=0,
             system=(
                 "Du er en grundig juridisk research-assistent specialiseret "
-                "i Pakkerejse-Ankenævnet sager. Du leverer altid "
+                f"i {_hent_klageorgan_navn()} sager. Du leverer altid "
                 "udtømmende, præcise klagepunkt-lister."
             ),
             messages=[{"role": "user", "content": user_content}],
@@ -2942,10 +2946,11 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
     import re as _re
 
     _navn = _hent_navn()
+    _klageorgan = _hent_klageorgan_navn()
 
     indled = (
         "Du er en præcis juridisk research-assistent specialiseret i "
-        "Pakkerejse-Ankenævnet sager. Din ENESTE opgave lige nu er at "
+        f"{_klageorgan} sager. Din ENESTE opgave lige nu er at "
         "kortlægge TIDSFORHOLDET mellem hvornår klager konstaterede "
         "mangler/problemer og hvornår klager kontaktede rejseselskabet "
         f"({_navn}) om dem.\n\n"
@@ -2975,7 +2980,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "═══════════════════════════════════════════════════════════════\n"
         "JURIDISK BAGGRUND:\n"
         "═══════════════════════════════════════════════════════════════\n"
-        "Pakkerejse-Ankenævnet vægter RETTIDIG REKLAMATION ekstremt højt. "
+        f"{_klageorgan} vægter RETTIDIG REKLAMATION ekstremt højt. "
         "Hvis klager:\n"
         f"  • Kontaktede {_navn} samme dag eller umiddelbart efter en mangel "
         "blev konstateret (på destinationen) → RETTIDIG reklamation, "
@@ -3944,7 +3949,7 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
 
     prompt = (
         "Du får nedenfor en NY KLAGESAG (sagsmateriale fra rejseselskabet) og "
-        f"{len(relevante_sager)} TIDLIGERE AFGØRELSER fra Pakkerejse-Ankenævnet "
+        f"{len(relevante_sager)} TIDLIGERE AFGØRELSER fra {_hent_klageorgan_navn()} "
         "der EVENTUELT kan være relevante for den nye sag.\n\n"
         "DIN OPGAVE: For hver tidligere afgørelse skal du (1) udlede "
         "struktureret metadata, og (2) AFGØRE om den faktisk er JURIDISK "
@@ -4017,7 +4022,7 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         "ved udtjekning', 'transfer leveret med taxa i stedet for bus', "
         "'illusorisk opgradering' osv.\n\n"
         "TIP TIL HVOR DU FINDER DE KONKRETE MANGLER:\n"
-        "I tidligere afgørelser fra Pakkerejse-Ankenævnet står "
+        f"I tidligere afgørelser fra {_hent_klageorgan_navn()} står "
         "klagepunkterne ofte EKSPLICIT på første side under "
         "'Klagen angår' eller lignende. Brug DENNE sektion som "
         "primærkilde til at identificere de konkrete mangler — ikke "
