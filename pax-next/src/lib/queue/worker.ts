@@ -111,10 +111,21 @@ async function kør_foerstevurdering(jobDbId: string): Promise<{
   // sende en intern header som FastAPI checker. Men det kræver
   // ændringer i FastAPI. Alternativt: hent en gyldig JWT fra Supabase
   // admin API for job-ejeren.
-  const jwt = await mint_jwt_for_job(jobDbId);
-  if (!jwt) {
+  const auth = await mint_jwt_for_job(jobDbId);
+  if (!auth || !auth.jwt) {
     throw new Error("Kunne ikke minte JWT til worker");
   }
+
+  // Tenant-override-cookie: når admin har uploadet via "view as"-flow er
+  // job.tenant_id != JWT-ejerens egen tenant. FastAPI's aktiv_tenant-dep
+  // honorerer cookien KUN for admin-rolle (silently ignoreret ellers),
+  // så vi sender den altid med — det er trygt for non-admin og kritisk
+  // for admin-impersoneret upload (uden den ville aktiv_tenant returnere
+  // admins egen tenant og hele sprog/RAG/branding ryger forkert).
+  const cookieHeader =
+    auth.tenantId != null
+      ? `pax_admin_viewing_tenant=${auth.tenantId}`
+      : "";
 
   // Med timeout via AbortController
   const ctrl = new AbortController();
@@ -122,9 +133,13 @@ async function kør_foerstevurdering(jobDbId: string): Promise<{
 
   let resp: Response;
   try {
+    const headers: Record<string, string> = {
+      Authorization: `Bearer ${auth.jwt}`,
+    };
+    if (cookieHeader) headers["Cookie"] = cookieHeader;
     resp = await fetch(url, {
       method: "POST",
-      headers: { Authorization: `Bearer ${jwt}` },
+      headers,
       body: form,
       signal: ctrl.signal,
     });
@@ -164,6 +179,12 @@ async function hent_input_sagsakter(jobDbId: string): Promise<string | null> {
  * aktiv_tenant-dependency kræver en gyldig JWT. Vi laver en magic-link
  * for ejer-emailen og forløser den straks.
  *
+ * Returnerer både JWT og job.tenant_id så kalderen kan sætte
+ * pax_admin_viewing_tenant-cookien — det er den der sikrer at FastAPI
+ * bruger job'ets tenant (ikke admin'ens egen) ved admin-impersoneret
+ * upload. Tidligere logik der ledte efter en alt-bruger i job.tenant_id
+ * fejlede for tenants uden brugere (fx TUI hvor admin er den eneste).
+ *
  * Race-condition: Supabase invaliderer tidligere OTP når en ny genereres
  * for samme email. Når samme bruger submitter 2 jobs samtidig kan worker
  * A's OTP blive ugyldiggjort af worker B's generate_link før A's verify.
@@ -172,18 +193,11 @@ async function hent_input_sagsakter(jobDbId: string): Promise<string | null> {
  *
  * KUN brugbart server-side; kræver SUPABASE_SERVICE_KEY.
  */
-async function mint_jwt_for_job(jobDbId: string): Promise<string | null> {
+async function mint_jwt_for_job(
+  jobDbId: string,
+): Promise<{ jwt: string; tenantId: number | null } | null> {
   const { query } = await import("@/lib/db");
 
-  // KRITISK: Jobs uploadet via admin-impersonering har user_email =
-  // admin's email, men job.tenant_id = den IMPERSONEREDE tenant.
-  // Hvis vi minter JWT for admin's email, sætter FastAPI's
-  // aktiv_tenant-dep den AKTIVE tenant til admin'ens egen tenant
-  // (ikke job'ets) — sprog + RAG + branding bliver derfor forkert.
-  //
-  // Fix: Mint JWT for en BRUGER der faktisk tilhører job.tenant_id.
-  // Foretrækker job's egen user_email hvis brugeren tilhører den
-  // rigtige tenant, ellers den første jurist/admin af job's tenant.
   const rows = await query<{
     user_email: string | null;
     tenant_id: number | null;
@@ -192,49 +206,9 @@ async function mint_jwt_for_job(jobDbId: string): Promise<string | null> {
     [jobDbId],
   );
   const jobUserEmail = rows[0]?.user_email;
-  const jobTenantId = rows[0]?.tenant_id;
+  const jobTenantId = rows[0]?.tenant_id ?? null;
 
-  let email: string | null = null;
-
-  if (jobUserEmail && jobTenantId) {
-    // Tjek om job's user_email faktisk tilhører job's tenant
-    const ownerRows = await query<{ tenant_id: number | null }>(
-      "SELECT tenant_id FROM users WHERE email = $1 LIMIT 1",
-      [jobUserEmail],
-    );
-    const ownerTenantId = ownerRows[0]?.tenant_id;
-    if (ownerTenantId === jobTenantId) {
-      // Job's user_email tilhører rigtig tenant — brug den.
-      email = jobUserEmail;
-    } else {
-      // Job's user_email tilhører anden tenant (typisk: admin der
-      // uploader for impersoneret tenant). Find en bruger der
-      // faktisk tilhører job.tenant_id.
-      const altRows = await query<{ email: string }>(
-        `SELECT email FROM users
-         WHERE tenant_id = $1
-         ORDER BY CASE role
-           WHEN 'jurist' THEN 1
-           WHEN 'admin' THEN 2
-           ELSE 3 END,
-           id
-         LIMIT 1`,
-        [jobTenantId],
-      );
-      email = altRows[0]?.email ?? null;
-      if (email) {
-        console.log(
-          `[worker] Admin-impersonering detekteret for job ${jobDbId}: ` +
-            `JWT mintes for tenant-${jobTenantId} bruger '${email}' ` +
-            `(ikke admin '${jobUserEmail}')`,
-        );
-      }
-    }
-  } else if (jobUserEmail) {
-    // Fallback: ingen tenant_id på job — brug user_email som før.
-    email = jobUserEmail;
-  }
-
+  const email = jobUserEmail;
   if (!email) return null;
 
   const supUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -292,7 +266,11 @@ async function mint_jwt_for_job(jobDbId: string): Promise<string | null> {
       if (!verifyData.access_token) {
         throw new Error("access_token mangler i verify-svar");
       }
-      return verifyData.access_token;
+      console.log(
+        `[worker] mint_jwt_for_job: job=${jobDbId} user='${email}' ` +
+          `tenant_override=${jobTenantId ?? "(none)"}`,
+      );
+      return { jwt: verifyData.access_token, tenantId: jobTenantId };
     }
 
     const fejlTekst = (await verifyResp.text()).slice(0, 300);
