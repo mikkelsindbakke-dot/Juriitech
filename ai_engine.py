@@ -3662,7 +3662,9 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
         if isinstance(klagepunkter, str):
             klagepunkter = [klagepunkter]
         klagepunkter = [
-            str(k).strip() for k in klagepunkter if str(k).strip()
+            _normalisér_ai_output(str(k).strip())
+            for k in klagepunkter
+            if str(k).strip()
         ]
 
         return klagepunkter
@@ -4855,11 +4857,11 @@ def udled_sagsresume_strukturelt(
                 )
 
         return {
-            "emne": emne,
-            "klagepunkter": klagepunkter,
-            "krav": krav or "fremgår ikke",
-            "tui_handtering": tui or "fremgår ikke af bilagene",
-            "forventet_udfald": udfald or "Vurderingen kunne ikke udledes af analysen",
+            "emne": _normalisér_ai_output(emne),
+            "klagepunkter": [_normalisér_ai_output(k) for k in klagepunkter],
+            "krav": _normalisér_ai_output(krav) or "fremgår ikke",
+            "tui_handtering": _normalisér_ai_output(tui) or "fremgår ikke af bilagene",
+            "forventet_udfald": _normalisér_ai_output(udfald) or "Vurderingen kunne ikke udledes af analysen",
         }
     except Exception as e:
         print(f"DEBUG: Sagsresume-udledning fejlede: {e}")
@@ -5788,7 +5790,15 @@ def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
                         "primære for den juridiske vurderingen, men gir et "
                         "komplett bilde. Hver post er en kort beskrivelse "
                         "med [Vedlegg XX]-referanse. Hvis det ikke finnes "
-                        "sekundære punkter, returner en tom liste []. "
+                        "sekundære punkter, returner en tom liste [].\n\n"
+                        "FORMAT — KRITISK: Hver post er ÉN flytende setning "
+                        "som starter med selve innholdet. INGEN prefikser "
+                        "som 'Kontekst —', 'Klagepunkt —', 'Detalj —' eller "
+                        "kategori-merker. Postens karakter (om det er et "
+                        "klagepunkt eller kontekst-detalj) skal fremgå av "
+                        "selve formuleringen, ikke av et prefix.\n\n"
+                        "  ❌ 'Kontekst — Reisens samlede pris var 38.400 NOK.'\n"
+                        "  ✅ 'Reisens samlede pris var 38.400 NOK [Vedlegg 03].'\n\n"
                         "ALT skal skrives på NORSK BOKMÅL."
                     ),
                 },
@@ -5929,7 +5939,17 @@ def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
                     "primære for den juridiske vurdering men giver et "
                     "komplet billede. Hver post er en kort beskrivelse "
                     "med [Bilag XX]-reference. Hvis der ingen sekundære "
-                    "punkter er, returnér en tom liste []."
+                    "punkter er, returnér en tom liste [].\n\n"
+                    "FORMAT — KRITISK: Hver post er ÉN flydende sætning "
+                    "der starter med selve indholdet. INGEN præfikser som "
+                    "'Kontekst —', 'Klagepunkt —', 'Detalje —' eller "
+                    "kategori-mærker. Postens karakter (om det er et "
+                    "klagepunkt eller en kontekst-detalje) skal fremgå af "
+                    "selve formuleringen, ikke af et prefix.\n\n"
+                    "  ❌ 'Kontekst — Rejsens samlede pris var 28.912 DKK.'\n"
+                    "  ✅ 'Rejsens samlede pris var 28.912 DKK [Bilag 03].'\n\n"
+                    "  ❌ 'Klagepunkt — TUI's After Travel-afdeling henviste forkert.'\n"
+                    "  ✅ 'TUI's After Travel-afdeling henviste klager forkert til databeskyttelsespolitikken [Bilag 14].'"
                 ),
             },
             "rejseselskabets_stillingtagen_indtil_nu": {
@@ -6321,7 +6341,11 @@ def _normalisér_foerstevurdering(data):
     def _list_str(v):
         if not isinstance(v, list):
             return []
-        return [_str(x) for x in v if _str(x)]
+        return [
+            _normalisér_ai_output(_rens_kategori_prefix(_str(x)))
+            for x in v
+            if _str(x)
+        ]
 
     sandsynlighed = data.get("sandsynlighedsvurdering") or {}
     if not isinstance(sandsynlighed, dict):
@@ -6340,12 +6364,12 @@ def _normalisér_foerstevurdering(data):
         "yderligere_klagepunkter_og_detaljer": _list_str(
             data.get("yderligere_klagepunkter_og_detaljer")
         ),
-        "rejseselskabets_stillingtagen_indtil_nu": _str(
+        "rejseselskabets_stillingtagen_indtil_nu": _normalisér_ai_output(_str(
             data.get("rejseselskabets_stillingtagen_indtil_nu")
-        ),
-        "kort_juridisk_vurdering": _str(
+        )),
+        "kort_juridisk_vurdering": _normalisér_ai_output(_str(
             data.get("kort_juridisk_vurdering")
-        ),
+        )),
         "sandsynlighedsvurdering": {
             "fuld_medhold_til_klager": _int(
                 sandsynlighed.get("fuld_medhold_til_klager")
@@ -6356,10 +6380,10 @@ def _normalisér_foerstevurdering(data):
             "afvisning_af_klagen": _int(
                 sandsynlighed.get("afvisning_af_klagen")
             ),
-            "begrundelse": _str(sandsynlighed.get("begrundelse")),
+            "begrundelse": _normalisér_ai_output(_str(sandsynlighed.get("begrundelse"))),
         },
         "konklusion_en_linje": _normalisér_konklusion(
-            _str(data.get("konklusion_en_linje"))
+            _normalisér_ai_output(_str(data.get("konklusion_en_linje")))
         ),
     }
 
@@ -6384,6 +6408,80 @@ def _normalisér_konklusion(tekst):
             return "Forventes"
         return "forventes"
     return _re.sub(r"\banbefales\b", _erstat, tekst, flags=_re.IGNORECASE)
+
+
+def _rens_kategori_prefix(tekst):
+    """
+    Stripper kategori-præfikser AI'en hænger på liste-items i
+    yderligere_klagepunkter_og_detaljer (og lignende blandede lister).
+
+    AI'en bruger "**Kontekst** — ...", "Kontekst — ...", "Klagepunkt —
+    ...", "Detalje — ..." som kategori-mærke selvom schemaet beder den
+    lade være. Disse mærker tilfører ingen information (postens
+    karakter fremgår af konteksten) og laver visuel støj.
+
+    Bevarer kun den faktiske beskrivelse — fjerner præfix-ordet og den
+    efterfølgende streg/tankestreg.
+    """
+    if not tekst:
+        return tekst
+    import re as _re
+    # Match: valgfri **bold-markdown**, kategori-ord, em/en-streg eller
+    # bindestreg med whitespace omkring.
+    return _re.sub(
+        r"^\s*\**\s*(Kontekst|Klagepunkt|Detalje|Detail|Sekundært klagepunkt|Note)\s*\**\s*[—–\-]\s*",
+        "",
+        tekst,
+        flags=_re.IGNORECASE,
+    )
+
+
+def _normalisér_ai_output(tekst):
+    """
+    Generel post-processor for AI-output der vises i UI'et.
+
+    Fanger ord/vendinger AI'en producerer som ikke findes i hverken
+    dansk eller norsk (hallucinationer), eller som er konsistent
+    forkerte selv efter prompt-instrukser. Disse er meget få men
+    irriterende — det er nemmere at fjerne dem deterministisk end at
+    overbevise modellen om at lade være.
+
+    Kendte hallucinationer:
+      - 'meggæster' — opdigtet af modellen i klage-analyser (sandsynligvis
+        forsøg på 'medgæster'). Skrives altid som 'gæster' med bevaret
+        qualifier ('britiske meggæster' → 'britiske gæster',
+        'meggæster' alene → 'andre gæster' så meningen bevares).
+
+    Returnerer tom streng hvis input er None/tom — så funktionen kan
+    bruges som ren passthrough på alle felter uden None-checks i kalderen.
+    """
+    if not tekst:
+        return ""
+    import re as _re
+
+    out = tekst
+
+    # 'meggæster' med foranstillet adjektiv ('britiske meggæster',
+    # 'andre meggæster' osv.) → drop hallucinationen, behold adjektivet.
+    # \b-anchors sikrer at vi ikke rammer inde i sammensatte ord.
+    out = _re.sub(
+        r"\b(britiske|andre|tyske|hollandske|polske|svenske|norske|øvrige)\s+meggæster\b",
+        r"\1 gæster",
+        out,
+        flags=_re.IGNORECASE,
+    )
+
+    # 'meggæster' uden foranstillet adjektiv → 'andre gæster' for at
+    # bevare meningen (det er IKKE klagers selskab — det er andre gæster
+    # på hotellet).
+    def _erstat_meggaster(m):
+        ord_ = m.group(0)
+        if ord_[0].isupper():
+            return "Andre gæster"
+        return "andre gæster"
+    out = _re.sub(r"\bmeggæster\b", _erstat_meggaster, out, flags=_re.IGNORECASE)
+
+    return out
 
 
 def foerstevurdering_dict_til_markdown(data):
@@ -6576,9 +6674,12 @@ def generer_svarbrev_til_sag(
             svarbrev_tekst = response.content[0].text
 
         # Sikkerhedsnet: anonymiser svarbrevet + rens forbudte ord
-        # (indrømmelser, delvist-ansvar-formuleringer) før retur.
-        return _check_og_rens_forbudte_ord(
-            _sikr_svarbrev_anonymiseret(svarbrev_tekst)
+        # (indrømmelser, delvist-ansvar-formuleringer) + fjern kendte
+        # AI-hallucinationer ('meggæster' o.l.) før retur.
+        return _normalisér_ai_output(
+            _check_og_rens_forbudte_ord(
+                _sikr_svarbrev_anonymiseret(svarbrev_tekst)
+            )
         )
 
     except Exception as e:
