@@ -2279,6 +2279,17 @@ def byg_svarbrev_opgave(
         punkt — det er den eneste pålidelige måde at sikre 100%
         klagepunkt-dækning i svarbrevet.
     """
+    # KRITISK: REJSESELSKAB_NAVN og REJSESELSKAB_SAGSBEHANDLER på modul-
+    # niveau er evalueret ved IMPORT-tid og fanger derfor altid TUI-default
+    # (ikke pr-request tenant). Vi shadow'er dem med lokal lookup så
+    # FjordTravel og andre tenants får deres egen navn i svarbrevet.
+    # Samme for klageorgan-navn så vi henviser til Pakkereisenemnda på
+    # norske tenants i stedet for Pakkerejseankenævnet.
+    REJSESELSKAB_NAVN = _hent_navn()
+    REJSESELSKAB_SAGSBEHANDLER = _hent_sagsbehandler()
+    _klageorgan = _hent_klageorgan_navn()
+    _er_norsk = _hent_sprog() == "no"
+
     # Sektion om tidsforhold — kritisk forsvarsargument hvis klager
     # ikke har reklameret rettidigt. Pakkerejse-Ankenævnet vægter dette
     # ekstremt højt. Vi injicerer kun blokken hvis vi har faktiske
@@ -2380,7 +2391,7 @@ def byg_svarbrev_opgave(
             f'[beløb] kr."'
         )
 
-    return f"""
+    _prompt = f"""
 OPGAVE: Generer et KOMPLET UDKAST til svarbrev fra {REJSESELSKAB_NAVN} til
 Pakkerejseankenævnet. Skriv i et formelt, professionelt juridisk sprog —
 men ikke stivt. Brevet skal være kort, direkte og fokuseret.
@@ -2707,6 +2718,129 @@ STRENGE KRAV:
 - Underskriftslinjen skal altid være "{REJSESELSKAB_SAGSBEHANDLER}".
 - Tjek brevet igennem til sidst: ingen personnavne, ingen sektion-numre, ingen "domstols"-formuleringer, ingen "Til:"-headers, faktum-oversigt med (men UDEN kompensation), "Samlet vurdering"-afsnit til sidst, alle klagepunkter adresseret.
 """
+
+    # ─── Sprog-bevidste post-processing-overrides ───────────────────
+    # Hele svarbrev-prompten er skrevet på dansk. For norske tenants
+    # erstatter vi de KRITISKE sprog-direktiver der ellers ville tvinge
+    # AI'en til dansk output ('JURIDISK DANSK', danske forbudte ord,
+    # 'Hr. og Fru. Danmark' osv.) med norske ækvivalenter. Plus
+    # appender vi den kraftige terminale norske anchor til slutningen
+    # for at give AI'en det sidste ord på norsk.
+    if _er_norsk:
+        # Kritiske sprog-direktiver. Bemærk: prompten har linjeskift midt
+        # i frasen 'JURIDISK\nDANSK' så vi skal matche begge varianter.
+        _prompt = _prompt.replace(
+            "Hele svarbrevet skal være på korrekt JURIDISK\nDANSK",
+            "Hele svarbrevet skal være på korrekt JURIDISK NORSK BOKMÅL",
+        )
+        _prompt = _prompt.replace(
+            "JURIDISK\nDANSK",
+            "JURIDISK NORSK BOKMÅL",
+        )
+        _prompt = _prompt.replace(
+            "JURIDISK DANSK",
+            "JURIDISK NORSK BOKMÅL",
+        )
+        # Pakkerejse-Ankenævnet og Pakkerejseankenævnet kan optræde
+        # (med eller uden bindestreg). Erstat begge varianter med det
+        # tenant-specifikke klageorgan.
+        _prompt = _prompt.replace(
+            "Pakkerejse-Ankenævnet",
+            _klageorgan,
+        )
+        _prompt = _prompt.replace(
+            "Pakkerejseankenævnet",
+            _klageorgan,
+        )
+        _prompt = _prompt.replace(
+            "Pakkerejse-Ankenævnet læser kun dansk",
+            f"{_klageorgan} leser kun norsk",
+        )
+        _prompt = _prompt.replace(
+            "Pakkerejse-Ankenævnets medlemmer",
+            f"{_klageorgan}s medlemmer",
+        )
+        _prompt = _prompt.replace(
+            "Pakkerejse-Ankenævnet er ikke en domstol",
+            f"{_klageorgan} er ikke en domstol",
+        )
+        _prompt = _prompt.replace(
+            "Pakkerejse-Ankenævnet vægter rettidig reklamation",
+            f"{_klageorgan} vektlegger rettidig reklamasjon",
+        )
+        _prompt = _prompt.replace(
+            "Pakkerejse-Ankenævnet ønsker ikke lange retsskrivelser",
+            f"{_klageorgan} ønsker ikke lange rettsskrivelser",
+        )
+        _prompt = _prompt.replace(
+            "Pakkerejse-Ankenævnet kan tolke ord",
+            f"{_klageorgan} kan tolke ord",
+        )
+        _prompt = _prompt.replace(
+            'Hr. og Fru. Danmark',
+            'Ola og Kari Nordmann',
+        )
+        # Den obligatoriske åbnings-sætning skal også være på norsk
+        _prompt = _prompt.replace(
+            f'"{REJSESELSKAB_NAVN} vil hermed komme med sine bemærkninger samt bilag til sagen."',
+            f'"{REJSESELSKAB_NAVN} vil hermed legge frem sine bemerkninger og vedlegg i saken."',
+        )
+
+        # Forbudte ord — norske ækvivalenter til de danske ord-listen.
+        # Bemærk: vi bevarer den danske ord-blok men APPENDER en
+        # supplerende norsk ord-blok så AI'en kender begge varianter
+        # (filer kan være dansk-blandet) og under alle omstændigheder
+        # undgår BEGGE.
+        _norske_forbudte = """
+
+NORSKE FORBUDTE ORD/VENDINGER (gjelder når svarbrevet skrives på norsk
+— må ALDRI forekomme i svarbrevet uansett bøyning):
+
+  ❌ "beklager"           (alle bøyninger)
+  ❌ "anerkjenner"         (alle bøyninger)
+  ❌ "erkjenner"           (alle bøyninger)
+  ❌ "innrømmer"           (alle bøyninger)
+  ❌ "unnskylder"          (alle bøyninger)
+  ❌ "finner det beklagelig"
+  ❌ "vi forstår klagers frustrasjon"
+  ❌ "vi tar kritikken til etterretning"
+
+NORSKE FORBUDTE TILBYGNINGER (må ALDRI henges på en faktuell setning):
+  • "...og dette er ikke tilfredsstillende"
+  • "...hvilket er beklagelig"
+  • "...som er kritikkverdig"
+  • "...som er en feil"
+  • "...som ikke burde ha skjedd"
+  • "...og vi forstår klagers reaksjon"
+  • "...som vi gjerne ville ha unngått"
+
+NORSKE KONKRETE REWRITES:
+
+  ❌ "Vi beklager at klager opplevde problemer med bassenget."
+  ✅ "Klager har anført at bassenget ikke var åpent i hele perioden."
+
+  ❌ "{navn_placeholder} anerkjenner at hotellet ikke levde opp til
+       beskrivelsen"
+  ✅ "Hotellet hadde de manglene klager beskriver"
+
+  ❌ "Vi anerkjenner klagers utilfredshet"
+  ✅ (slett setningen — utilfredshet er ikke et juridisk forhold)
+
+BRUK NORSKE JURIDISKE TERMER — ikke danske:
+  ✓ 'mangel'              ✗ IKKE 'mangel' med dansk bøyning
+  ✓ 'rettidig reklamasjon' ✗ IKKE 'rettidig reklamation'
+  ✓ 'forholdsmessig prisavslag' ✗ IKKE 'forholdsmæssigt afslag'
+  ✓ 'bistandsplikt'       ✗ IKKE 'bistandspligt'
+  ✓ 'oppholdet'           ✗ IKKE 'opholdet'
+  ✓ 'reiseleder'          ✗ IKKE 'rejseleder'
+  ✓ 'avgjørende'          ✗ IKKE 'afgørende'
+  ✓ 'gjestene'            ✗ IKKE 'gæsterne'
+  ✓ 'pakkereiseloven'     ✗ IKKE 'pakkerejseloven'
+""".replace("{navn_placeholder}", REJSESELSKAB_NAVN)
+
+        _prompt = _prompt + _norske_forbudte + _sprog_anchor_end()
+
+    return _prompt
 
 
 # Backward compatibility — bevares så ældre kald fortsat virker (default
