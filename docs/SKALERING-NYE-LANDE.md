@@ -904,3 +904,245 @@ smart at starte med Sverige:
 - **Finland**: Mindre marked end SE/NO. Kun overvej hvis du har
   specifikke leads. Sproget (finsk) er ekstremt anderledes fra
   skandinavisk — kræver helt separat oversættelse
+
+---
+
+# LÆRING FRA NORSK IMPLEMENTERING (maj 2026)
+
+> Denne sektion er skrevet EFTER vi rent faktisk lancerede Norge.
+> Det vi nedenfor beskriver virkede — og hvad der overraskede. Læs
+> dette inden næste land (Sverige) for at undgå de samme faldgruber.
+
+## Hvad der gik HURTIGT (uventet velfungerende)
+
+### Multi-tenant B1-skemaet bar 80% af arbejdet
+
+Vi opdagede at `tenants`-tabellen ALLEREDE havde `sprog`, `land`,
+`klageorgan_navn`, `lov_navn`, `klageorgan_url`-kolonner fra Phase B1.
+Da vi tilføjede FjordTravel-tenanten, var det bare en INSERT med de
+norske værdier — ingen skema-ændring nødvendig.
+
+**Vigtigt at huske til næste land:** check at `migration_b1_tenants.py`
+har sat alle de relevante kolonner, og at de er populeret rigtigt for
+den nye tenant. INSERT'en kan laves direkte via admin-siden eller via
+SQL.
+
+### Voyage `voyage-multilingual-2`-modellen håndterede norsk perfekt
+
+Vi bekymrede os om hvorvidt embeddings ville fungere på tværs af sprog
+(særligt om norsk og dansk ville "overlappe forkert"). Det gjorde de
+IKKE: `find_relevante_sager` med norsk søgespørgsmål returnerede 5/5
+norske sager, ingen danske blandet ind (efter land-filteret blev
+tilføjet — se nedenfor). Embedding-modellen forstår både sprog uden
+at confuse dem.
+
+**Konklusion:** Du behøver IKKE forskellige embeddings-modeller pr.
+sprog. `voyage-multilingual-2` er nok.
+
+### i18n med dictionary-fallback var robust
+
+`pax-next/src/lib/i18n/t.ts` har en pattern hvor manglende nøgler i
+norsk dict falder tilbage til dansk. Det betød at vi kunne deploye
+norske oversættelser delvist UDEN at UI'et crashede. Vi kunne i ro
+fylde dictionary-filerne op uden at risikere produktionsstop.
+
+**Vigtigt:** Sæt fallback-strategien op FØRST. Skriv ÉN test der
+verificerer den (`expect t("ikke-eksisterende.nøgle") == dansk-værdi`).
+
+## Hvad der OVERRASKEDE (gotchas)
+
+### Fallback-RAG manglede land-filter — KRITISK BUG fundet sent
+
+`find_relevante_sager` og `find_relevante_chunks` (hoved-RAG) havde
+land-filter fra dag 1. Men `hent_alle_sager` og `hent_sager_af_type`
+(fallback-funktioner) havde det IKKE.
+
+Konsekvens: når chunks-RAG returnerede tomt (rare, men sker for nye
+afgørelses-typer), faldt systemet til `hent_alle_sager` der returnerede
+ALLE public docs — inkl. norske afgørelser blandet ind i danske
+analyser og omvendt.
+
+Test-script: `test_norge_rag_isolation.py` (i projekt-rod) — SQL-oracle-
+baseret test der direkte sammenligner "hvad funktionen returnerer" vs
+"hvad SQL siger den burde returnere".
+
+**Til næste land:** kør `test_norge_rag_isolation.py` med det nye lands
+tenant-ID + landekode FØRST efter migrationen. Hvis testen fejler,
+betyder det at land-filteret er regresseret et sted.
+
+### AI-prompts havde 35+ hardcoded "Pakkerejse-Ankenævnet"-refs
+
+Den oprindelige roadmap antog at vi skulle "eksternalisere prompts pr.
+sprog" som Fase 0. Det viste sig at være ~30% af det arbejde der
+faktisk skulle gøres. De resterende 70% var **mekanisk find-and-replace**
+af hardcoded danske institutionsnavne. Mange af dem var i
+multiline-strenge eller f-strings hvor det var let at overse en
+forekomst.
+
+**Mønster der virkede:**
+
+```python
+# I top af funktion der bygger en prompt:
+_klageorgan = _hent_klageorgan_navn()
+
+# I selve prompten (f-string):
+f"...skrive til {_klageorgan}..."
+```
+
+Selskab_profiler returnerer "Pakkerejse-Ankenævnet" for TUI og
+"Pakkereisenemnda" for FjordTravel. For DK-tenants er prompten
+BYTE-IDENTISK med før fixet — det gjorde det sikkert at rulle ud.
+
+**Til næste land:** GREP først efter ALLE forekomster af den danske
+institutions-navn (`grep -n "Pakkerejse-Ankenævn" ai_engine.py`), og
+kategoriser dem som:
+  - I AI-prompt (f-strings, system-prompts) → SKAL gøres dynamisk
+  - I kode-kommentar (// eller #) → kan ignoreres
+  - I regex-pattern eller parsing-konstant → SKAL IKKE oversættes
+    (matcher mod dansk scrapet tekst)
+  - I docstring → kosmetisk, kan ignoreres
+
+**Test-mønster:** monkeypatch Anthropic-klienten til en `PromptCapture`-
+klasse, kør de mest brugte funktioner under begge tenant-contexts,
+verificer at TUI-prompts indeholder dansk klageorgan og NO-prompts
+indeholder norsk klageorgan. Se `test_verifikation_norge_vs_dk.py`.
+
+### `SYSTEM_PROMPT`-konstanten var sværest
+
+Den 98-linjers `SYSTEM_PROMPT`-modul-konstant (omkring linje 313 i
+ai_engine.py før fix) er ikke bare hardcoded institutionsnavn — den
+er HELE den danske juridiske kontekst:
+
+  - "ALT analyse-output skal være på DANSK"
+  - "Brug PRÆCISE DANSKE JURIDISKE TERMER"
+  - "den danske pakkerejselov (lov nr. 1666 af 2017)"
+  - "Pakkerejsesager i Danmark"
+
+Find-and-replace virker IKKE her. Man skal omdanne konstanten til en
+funktion der bygger sprog-specifikke prompts:
+
+```python
+def _system_prompt():
+    sprog = _hent_sprog()
+    if sprog == "no":
+        return _SYSTEM_PROMPT_NO
+    return _SYSTEM_PROMPT_DA  # default: byte-identisk med før
+
+# I gamle kald-steder, ændr fra:
+#   system=SYSTEM_PROMPT
+# Til:
+#   system=_system_prompt()
+```
+
+Til næste land kan man udvide med `elif sprog == "sv": return _SYSTEM_PROMPT_SV`.
+
+**Test:** byte-sammenlign DK-versionen før og efter omdannelsen
+(`hashlib.sha256(_system_prompt())` skal være IDENTISK for TUI).
+
+### "Pakkereisenemnda" filtrerer på "land" — ikke "sprog"
+
+Vi var fristet til at filtrere RAG på `tenant.sprog`. Men EU-direktiv
+2015/2302 er implementeret OG fortolket forskelligt per land — det er
+LAND der er det juridisk relevante filter, ikke sprog. Sverige og
+Norge taler scandinavisk, men deres afgørelser har forskellig
+juridisk vægt.
+
+**Konkret bevis:** Vi havde 86 lovgivnings-paragrafer i DB efter
+norsk-ingest (55 norske + 31 danske). Hvis filteret havde været
+sproget, ville en norsk tenant fået alle 86 fordi norsk-talende
+"forstår" dansk. Vi vil ALDRIG have at AI'en citerer dansk paragraf-
+nummerering i et svar til Pakkereisenemnda.
+
+## Pitfalls for fremtidige lande
+
+### Pagination i afgørelses-scraper
+
+`scripts/scrape_pakkereise_no.py` har et eksplicit TODO: kun side 1 af
+reiselivsforum.no's afgørelses-database er scraped. Vi har 311
+afgørelser — det er ~10% af deres database. Pagination skal
+implementeres for at få fuld dækning.
+
+**Til næste land:** før du roller scraperen, bekræft at den henter
+ALLE sider, ikke kun side 1.
+
+### Land-specifikke parsing-patterns mangler
+
+`pax-next/src/components/analyse-resultat.tsx` har en hardcoded liste
+af danske sektion-overskrifter (`"Klagens indhold"`, `"Nævnets
+bemærkninger og afgørelse"` osv.) der bruges til at parse scrapede
+afgørelses-tekster og rendere dem med smukke sektion-overskrifter.
+
+Norske afgørelser bruger andre titler:
+  - "Klagens innhold" (i stedet for "Klagens indhold")
+  - "Nemndas avgjørelse" (i stedet for "Nævnets afgørelse")
+
+Konsekvensen: norske afgørelser renderer som FLAT TEKST i UI'et i
+stedet for med struktureret layout. Fungerer, men er grimt.
+
+**Fix til næste land:** lav listen sproget/land-specifik:
+
+```typescript
+const AFG_OVERSKRIFTER_BY_LAND = {
+  DK: ["Klagens indhold", "Nævnets bemærkninger og afgørelse", ...],
+  NO: ["Klagens innhold", "Nemndas avgjørelse", ...],
+  SE: [...],
+};
+```
+
+### Test-data: lav fiktiv testsag pr. land
+
+For Norge byggede vi `scripts/generer_norsk_test_sag.py` der genererer
+en komplet "sag-06-fjordtravel-norge" med klage + bilag + e-mails.
+Det viste sig at være essentielt for at teste flow'et end-to-end.
+
+**Til næste land:** kopiér scriptet (`generer_<land>_test_sag.py`),
+opdater virksomhedsnavn, hotel-detaljer, lov-referencer.
+
+### `data_imports/` + scrape-state-filer skal i `.gitignore`
+
+Scraperen producerer 322 PDFs + state-fil. Disse hører IKKE i git
+(data ligger i DB, ikke i filer). Vi tilføjede mønsteret i .gitignore
+efter første commit hvor PDF'er ved en fejl ville være kommet med.
+
+**Til næste land:** verificer at `data_imports/` er gitignored FØR du
+kører scraperen.
+
+## Den korte tjekliste til næste land
+
+Antaget at Fase 0 (i den oprindelige roadmap) er gjort, er rækkefølgen
+for et nyt land:
+
+1. Identificér officielle kilder (lov + ankenævn). For Norge:
+   `lovdata.no` + `reiselivsforum.no`
+2. Skriv `<land>_lovgivning_scraper.py` (følg `norsk_pakkereiselov_scraper.py`
+   som template)
+3. Skriv `scrape_<land>_afgoerelser.py` + `download_<land>_pdfs.py` +
+   `ingest_<land>_afgoerelser.py` (følg norsk-trilogien)
+4. Kør migrationen `migration_land_kolonne.py` (idempotent — kan køres
+   uden risiko hvis den allerede er kørt)
+5. Opret tenant i DB med `sprog`, `land`, `klageorgan_navn`,
+   `klageorgan_url`, `lov_navn` udfyldt
+6. Kør de tre scrapers — verificer rækker i `mine_dokumenter` med
+   `WHERE land='<XX>'`
+7. Tilføj `pax-next/src/lib/i18n/dictionaries/<sprog>/*.json` (kopiér
+   fra `da/` og oversæt). Behold strukturen 1:1 så fallback virker
+8. Tilføj sproget til `pax-next/src/lib/i18n/config.ts` (`SUPPORTED_LOCALES`)
+9. Verificer at `_hent_klageorgan_navn()` returnerer det rigtige navn
+   for den nye tenant
+10. Kopiér `test_norge_rag_isolation.py` → `test_<land>_rag_isolation.py`,
+    opdater tenant-ID og land-kode, kør den. Skal være GREEN
+11. Kopiér `test_verifikation_norge_vs_dk.py` → tilpas til det nye land.
+    Verificer at AI-prompts indeholder det rigtige klageorgan
+12. Tilføj `<sprog>`-variant af `_SYSTEM_PROMPT` (kopiér DK-versionen
+    og oversæt). Test at byte-hash for DK-versionen er uændret
+13. Lav `generer_<land>_test_sag.py` så du har en testbar sag
+14. Live-test: log ind som test-bruger, upload test-sagen, gennemløb
+    analyse + svarbrev. Verificer at sprog er korrekt og at præcedens
+    er fra det rigtige land
+
+**Skøn for nyt land (efter at have lavet Norge):** 8-12 timer pr. land,
+forudsat at du genbruger scraperne 1:1 og bare oversætter
+dictionaries og prompts. Mest tidskrævende: at finde lokalitets-
+specifikke parsing-patterns (afgørelses-format) og at få oversat
+SYSTEM_PROMPT'et juridisk korrekt af modersmåls-konsulent.
+
