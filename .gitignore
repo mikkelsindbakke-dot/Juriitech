@@ -71,3 +71,9 @@ dist/
 
 # Git worktrees (skill superpowers:using-git-worktrees opretter dem her)
 .worktrees/
+
+# Norsk PAX — scrapede data + scraper-state (lokal, ikke i git)
+# 322 PDFs fra Pakkereisenemnda + saksnummer-lister. Indholdet ligger
+# i prod-DB; lokale filer er kun til ingest-pipelinen.
+data_imports/
+scrape_state_no.json
