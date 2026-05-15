@@ -350,6 +350,76 @@ def _system_prompt() -> str:
     return SYSTEM_PROMPT_DA
 
 
+# ─── SPROG-HJÆLPERE TIL USER-PROMPTS ───────────────────────────────
+# Disse helpers gør user-prompts sprog-bevidste. For DK-tenants returnerer
+# de ord der er BYTE-IDENTISKE med pre-lokaliserings-state — det sikrer at
+# dansk PAX-adfærd ikke ændres når vi udskifter hardcoded "dansk" med kald
+# til disse helpers. For NO-tenants returnerer de norske ækvivalenter.
+
+def _sprog() -> str:
+    """
+    Returnerer sprog-navnet i grundform, fx 'dansk' eller 'norsk bokmål'.
+    Til brug i prompts: f"Skriv på {_sprog()}".
+
+    For DK-tenants: 'dansk' — byte-identisk med pre-lokaliserings-state.
+    For NO-tenants: 'norsk bokmål'.
+    """
+    return "norsk bokmål" if _hent_sprog() == "no" else "dansk"
+
+
+def _sprog_adj() -> str:
+    """
+    Returnerer adjektiv-form (plural/bestemt), fx 'danske' eller 'norske'.
+    Til brug i prompts: f"Brug {_sprog_adj()} juridiske termer".
+
+    For DK-tenants: 'danske' — byte-identisk.
+    For NO-tenants: 'norske'.
+    """
+    return "norske" if _hent_sprog() == "no" else "danske"
+
+
+def _sprog_adj_sg() -> str:
+    """
+    Returnerer adjektiv-form (singular ubestemt), fx 'dansk' eller 'norsk'.
+    Til brug i prompts: f"en {_sprog_adj_sg()} jurist".
+
+    For DK-tenants: 'dansk' — byte-identisk.
+    For NO-tenants: 'norsk'.
+    """
+    return "norsk" if _hent_sprog() == "no" else "dansk"
+
+
+def _sprog_caps() -> str:
+    """
+    Returnerer caps-form, fx 'DANSK' eller 'NORSK BOKMÅL'.
+    Til brug i prompts der bruger CAPS-fremhævning.
+
+    For DK-tenants: 'DANSK' — byte-identisk.
+    For NO-tenants: 'NORSK BOKMÅL'.
+    """
+    return "NORSK BOKMÅL" if _hent_sprog() == "no" else "DANSK"
+
+
+def _sprog_direktiv() -> str:
+    """
+    Returnerer en kort, kraftig sprog-instruks der prepended til
+    user-prompts for at sikre AI'en svarer på det rette sprog.
+
+    For DK-tenants: tom streng — byte-identisk med pre-lokaliserings-state.
+    For NO-tenants: en eksplicit norsk-instruks der sikrer modellen ikke
+    falder tilbage til dansk fordi resten af prompten kan være dansk-
+    formuleret.
+    """
+    if _hent_sprog() == "no":
+        return (
+            "SPRÅK: All output på NORSK BOKMÅL — ingen unntak. "
+            "Sitater fra dansk/engelsk oversettes til norsk. "
+            "Bruk norske juridiske termer (mangel, rettidig reklamasjon, "
+            "forholdsmessig prisavslag, bistandsplikt).\n\n"
+        )
+    return ""
+
+
 def _format_dato(dato):
     if dato is None:
         return "ukendt dato"
@@ -2234,7 +2304,7 @@ STRENGE KRAV:
   afsnit før underskrift. Det skal indeholde både forudgående
   håndtering OG selskabets samlede stilling.
 - Opfind ALDRIG fakta der ikke står i klagen, sagsakterne eller vidensbanken.
-- Skriv på dansk i et formelt, professionelt juridisk sprog.
+- Skriv på {_sprog()} i et formelt, professionelt juridisk sprog.
 - Hvis en oplysning mangler der er nødvendig, skriv "[SAGSBEHANDLER UDFYLDER: ...]" som placeholder.
 - Brug "{REJSESELSKAB_NAVN}" og "klager" (lille k) konsekvent. Aldrig "rejseselskabet", "K", "Klager 1" eller "Klager 2".
 - Underskriftslinjen skal altid være "{REJSESELSKAB_SAGSBEHANDLER}".
@@ -2303,6 +2373,7 @@ def generer_svarbrev(
         )
 
         kontekst = (
+            f"{_sprog_direktiv()}"
             f"VIDENSBANK (de mest relevante afgørelser og rejsevilkårene):\n"
             f"{vidensbank}\n\n"
             f"NY KLAGE DER SKAL BESVARES — filnavn: {klage_filnavn}\n"
@@ -2797,6 +2868,7 @@ def udled_sandsynligheder_strukturelt(analyse_tekst):
 
     _klageorgan = _hent_klageorgan_navn()
     prompt = (
+        f"{_sprog_direktiv()}"
         "Baseret på nedenstående juridiske analyse af en klagesag fra "
         f"{_klageorgan}, estimér sandsynligheden for tre mulige "
         "udfald. Hvis analysen ikke giver tydeligt grundlag, så baser "
@@ -2859,6 +2931,7 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
     import re as _re
 
     indled = (
+        f"{_sprog_direktiv()}"
         "Du er en præcis juridisk research-assistent. Din ENESTE opgave "
         "lige nu er at identificere ALLE klagepunkter klager rejser mod "
         "rejseselskabet i nedenstående sag.\n\n"
@@ -2886,8 +2959,8 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
         "(max 20 ord).\n\n"
         "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
         "Mange dokumenter er på engelsk (hotel-mails, korrespondance osv.). "
-        "Du SKAL formulere ALLE klagepunkter på dansk — også når de "
-        "stammer fra engelsk-sprogede bilag. Brug PRÆCISE danske termer, "
+        f"Du SKAL formulere ALLE klagepunkter på {_sprog()} — også når de "
+        f"stammer fra engelsk-sprogede bilag. Brug PRÆCISE {_sprog_adj()} termer, "
         "ikke direkte ord-for-ord-oversættelser:\n"
         "  • 'mangel' (ikke 'deficiency')\n"
         "  • 'rettidig reklamation' (ikke 'timely complaint')\n"
@@ -3082,6 +3155,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
     _klageorgan = _hent_klageorgan_navn()
 
     indled = (
+        f"{_sprog_direktiv()}"
         "Du er en præcis juridisk research-assistent specialiseret i "
         f"{_klageorgan} sager. Din ENESTE opgave lige nu er at "
         "kortlægge TIDSFORHOLDET mellem hvornår klager konstaterede "
@@ -3139,12 +3213,12 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "på verificerede datoer.\n\n"
         "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
         "Hotel-mails, korrespondance og bookings er ofte på engelsk. "
-        "Du SKAL skrive ALT output på dansk:\n"
-        "  • Datoer på dansk format ('12. juni 2025', ikke '12 June 2025')\n"
-        "  • Vurderinger og observationer i danske juridiske termer\n"
+        f"Du SKAL skrive ALT output på {_sprog()}:\n"
+        f"  • Datoer på {_sprog()} format ('12. juni 2025', ikke '12 June 2025')\n"
+        f"  • Vurderinger og observationer i {_sprog_adj()} juridiske termer\n"
         "  • Brug 'rettidig reklamation' (ikke 'timely complaint'),\n"
         f"    'mangel' (ikke 'deficiency'), 'henvendelse til {_navn}' osv.\n"
-        "Output skal kunne læses direkte af en dansk jurist uden\n"
+        f"Output skal kunne læses direkte af en {_sprog_adj_sg()} jurist uden\n"
         "konsultation af originalsproget.\n\n"
         "FILER FRA SAGEN FØLGER NEDENFOR:\n"
     )
@@ -3448,6 +3522,7 @@ def udled_sagsmetadata(sag, sagsakter_tekst=""):
     import re as _re
 
     indled = (
+        f"{_sprog_direktiv()}"
         "Du er en præcis dokument-ekstraktor. Din ENESTE opgave er at "
         "finde to faktuelle oplysninger i det vedhæftede sagsmateriale:\n"
         "  1. Pakkerejse-Ankenævnets sagsnummer\n"
@@ -3620,12 +3695,13 @@ def udled_bilag_overskrifter(filer):
 
     _navn = _hent_navn()
     indled = (
+        f"{_sprog_direktiv()}"
         "Du er en præcis dokument-klassifikator. Din ENESTE opgave er at "
-        "foreslå en KORT dansk overskrift til hvert af nedenstående bilag, "
+        f"foreslå en KORT {_sprog_adj_sg()} overskrift til hvert af nedenstående bilag, "
         "som det vil blive vist i bilag-listen øverst på et svarbrev til "
         "Pakkerejse-Ankenævnet.\n\n"
         "REGLER:\n"
-        "- Skriv KUN på dansk.\n"
+        f"- Skriv KUN på {_sprog()}.\n"
         "- Hver overskrift må MAX være 80 tegn.\n"
         "- Vær KONKRET og BESKRIVENDE — fortæl hvad bilaget INDEHOLDER, "
         "ikke bare 'Mail 1' eller 'Dokument'.\n"
@@ -3733,8 +3809,9 @@ def udled_sagsresume_strukturelt(
         )
 
     prompt = (
+        f"{_sprog_direktiv()}"
         "Baseret på nedenstående juridiske førstevurdering af en klagesag "
-        "fra Pakkerejse-Ankenævnet, udled et KORT struktureret resume af "
+        f"fra {_hent_klageorgan_navn()}, udled et KORT struktureret resume af "
         "sagen. Resuméet skal gøre det muligt for en jurist at få "
         "lynhurtigt overblik over sagen.\n\n"
         f"FØRSTEVURDERING:\n{analyse_tekst[:8000]}"
@@ -3753,7 +3830,7 @@ def udled_sagsresume_strukturelt(
         "som nøgle i UI-renderingen. Indholdet skal naturligvis omtale det "
         "rigtige selskab.\n\n"
         "KRAV:\n"
-        "- emne: 1-2 sætninger på dansk. Konkret, ikke generisk.\n"
+        f"- emne: 1-2 sætninger på {_sprog()}. Konkret, ikke generisk.\n"
         "- klagepunkter: KRITISK — du SKAL inkludere ALLE klagepunkter "
         f"  klager rejser mod {_navn}, uanset hvor mange der er. Det er IKKE "
         "  nok at finde 3-6 'vigtigste'. Hvis klager nævner 8 forskellige "
@@ -3767,7 +3844,7 @@ def udled_sagsresume_strukturelt(
         f"    'Afvisning af klagen — {_navn} får medhold'\n"
         "    'Fuld medhold — kompensation på ca. 18.500 kr.'\n"
         "    'Forligstilbud på 2.000-4.000 kr. er den mest realistiske udgang'\n"
-        "- Alt på dansk.\n"
+        f"- Alt på {_sprog()}.\n"
         "- Hvis en oplysning ikke fremgår, skriv 'fremgår ikke' frem for at opfinde."
     )
 
@@ -3840,6 +3917,7 @@ def _udled_forventet_udfald_separat(analyse_tekst):
     try:
         _navn = _hent_navn()
         prompt = (
+            f"{_sprog_direktiv()}"
             "Læs nedenstående juridiske analyse af en pakkerejse-klagesag "
             "og giv mig ÉN linje (max 15 ord) der opsummerer det mest "
             "sandsynlige udfald + beløbsmæssigt estimat.\n\n"
@@ -4081,6 +4159,7 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         )
 
     prompt = (
+        f"{_sprog_direktiv()}"
         "Du får nedenfor en NY KLAGESAG (sagsmateriale fra rejseselskabet) og "
         f"{len(relevante_sager)} TIDLIGERE AFGØRELSER fra {_hent_klageorgan_navn()} "
         "der EVENTUELT kan være relevante for den nye sag.\n\n"
@@ -4792,6 +4871,7 @@ def udled_foerstevurdering_struktureret(
 
         # ---------- BYG PROMPT-INDLEDNING ----------
         indled = (
+            f"{_sprog_direktiv()}"
             f"VIDENSBANK (de mest relevante tidligere afgørelser og "
             f"{REJSESELSKAB_NAVN}'s rejsevilkår):\n{vidensbank}\n\n"
             f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + "
@@ -5085,6 +5165,7 @@ def generer_svarbrev_til_sag(
         )
 
         indled = (
+            f"{_sprog_direktiv()}"
             f"VIDENSBANK (præcedens + rejsevilkår):\n{vidensbank}\n\n"
             f"SAGEN DER SKAL BESVARES ({len(filer)} filer):"
         )
