@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useTransition, useEffect } from "react";
+import { useState, useTransition, useEffect, useMemo } from "react";
+import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Pillar } from "@/components/ui/pillar";
 import { toast } from "sonner";
@@ -11,18 +12,20 @@ import {
 import {
   ApiError,
   foerstevurderingSchema,
-  postOgValider,
+  kørAnalyseJob,
 } from "@/lib/api-client";
+import { useFejlBesked, useIsAdmin, VENLIG_FEJL } from "@/lib/bruger-rolle";
+import { useT } from "@/lib/i18n/client";
 import { SvarbrevSektion } from "@/components/svarbrev-sektion";
 import { AnonymiserSektion } from "@/components/anonymiser-sektion";
 import { TjeklisteSektion } from "@/components/tjekliste-sektion";
-import { GemSagKnap } from "@/components/gem-sag-knap";
 import { SagsakterSektion } from "@/components/sagsakter-sektion";
 import {
   BilagTilSvarbrevSektion,
   bilagValgTilListe,
   type BilagValg,
 } from "@/components/bilag-til-svarbrev-sektion";
+import { udpak_zips_klient } from "@/lib/zip-udpakning";
 
 function formatStr(antalBytes: number): string {
   if (antalBytes < 1024) return `${antalBytes} B`;
@@ -30,51 +33,159 @@ function formatStr(antalBytes: number): string {
   return `${(antalBytes / 1024 / 1024).toFixed(1)} MB`;
 }
 
-// Lille timer der tæller op mens AI-kaldet kører. Renderes kun når
-// analysen kører (parent gater på analysePending), så tilstanden
-// auto-resettes via mount/unmount — derfor ingen reset i useEffect.
-function Timer() {
-  const [sek, sætSek] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => sætSek((s) => s + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-  return (
-    <span className="text-xs text-zinc-500 tabular-nums">
-      {" "}
-      ({sek}s — kan tage op til 90s)
-    </span>
-  );
+// Aktivitets-indikator: faseopdelt liste der viser hvad PAX arbejder
+// på lige nu. Hver fase har en estimeret varighed der matcher den
+// faktiske pipeline (parse → klagepunkter → tidsforhold → RAG →
+// førstevurdering → resumé). Vi har ikke real-time signal fra backend,
+// så timeren er et ærligt ESTIMAT — den sidste fase forbliver "aktiv"
+// hvis backenden tager længere end forventet, og hele komponenten
+// unmoountes når analysen er færdig (parent gater på analysePending).
+//
+// Renderes kun mens analysen kører.
+
+// Varighedsestimater pr. fase. Labels/beskrivelser oversættes via t()
+// inde i komponenten — kun durations holdes konstant.
+const ANALYSE_FASE_DURATIONS_MS: ReadonlyArray<number> = [
+  8000,
+  15000,
+  20000,
+  5000,
+  35000,
+  60000, // bevidst lang så sidste fase persisterer ved længere kørsler
+];
+
+function formaterMmSs(sekunder: number) {
+  const m = Math.floor(sekunder / 60);
+  const s = sekunder % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-// Aktivitets-indikator: en strisslerende farve-bjælke der bevæger sig
-// fra side til side mens AI'en arbejder. Vi har ikke real-time feedback
-// fra backenden, så enhver tids-baseret progress-bar ville lyve. I
-// stedet kommunikerer vi BARE liveness via animation — brugeren ser at
-// noget sker, uden at få et falsk estimat for hvor lang tid der er
-// tilbage.
-//
-// Renderes kun mens analysen kører (parent gater på analysePending).
 function AnalyseProgress() {
+  const t = useT();
+  const [aktivIdx, sætAktivIdx] = useState(0);
+  const [elapsedSek, sætElapsedSek] = useState(0);
+
+  // Byg lokaliseret faseliste — labels/beskrivelser ud fra t() med
+  // durations fra konstant-arrayet.
+  const faser = useMemo(
+    () =>
+      ANALYSE_FASE_DURATIONS_MS.map((durationMs, i) => ({
+        label: t(`analyse_progress.fase${i + 1}_label`),
+        beskrivelse: t(`analyse_progress.fase${i + 1}_beskrivelse`),
+        durationMs,
+      })),
+    [t],
+  );
+
+  // Avancer gennem faserne på cumulative tid. Bruger setTimeout-kæde
+  // i stedet for én lang interval-loop så vi ikke skal regne tid
+  // tilbage hver tick.
+  useEffect(() => {
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
+    let cumulativeMs = 0;
+    for (let i = 0; i < ANALYSE_FASE_DURATIONS_MS.length - 1; i++) {
+      cumulativeMs += ANALYSE_FASE_DURATIONS_MS[i];
+      const tid = setTimeout(() => sætAktivIdx(i + 1), cumulativeMs);
+      timeouts.push(tid);
+    }
+    return () => timeouts.forEach(clearTimeout);
+  }, []);
+
+  // Sekund-counter til den lille mm:ss-badge i hjørnet
+  useEffect(() => {
+    const id = setInterval(() => sætElapsedSek((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
   return (
     <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-5 space-y-4">
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-semibold text-indigo-900">
-            juriitech PAX scanner din sag
+            {t("analyse_progress.titel")}
           </p>
           <p className="text-xs text-indigo-700 mt-0.5 max-w-md">
-            En typisk sag tager 2-3 min. at analysere. Større sager kan
-            tage op til 5 min.
+            {t("analyse_progress.undertekst")}
           </p>
+        </div>
+        <div
+          className="text-xs font-mono tabular-nums text-indigo-700/80 bg-white/60 rounded-full px-2.5 py-0.5 border border-indigo-200/60"
+          aria-label={t("analyse_progress.aria_forloebet_tid")}
+        >
+          {formaterMmSs(elapsedSek)}
         </div>
       </div>
 
-      {/* Aktivitets-bjælke: cyklisk farve-shift mellem indigo/violet/sky
-          så brugeren visuelt kan se at programmet arbejder. Bruger
-          background-position-animationen i Tailwind via et large
-          background-size for kontinuerlig bevægelse. */}
-      <div className="h-2 w-full overflow-hidden rounded-full bg-indigo-100">
+      {/* Faseliste — vertikal med konnektor-linje mellem prikkerne.
+          Brug 'role=list' så skærmlæsere ser det som en sekventiel
+          liste over arbejdstrin. */}
+      <ol className="relative space-y-3" aria-live="polite">
+        {/* Vertikal forbindelseslinje gennem alle prikkene */}
+        <div
+          className="absolute left-[9px] top-2 bottom-2 w-px bg-indigo-200/70"
+          aria-hidden
+        />
+        {faser.map((fase, i) => {
+          const tilstand =
+            i < aktivIdx ? "done" : i === aktivIdx ? "active" : "pending";
+          return (
+            <li
+              key={i}
+              className="relative flex items-start gap-3"
+            >
+              {/* Status-prik */}
+              <div className="relative z-10 mt-0.5 shrink-0">
+                {tilstand === "done" && (
+                  <div className="h-[18px] w-[18px] rounded-full bg-emerald-500 flex items-center justify-center shadow-sm">
+                    <Check
+                      className="h-[11px] w-[11px] text-white"
+                      strokeWidth={3}
+                    />
+                  </div>
+                )}
+                {tilstand === "active" && (
+                  <div className="h-[18px] w-[18px] rounded-full bg-indigo-100 ring-2 ring-indigo-500 flex items-center justify-center">
+                    <Loader2 className="h-[11px] w-[11px] text-indigo-600 animate-spin" />
+                  </div>
+                )}
+                {tilstand === "pending" && (
+                  <div className="h-[18px] w-[18px] rounded-full border-2 border-zinc-300 bg-white" />
+                )}
+              </div>
+
+              {/* Tekst */}
+              <div className="flex-1 min-w-0 pt-0.5">
+                <p
+                  className={`text-sm font-medium leading-tight ${
+                    tilstand === "active"
+                      ? "text-indigo-900"
+                      : tilstand === "done"
+                      ? "text-zinc-700"
+                      : "text-zinc-400"
+                  }`}
+                >
+                  {fase.label}
+                </p>
+                <p
+                  className={`text-xs leading-snug mt-0.5 ${
+                    tilstand === "active"
+                      ? "text-indigo-700"
+                      : tilstand === "done"
+                      ? "text-zinc-500"
+                      : "text-zinc-400"
+                  }`}
+                >
+                  {fase.beskrivelse}
+                </p>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+
+      {/* Subtil aktivitets-bjælke nederst — viser at noget hele tiden
+          sker, selv hvis fase-indikatoren venter på næste fase. */}
+      <div className="h-1 w-full overflow-hidden rounded-full bg-indigo-100">
         <div
           className="h-full w-full bg-gradient-to-r from-indigo-500 via-violet-500 via-sky-500 to-indigo-500 bg-[length:200%_100%]"
           style={{
@@ -97,6 +208,9 @@ function AnalyseProgress() {
 type AnalyseFejl = { besked: string; detalje?: string; status?: number };
 
 export function UploadForm() {
+  const t = useT();
+  const isAdmin = useIsAdmin();
+  const formatFejl = useFejlBesked();
   const [analysePending, startAnalyseTransition] = useTransition();
   const [analyse, sætAnalyse] = useState<FoerstevurderingsRespons | null>(
     null,
@@ -108,8 +222,12 @@ export function UploadForm() {
   // uden at miste filerne.
   const [analyseFejl, sætAnalyseFejl] = useState<AnalyseFejl | null>(null);
 
-  // Sektion 9: Sagsakter (fri tekst med ekstra kontekst).
-  const [sagsakter, sætSagsakter] = useState("");
+  // Hvilken knap der trigger-scannede sagen — bruges til at vise
+  // progress-UI'et lige under den knap brugeren faktisk klikkede på.
+  // "initial" = øverste Scan-knap, "genscan" = knappen nederst i
+  // sagsakter-sektionen (sektion 9). Uden dette ville rescan trigge
+  // progress højt oppe på siden og brugeren ville tro intet sker.
+  const [scanKilde, sætScanKilde] = useState<"initial" | "genscan">("initial");
 
   // Sektion 11: Bilag til svarbrevet (letter assignment + reorder).
   const [bilagStartBogstav, sætBilagStartBogstav] = useState("A");
@@ -122,18 +240,46 @@ export function UploadForm() {
     if (!analysePending) return;
     const handler = (e: BeforeUnloadEvent) => {
       e.preventDefault();
-      e.returnValue = "Analysen kører stadig — er du sikker på du vil forlade siden?";
+      e.returnValue = t("upload.beforeunload_advarsel");
     };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
-  }, [analysePending]);
+  }, [analysePending, t]);
+
+  // Klient-side ZIP-udpakning: hvis brugeren uploader en .zip, pakker
+  // vi den ud i browseren og fanout'er filerne så Sagsakter-sektionen,
+  // Anonymisér-sektionen osv. viser hver enkelt fil — ikke bare zippen
+  // som ÉN entry. Media-filer (mp4/mp3 osv.) skippes med toast så
+  // brugeren ved at de ikke indgår i analysen.
+  async function ekspander_zips_og_meld(filer: File[]): Promise<File[]> {
+    const r = await udpak_zips_klient(filer);
+    for (const f of r.fejl) {
+      toast.error(`${f.filnavn}: ${f.besked}`);
+    }
+    if (r.skipped_media.length > 0) {
+      const liste = r.skipped_media.slice(0, 5).join(", ");
+      const rest =
+        r.skipped_media.length > 5
+          ? ` (+${r.skipped_media.length - 5} flere)`
+          : "";
+      toast.info(
+        `${r.skipped_media.length} medie-${r.skipped_media.length === 1 ? "fil" : "filer"} sprunget over: ${liste}${rest}. PAX analyserer ikke video/lyd.`,
+      );
+    }
+    return r.filer;
+  }
 
   function håndterFilValg(e: React.ChangeEvent<HTMLInputElement>) {
-    const filer = Array.from(e.target.files ?? []);
-    sætValgteFiler(filer);
+    const raw = Array.from(e.target.files ?? []);
+    e.target.value = ""; // tillad samme fil at blive valgt igen senere
+    if (raw.length === 0) return;
     sætAnalyse(null);
     sætAnalyseFejl(null);
     sætBilagValg([]); // ny fil-set → reset bilag-valg
+    void (async () => {
+      const ekspanderet = await ekspander_zips_og_meld(raw);
+      sætValgteFiler(ekspanderet);
+    })();
   }
 
   // Tilføj flere filer (fra sagsakter-sektionen) uden at nulstille
@@ -141,38 +287,54 @@ export function UploadForm() {
   // og brugeren kan re-scanne med "Scan igen".
   function tilfoejFiler(nyeFiler: File[]) {
     if (nyeFiler.length === 0) return;
-    sætValgteFiler((prev) => {
-      const eksisterendeNavne = new Set(prev.map((f) => f.name));
-      const tilfoejet = nyeFiler.filter((f) => !eksisterendeNavne.has(f.name));
-      return [...prev, ...tilfoejet];
-    });
-    sætBilagValg([]); // bilag-listen skal regenereres med nye filer
+    void (async () => {
+      const ekspanderet = await ekspander_zips_og_meld(nyeFiler);
+      if (ekspanderet.length === 0) return;
+      sætValgteFiler((prev) => {
+        const eksisterendeNavne = new Set(prev.map((f) => f.name));
+        const tilfoejet = ekspanderet.filter(
+          (f) => !eksisterendeNavne.has(f.name),
+        );
+        return [...prev, ...tilfoejet];
+      });
+      sætBilagValg([]); // bilag-listen skal regenereres med nye filer
+    })();
   }
 
-  function håndterAnalyse() {
+  function håndterAnalyse(kilde: "initial" | "genscan" = "initial") {
     if (valgteFiler.length === 0) {
-      toast.error("Vælg mindst én fil først.");
+      toast.error(t("upload.fejl_vaelg_fil_foerst"));
       return;
     }
     sætAnalyseFejl(null); // ryd evt. tidligere fejl
+    sætScanKilde(kilde);
     startAnalyseTransition(async () => {
       const formData = new FormData();
       for (const fil of valgteFiler) formData.append("filer", fil);
-      if (sagsakter.trim()) formData.append("sagsakter", sagsakter);
       try {
-        // postOgValider giver os: p-retry på 5xx (3 forsøg, eksponentielt
-        // backoff 1s/2s/4s) + Zod-validering af responsen + struktureret
-        // ApiError ved alle fejl-tilstande.
-        const data = (await postOgValider(
-          "/api/foerstevurdering",
+        // kørAnalyseJob håndterer hele async-flowet:
+        //   1. POST /api/jobs/foerstevurdering → får job_id
+        //   2. Poll /api/jobs/[id] hver 3 sek
+        //   3. Returnerer resultat når status === completed
+        //   4. Kaster ApiError ved fail/timeout
+        // Idempotent — samme input inden for 1 time genbruger job.
+        const data = (await kørAnalyseJob(
+          formData,
           foerstevurderingSchema,
-          { formData, retries: 3 },
+          {
+            onStatusChange: (status) => {
+              // Kan hookes hvis vi vil vise "I kø..." vs "Analyserer..."
+              console.debug("[foerstevurdering] status →", status);
+            },
+          },
         )) as FoerstevurderingsRespons;
         sætAnalyse(data);
         sætAnalyseFejl(null);
         toast.success(
-          `Analyse færdig — ${data.metadata.antal_klagepunkter} klagepunkter, ` +
-            `${data.metadata.antal_relevante_sager} præcedens-matches.`,
+          t("upload.toast_analyse_faerdig", {
+            klagepunkter: data.metadata.antal_klagepunkter,
+            matches: data.metadata.antal_relevante_sager,
+          }),
         );
       } catch (e) {
         const fejl: AnalyseFejl =
@@ -183,12 +345,12 @@ export function UploadForm() {
                 status: e.status,
               }
             : {
-                besked: "Uventet fejl ved analyse",
+                besked: t("upload.fejl_uventet_analyse"),
                 detalje: e instanceof Error ? e.message : String(e),
               };
         console.error("[foerstevurdering]", fejl);
         sætAnalyseFejl(fejl);
-        toast.error(fejl.besked);
+        toast.error(formatFejl(e));
       }
     });
   }
@@ -197,10 +359,9 @@ export function UploadForm() {
   // den korrekte bilag-oversigt nederst.
   const bilagListeTilDocx = bilagValgTilListe(bilagValg, bilagStartBogstav);
 
-  // Tilbyd analyse-trigger igen hvis sagsakter ændres efter første analyse —
-  // så brugeren kan re-køre med ekstra kontekst.
-  const sagsakterAendretEfterAnalyse =
-    analyse !== null && sagsakter.trim().length > 0;
+  // Tilbyd "Scan igen" hvis analyse allerede er kørt — så brugeren
+  // kan re-køre efter at have tilføjet flere filer i sagsakter-sektionen.
+  const harTidligereAnalyse = analyse !== null;
 
   return (
     <div className="space-y-6">
@@ -212,10 +373,10 @@ export function UploadForm() {
         >
           <div className="text-sm text-zinc-600">
             <span className="font-medium text-zinc-900">
-              Klik for at vælge filer
+              {t("upload.filvaelger_klik")}
             </span>
             <span className="block mt-1 text-xs">
-              eller træk dem hertil. PDF, DOCX, PNG, JPG, ZIP.
+              {t("upload.filvaelger_traek")}
             </span>
           </div>
           <input
@@ -231,7 +392,9 @@ export function UploadForm() {
         {valgteFiler.length > 0 && (
           <div className="rounded-md bg-zinc-50 p-3 text-xs">
             <p className="font-medium text-zinc-900 mb-1">
-              {valgteFiler.length} fil(er) valgt:
+              {valgteFiler.length === 1
+                ? t("upload.filer_valgt_en")
+                : t("upload.filer_valgt_flere", { antal: valgteFiler.length })}
             </p>
             <ul className="space-y-0.5 text-zinc-700">
               {valgteFiler.map((f, i) => (
@@ -251,51 +414,54 @@ export function UploadForm() {
       <Button
         type="button"
         size="lg"
-        onClick={håndterAnalyse}
+        onClick={() => håndterAnalyse("initial")}
         disabled={analysePending || valgteFiler.length === 0}
-        className="w-full h-14 text-base"
+        className="w-full h-14 text-base bg-indigo-500 hover:bg-indigo-600 text-white"
       >
-        {analysePending ? (
-          <>
-            Scanner sag<Timer />
-          </>
-        ) : sagsakterAendretEfterAnalyse ? (
-          "Scan igen med ny kontekst"
-        ) : (
-          "Scan filer"
-        )}
+        {analysePending
+          ? t("upload.knap_scanner")
+          : harTidligereAnalyse
+          ? t("upload.knap_scan_igen")
+          : t("upload.knap_scan_filer")}
       </Button>
 
-      {/* Progress-linje med trin der animerer mens analysen kører */}
-      {analysePending && <AnalyseProgress />}
+      {/* Progress-linje med trin der animerer mens analysen kører.
+          Vises KUN her hvis brugeren klikkede på den øverste scan-knap —
+          ellers står den nederst ved genscan-knappen i sektion 9. */}
+      {analysePending && scanKilde === "initial" && <AnalyseProgress />}
 
       {/* Persistent fejl-banner — vises hvis API-kaldet fejlede.
           Forsvinder ikke som toast, og giver brugeren en retry-knap så
           filerne ikke skal genvælges. */}
       {analyseFejl && !analysePending && (
-        <div className="rounded-md border border-red-300 bg-red-50 p-4 space-y-3">
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-4 space-y-3">
           <div className="flex items-start gap-3">
             <span className="text-lg leading-none">⚠</span>
             <div className="flex-1 space-y-1">
-              <p className="text-sm font-semibold text-red-900">
-                Analysen fejlede — dine filer er bevaret
+              <p className="text-sm font-semibold text-amber-900">
+                {t("upload.fejl_banner_titel")}
               </p>
-              <p className="text-sm text-red-800">{analyseFejl.besked}</p>
-              {analyseFejl.detalje && (
-                <details className="text-xs text-red-700">
-                  <summary className="cursor-pointer hover:text-red-900">
-                    Tekniske detaljer
-                  </summary>
-                  <pre className="mt-1 whitespace-pre-wrap font-mono">
-                    {analyseFejl.detalje}
-                  </pre>
-                </details>
-              )}
-              {analyseFejl.status && analyseFejl.status >= 500 && (
-                <p className="text-xs text-red-700 italic">
-                  5xx-fejl indikerer et server-problem (typisk timeout eller
-                  Anthropic-credits løbet tør). Prøv igen om et par sekunder.
-                </p>
+              {isAdmin ? (
+                <>
+                  <p className="text-sm text-amber-800">{analyseFejl.besked}</p>
+                  {analyseFejl.detalje && (
+                    <details className="text-xs text-amber-700">
+                      <summary className="cursor-pointer hover:text-amber-900">
+                        {t("upload.fejl_tekniske_detaljer")}
+                      </summary>
+                      <pre className="mt-1 whitespace-pre-wrap font-mono">
+                        {analyseFejl.detalje}
+                      </pre>
+                    </details>
+                  )}
+                  {analyseFejl.status && analyseFejl.status >= 500 && (
+                    <p className="text-xs text-amber-700 italic">
+                      {t("upload.fejl_5xx_forklaring")}
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className="text-sm text-amber-800">{VENLIG_FEJL}</p>
               )}
             </div>
           </div>
@@ -303,10 +469,10 @@ export function UploadForm() {
             <Button
               type="button"
               size="sm"
-              onClick={håndterAnalyse}
+              onClick={() => håndterAnalyse("initial")}
               disabled={valgteFiler.length === 0}
             >
-              Prøv igen
+              {t("upload.knap_proev_igen")}
             </Button>
             <Button
               type="button"
@@ -314,17 +480,65 @@ export function UploadForm() {
               size="sm"
               onClick={() => sætAnalyseFejl(null)}
             >
-              Luk
+              {t("upload.knap_luk")}
             </Button>
           </div>
         </div>
       )}
 
+      {/* Info-besked: filer som ikke kunne læses (krypterede zip-entries,
+          ikke-understøttede formater m.v.). Analysen fortsætter med de
+          øvrige filer — denne boks er bare så brugeren ved hvad der blev
+          sprunget over. Diskret zinc-farve, ikke rød/alarmagtig. */}
+      {analyse &&
+        analyse.ulaeselige_filer &&
+        analyse.ulaeselige_filer.length > 0 && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-sm text-zinc-700">
+            <p className="font-medium mb-1">
+              {analyse.ulaeselige_filer.length === 1
+                ? t("upload.ulaeselig_en_fil")
+                : t("upload.ulaeselig_flere_filer", {
+                    antal: analyse.ulaeselige_filer.length,
+                  })}
+            </p>
+            <ul className="list-disc pl-5 space-y-0.5 text-xs text-zinc-600">
+              {analyse.ulaeselige_filer.map((f) => (
+                <li key={f.filnavn}>
+                  <span className="font-medium">{f.filnavn}</span>
+                  {f.aarsag ? ` — ${f.aarsag}` : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+      {/* Admin-only: advarsel om paragraf-hallucinations. Vises kun til
+          admin (juriitech) så vi kan bemærke at AI'en har citeret en
+          §-reference der ikke findes i pakkerejseloven. Brugere ser
+          aldrig denne — de skal aldrig blive forvirrede over juridiske
+          metavalideringer. */}
+      {isAdmin &&
+        analyse &&
+        analyse.paragraf_advarsler &&
+        analyse.paragraf_advarsler.length > 0 && (
+          <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-medium mb-1">
+              {t("upload.admin_paragraf_advarsel_titel")}
+            </p>
+            <p className="text-xs text-amber-800">
+              {t("upload.admin_paragraf_advarsel_beskrivelse")}{" "}
+              <span className="font-mono">
+                {analyse.paragraf_advarsler.join(", ")}
+              </span>
+            </p>
+          </div>
+        )}
+
       {/* Analyse-resultat */}
       {analyse && (
         <div className="space-y-3">
           <h2 className="text-lg font-semibold tracking-tight border-t border-zinc-200 pt-4">
-            Førstevurdering
+            {t("upload.foerstevurdering_titel")}
           </h2>
           <AnalyseResultat data={analyse} />
         </div>
@@ -343,27 +557,32 @@ export function UploadForm() {
           <Pillar
             farve="lavender"
             nummer={9}
-            titel="Sagsakter til denne sag"
-            beskrivelse={
-              <>
-                Her kan du uploade yderligere filer om sagen, såsom
-                mailkorrespondancer, tekstbeskeder, bookingdetaljer,
-                screenshots m.m. — altså information som juriitech PAX
-                ikke automatisk har adgang til.
-                <br />
-                <br />
-                Når du tilføjer sagsakter, genberegnes analysen automatisk,
-                så vurderingen tager højde for ny information.
-              </>
-            }
+            titel={t("upload.sektion9_titel")}
+            beskrivelse={t("upload.sektion9_beskrivelse")}
           />
           <SagsakterSektion
-            vaerdi={sagsakter}
-            onAendret={sætSagsakter}
             onFilerTilfoejet={tilfoejFiler}
             filer={valgteFiler}
             disabled={analysePending}
           />
+          {/* Genscan-knap placeret HER så brugeren ikke skal scrolle op
+              til hoved-Scan-knappen efter at have tilføjet sagsakter. */}
+          <Button
+            type="button"
+            size="lg"
+            onClick={() => håndterAnalyse("genscan")}
+            disabled={analysePending || valgteFiler.length === 0}
+            className="w-full h-14 text-base bg-indigo-500 hover:bg-indigo-600 text-white"
+          >
+            {analysePending && scanKilde === "genscan"
+              ? t("upload.knap_scanner")
+              : t("upload.knap_scan_igen_med_nye")}
+          </Button>
+          {/* Progress-UI lige under DEN her knap når det er rescan'en der
+              kører — så brugeren får visuel feedback præcis hvor de
+              klikkede i stedet for at progress-bjælken dukker op højt
+              oppe på siden ved den oprindelige Scan-knap. */}
+          {analysePending && scanKilde === "genscan" && <AnalyseProgress />}
         </div>
       )}
 
@@ -373,19 +592,18 @@ export function UploadForm() {
           <Pillar
             farve="rose"
             nummer={10}
-            titel="Anonymisér bilag til Nævnet"
+            titel={t("upload.sektion10_titel")}
             beskrivelse={
               <>
-                Vælg bilag der skal anonymiseres før de sendes til Nævnet.
-                juriitech PAX følger Pakkerejse-Ankenævnets retningslinjer:
-                <strong className="text-zinc-900"> klagers og medrejsendes navne bevares</strong>,
-                men CPR-numre, e-mails, telefonnumre samt navne på interne
-                medarbejdere/guider og eksterne samarbejdspartnere
-                (hotel-staff, læger, vidner) sortmaskeres.
+                {t("upload.sektion10_beskrivelse_for")}
+                <strong className="text-zinc-900">
+                  {" "}
+                  {t("upload.sektion10_beskrivelse_strong")}
+                </strong>
+                {t("upload.sektion10_beskrivelse_efter")}
                 <br />
                 <br />
-                Klagers navn udledes automatisk fra klageskemaet — ingen
-                manuel indtastning.
+                {t("upload.sektion10_beskrivelse_klager")}
               </>
             }
           />
@@ -399,8 +617,8 @@ export function UploadForm() {
           <Pillar
             farve="amber"
             nummer={11}
-            titel="Bilag til svarbrevet"
-            beskrivelse="Vælg hvilke bilag der skal medsendes svarbrevet til Nævnet. Selve svarbrevet er altid første bilag. Beskrivelserne er auto-foreslået af PAX — ret dem hvis de skal være anderledes."
+            titel={t("upload.sektion11_titel")}
+            beskrivelse={t("upload.sektion11_beskrivelse")}
           />
           <BilagTilSvarbrevSektion
             filer={valgteFiler.map((f) => ({ filnavn: f.name }))}
@@ -418,8 +636,8 @@ export function UploadForm() {
           <Pillar
             farve="indigo"
             nummer={12}
-            titel="Tjekliste mod høringsbrev"
-            beskrivelse="AI'en gennemgår høringsbrevet og markerer hvilke ønskede oplysninger der er dækket af bilagene, og hvad der mangler. Kør den inden svarbrevet — så du ved hvad du skal hente fra rejseselskabets systemer først."
+            titel={t("upload.sektion12_titel")}
+            beskrivelse={t("upload.sektion12_beskrivelse")}
           />
           <TjeklisteSektion filer={valgteFiler} />
         </div>
@@ -431,8 +649,8 @@ export function UploadForm() {
           <Pillar
             farve="emerald"
             nummer={13}
-            titel="Generér svarbrev"
-            beskrivelse="juriitech PAX skriver et færdigformateret svarbrev på baggrund af analysen, klagepunkterne og tidsforholdene. Du kan downloade resultatet som Word-fil og rette manuelt før afsendelse."
+            titel={t("upload.sektion13_titel")}
+            beskrivelse={t("upload.sektion13_beskrivelse")}
           />
           <SvarbrevSektion
             filer={valgteFiler}
@@ -443,27 +661,8 @@ export function UploadForm() {
         </div>
       )}
 
-      {/* Sektion 14: Gem din sagsbehandling */}
-      {analyse && (
-        <div className="border-t border-zinc-200 pt-4">
-          <GemSagKnap
-            state={{
-              analyse,
-              sagsakter,
-              bilag_start_bogstav: bilagStartBogstav,
-              bilag_valg: bilagValg,
-              filer: valgteFiler.map((f) => ({
-                navn: f.name,
-                antal_bytes: f.size,
-              })),
-              gemt_dato: new Date().toISOString(),
-            }}
-            defaultTitel={
-              valgteFiler[0]?.name?.replace(/\.(pdf|docx)$/i, "") ?? ""
-            }
-          />
-        </div>
-      )}
+      {/* Sektion 14: Gem din sagsbehandling — FJERNET.
+          Vi gemmer ikke længere klager pga. GDPR/datasikkerhed. */}
     </div>
   );
 }
