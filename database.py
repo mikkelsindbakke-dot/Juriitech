@@ -1,4 +1,5 @@
 import os
+from contextvars import ContextVar
 import psycopg2
 from pgvector.psycopg2 import register_vector
 from dotenv import load_dotenv
@@ -6,6 +7,39 @@ from dotenv import load_dotenv
 # Læs database-URL fra .env (ikke hardcoded)
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL")
+
+
+# ─── PER-REQUEST TENANT OVERRIDE (FastAPI / Next.js) ─────────────
+# Streamlit bruger st.session_state.user.tenant_id til at sætte
+# aktiv tenant. FastAPI har ingen session_state, så vi bruger en
+# ContextVar der sættes pr. request via en auth-dependency.
+#
+# Når denne ContextVar er sat, vinder den over Streamlit-session og
+# TUI-fallback i hent_aktiv_tenant_id(). Dette er DET sted hvor
+# multi-tenant routing i Next.js-stacken bliver håndhævet — uden
+# overrideet ville alle FastAPI-requests defaulte til TUI.
+_aktiv_tenant_id_override: "ContextVar[int | None]" = ContextVar(
+    "aktiv_tenant_id_override", default=None
+)
+
+
+def saet_aktiv_tenant_id(tenant_id):
+    """
+    Sæt aktiv tenant_id for den nuværende request-context (FastAPI).
+    Returnerer en token som senere skal gives til reset_aktiv_tenant_id()
+    så override'et ryddes igen (typisk i finally-blok eller via dependency).
+
+    Bruges af FastAPI-bridgen — Streamlit bruger st.session_state.
+    """
+    return _aktiv_tenant_id_override.set(int(tenant_id) if tenant_id is not None else None)
+
+
+def reset_aktiv_tenant_id(token):
+    """Ryd aktiv-tenant-override'et igen efter en request."""
+    try:
+        _aktiv_tenant_id_override.reset(token)
+    except (LookupError, ValueError):
+        pass
 
 
 def _mask_email(email):
@@ -204,13 +238,19 @@ def _hent_tenant_id_silent():
     """
     Stille version af hent_aktiv_tenant_id() til brug i _connect().
 
-    Returnerer tenant_id fra Streamlit session, eller None hvis ikke
-    logget ind. Logger ALDRIG warnings — fordi _connect() kaldes mange
-    steder før login (boot, opret_tabeller, scripts).
+    Returnerer tenant_id fra ContextVar (FastAPI) eller Streamlit session,
+    eller None hvis ikke logget ind. Logger ALDRIG warnings — fordi
+    _connect() kaldes mange steder før login (boot, opret_tabeller, scripts).
 
     Bruger ALDRIG DB-fallback — det ville give cyklisk dependency
     (_connect → _hent_tenant_id_silent → hent_tenant_by_slug → _connect).
     """
+    # 1) FastAPI per-request override
+    override = _aktiv_tenant_id_override.get()
+    if override is not None:
+        return int(override)
+
+    # 2) Streamlit-kontekst
     try:
         import streamlit as st
         from streamlit.runtime.scriptrunner import get_script_run_ctx
@@ -557,6 +597,15 @@ def opret_tabeller():
         # 10c. GDPR Fase 1: gdpr_audit_log-tabel
         # Per-sag historik over GDPR-relevante handlinger. Skal kunne
         # fremvises ved kunde-revision.
+        #
+        # GDPR art. 30 (records of processing activities) + art. 32
+        # (sikkerhed for behandling) kræver at vi kan svare på:
+        #   "Hvem har set/redigeret/slettet hvilke persondata hvornår?"
+        #
+        # Derfor logger vi user_id + email + ip_adresse pr. handling.
+        # ID-fremmednøgle er SET NULL ON DELETE — så audit-loggen
+        # overlever selv om brugeren slettes senere (vi beholder email
+        # som plaintext-snapshot så loggen forbliver læsbar).
         cur.execute("""
             CREATE TABLE IF NOT EXISTS gdpr_audit_log (
                 id SERIAL PRIMARY KEY,
@@ -565,25 +614,63 @@ def opret_tabeller():
                     REFERENCES tenants(id) ON DELETE RESTRICT,
                 handling TEXT NOT NULL,
                 tidspunkt TIMESTAMPTZ DEFAULT NOW(),
-                metadata JSONB
+                metadata JSONB,
+                user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                user_email TEXT,
+                ip_adresse INET
             )
         """)
+        # Idempotent migration: ADD COLUMN IF NOT EXISTS for eksisterende
+        # installationer der har tabellen uden de tre nye kolonner.
+        cur.execute(
+            "ALTER TABLE gdpr_audit_log "
+            "ADD COLUMN IF NOT EXISTS user_id INTEGER REFERENCES users(id) "
+            "ON DELETE SET NULL"
+        )
+        cur.execute(
+            "ALTER TABLE gdpr_audit_log "
+            "ADD COLUMN IF NOT EXISTS user_email TEXT"
+        )
+        cur.execute(
+            "ALTER TABLE gdpr_audit_log "
+            "ADD COLUMN IF NOT EXISTS ip_adresse INET"
+        )
+        # Drop ÆLDRE check-constraint (hvis den findes) før vi udvider
+        # handling-listen — så drift'er ikke bliver fanget af gamle navne.
         cur.execute("""
             DO $$
             BEGIN
-                IF NOT EXISTS (
+                IF EXISTS (
                     SELECT 1 FROM pg_constraint
                     WHERE conname = 'gdpr_audit_log_handling_check'
                 ) THEN
                     ALTER TABLE gdpr_audit_log
-                    ADD CONSTRAINT gdpr_audit_log_handling_check
-                    CHECK (handling IN (
-                        'upload', 'analyse', 'anonymisering',
-                        'sletning', 'cross_tenant_share',
-                        'tilbage_kald'
-                    ));
+                    DROP CONSTRAINT gdpr_audit_log_handling_check;
                 END IF;
             END$$
+        """)
+        cur.execute("""
+            ALTER TABLE gdpr_audit_log
+            ADD CONSTRAINT gdpr_audit_log_handling_check
+            CHECK (handling IN (
+                'upload',
+                'analyse',
+                'visning',
+                'eksport',
+                'anonymisering',
+                'sletning',
+                'cross_tenant_share',
+                'tilbage_kald',
+                'login_success',
+                'login_failed',
+                'logout',
+                'password_reset',
+                'admin_user_oprettet',
+                'admin_user_slettet',
+                'admin_user_inviteret',
+                'admin_tenant_oprettet',
+                'admin_tenant_opdateret'
+            ))
         """)
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_gdpr_audit_tenant_sag
@@ -592,6 +679,11 @@ def opret_tabeller():
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_gdpr_audit_tidspunkt
             ON gdpr_audit_log (tidspunkt DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_gdpr_audit_user
+            ON gdpr_audit_log (user_id, tidspunkt DESC)
+            WHERE user_id IS NOT NULL
         """)
 
         # 10d. GDPR Fase 1: shared_patterns — cross-tenant anonymiseret pulje
@@ -826,6 +918,47 @@ def opret_tabeller():
                     f"DEBUG: kunne ikke slå RLS til på {_tabel}: "
                     f"{_rls_err}"
                 )
+
+        # ═════════════════════════════════════════════════════════════
+        # SLA-LOGNING: en række pr. AI-endpoint-request
+        # ═════════════════════════════════════════════════════════════
+        # Bruges til at svare på enterprise-spørgsmål som "hvor mange
+        # tokens forbrugte vi sidste måned?" og "var oppetiden 99,9%?",
+        # samt til intern debugging af latency-outliers. Sentry har 10%
+        # trace-sample — denne tabel har 100% af endpoint-kald.
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS request_log (
+                id BIGSERIAL PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+                endpoint TEXT NOT NULL,
+                model TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                latency_ms INTEGER NOT NULL,
+                success BOOLEAN NOT NULL,
+                http_status INTEGER,
+                error_kategori TEXT,
+                error_detail TEXT,
+                truncation_detekteret BOOLEAN DEFAULT FALSE,
+                paragraf_advarsler INTEGER DEFAULT 0,
+                ulaeselige_filer INTEGER DEFAULT 0,
+                oprettet TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_request_log_oprettet
+            ON request_log (oprettet DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_request_log_tenant_endpoint
+            ON request_log (tenant_id, endpoint, oprettet DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_request_log_fejl
+            ON request_log (success, oprettet DESC)
+            WHERE success = FALSE
+        """)
 
         conn.commit()
         cur.close()
@@ -1446,8 +1579,9 @@ def hent_aktiv_tenant_id():
     Returnerer id'et på den aktuelle aktive tenant.
 
     Lookup-rækkefølge:
-      1. Streamlit session: st.session_state.user.tenant_id (efter login)
-      2. Fallback: TUI's id (hardcoded — bruges i scripts/backfills hvor
+      1. ContextVar override (FastAPI/Next.js sætter pr. request via auth-dep)
+      2. Streamlit session: st.session_state.user.tenant_id (efter login)
+      3. Fallback: TUI's id (hardcoded — bruges i scripts/backfills hvor
          der ikke er en logged-in user, fx migration_b1_tenants.py).
 
     I Streamlit-kontekst BØR fallback'en aldrig ramme — auth-gate i
@@ -1456,6 +1590,11 @@ def hent_aktiv_tenant_id():
     (auth-gate er omgået, eller user-objektet i session er korrupt).
     Vi printer en WARNING så det opdages tidligt.
     """
+    # 1) Per-request override (FastAPI). Sættes af bridgen før AI-kald.
+    override = _aktiv_tenant_id_override.get()
+    if override is not None:
+        return int(override)
+
     # Lazy import for at undgå at Streamlit-import sker når database.py
     # bruges fra ikke-Streamlit kontekst (fx backfill-scripts).
     streamlit_aktiv = False
@@ -1489,9 +1628,45 @@ def hent_aktiv_tenant_id():
     return tui["id"] if tui else None
 
 
+def hent_aktiv_tenant_land():
+    """
+    Returnerer 'land'-koden (fx 'DK', 'NO', 'SE', 'DE') for den aktive
+    tenant. Bruges af RAG-queries til at filtrere offentlige afgørelser
+    (Pakkerejse-Ankenævn i DK, Pakkereisenemnda i NO osv.) så hver
+    tenant kun ser præcedens fra sit eget land.
+
+    Lookup-rækkefølge matcher hent_aktiv_tenant_id():
+      1. Aktiv tenant via ID-opslag
+      2. Tenant-tabellen tilgås for at hente 'land'-feltet
+      3. Hvis noget fejler: 'DK' som safe default (bagudkompatibelt)
+
+    SIKKER FALLBACK: 'DK' er default fordi alle eksisterende data har
+    land='DK' efter migrationen. Hvis tenant-opslag fejler, returnerer
+    vi 'DK' og bruger eksisterende RAG-data — i værste fald får brugeren
+    danske afgørelser, men ALDRIG forkerte (krydskontamination undgås
+    via tenant_id-filter på private docs).
+    """
+    try:
+        tenant_id = hent_aktiv_tenant_id()
+        if tenant_id is None:
+            return "DK"
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("SELECT land FROM tenants WHERE id = %s", (tenant_id,))
+        row = cur.fetchone()
+        cur.close()
+        conn.close()
+        if row and row[0]:
+            return str(row[0])
+        return "DK"
+    except Exception as e:
+        print(f"DEBUG: hent_aktiv_tenant_land() fejlede ({e}) — bruger 'DK'")
+        return "DK"
+
+
 def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
                  kilde_url=None, tenant_id=None, is_public=None,
-                 fil_bytes=None, fil_mime=None):
+                 fil_bytes=None, fil_mime=None, land=None):
     """
     Gemmer en sag i databasen.
     dokumenttype skal være enten 'afgoerelse' (tidligere kendelse), 'klage'
@@ -1509,6 +1684,12 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
         synlig for alle tenants. tenant_id bør være None.
       - tenant_id sat (typisk klage, vilkaar): kun synlig for den tenant.
         Bruger hent_aktiv_tenant_id() som default hvis intet er angivet.
+
+    land bestemmer hvilket land et OFFENTLIGT dokument tilhører ('DK', 'NO',
+    'SE', ...). Bruges af RAG til at filtrere så fx danske tenants kun
+    matcher danske offentlige afgørelser/lovgivning. Hvis None bruges
+    kolonne-default ('DK'). For private docs (tenant_id sat) påvirker land
+    ikke isolation — kun for is_public=TRUE rækker.
     """
     # Defaults: hvis ikke specificeret, så afgør baseret på dokumenttype
     if tenant_id is None and is_public is None:
@@ -1575,6 +1756,18 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
             fil_kryp_params = ()
             er_krypteret_val = False
 
+        # land: hvis kalderen angiver det, tilføjes det eksplicit i INSERT
+        # (override af kolonne-default 'DK'). Hvis None, falder vi tilbage
+        # til DB-default.
+        if land:
+            land_col_sql = ", land"
+            land_val_sql = ", %s"
+            land_params = (land,)
+        else:
+            land_col_sql = ""
+            land_val_sql = ""
+            land_params = ()
+
         if sa_anonymiseres_efter_24t:
             sql = (
                 "INSERT INTO mine_dokumenter "
@@ -1582,11 +1775,11 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
                 " dokumenttype, embedding, kilde_url, "
                 " tenant_id, is_public, anonymiserings_status, "
                 " anonymiseres_efter, fil_bytes, fil_bytes_krypteret, "
-                " fil_mime, er_krypteret) "
+                f" fil_mime, er_krypteret{land_col_sql}) "
                 f"VALUES (%s, %s, {indhold_kryp_expr}, "
                 f" %s, %s, %s, %s, %s, "
                 f" 'aktiv', NOW() + INTERVAL '24 hours', "
-                f" %s, {fil_kryp_expr}, %s, %s)"
+                f" %s, {fil_kryp_expr}, %s, %s{land_val_sql})"
             )
             params = (
                 (filnavn, plaintext_for_db)
@@ -1595,6 +1788,7 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
                    tenant_id, bool(is_public), bytes_param)
                 + fil_kryp_params
                 + (fil_mime, er_krypteret_val)
+                + land_params
             )
         else:
             sql = (
@@ -1602,9 +1796,9 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
                 "(filnavn, indhold, indhold_krypteret, "
                 " dokumenttype, embedding, kilde_url, "
                 " tenant_id, is_public, fil_bytes, "
-                " fil_bytes_krypteret, fil_mime, er_krypteret) "
+                f" fil_bytes_krypteret, fil_mime, er_krypteret{land_col_sql}) "
                 f"VALUES (%s, %s, {indhold_kryp_expr}, "
-                f" %s, %s, %s, %s, %s, %s, {fil_kryp_expr}, %s, %s)"
+                f" %s, %s, %s, %s, %s, %s, {fil_kryp_expr}, %s, %s{land_val_sql})"
             )
             params = (
                 (filnavn, plaintext_for_db)
@@ -1613,6 +1807,7 @@ def gem_sag_i_db(filnavn, tekst, dokumenttype="afgoerelse", embedding=None,
                    tenant_id, bool(is_public), bytes_param)
                 + fil_kryp_params
                 + (fil_mime, er_krypteret_val)
+                + land_params
             )
         cur.execute(sql, params)
         conn.commit()
@@ -1783,16 +1978,430 @@ def hent_sager_uden_embedding():
         return []
 
 
-def hent_alle_sager(tenant_id=None):
+def ensure_request_log_tabel() -> None:
+    """
+    Letvægts-init af KUN request_log-tabellen. Bruges af FastAPI-startup
+    hvor vi ikke vil køre den fulde opret_tabeller() (som tager længere
+    og opretter ~10 tabeller). Idempotent — sikkert at kalde mange gange.
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS request_log (
+                id BIGSERIAL PRIMARY KEY,
+                request_id TEXT NOT NULL,
+                tenant_id INTEGER REFERENCES tenants(id) ON DELETE SET NULL,
+                endpoint TEXT NOT NULL,
+                model TEXT,
+                input_tokens INTEGER,
+                output_tokens INTEGER,
+                latency_ms INTEGER NOT NULL,
+                success BOOLEAN NOT NULL,
+                http_status INTEGER,
+                error_kategori TEXT,
+                error_detail TEXT,
+                truncation_detekteret BOOLEAN DEFAULT FALSE,
+                paragraf_advarsler INTEGER DEFAULT 0,
+                ulaeselige_filer INTEGER DEFAULT 0,
+                oprettet TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_request_log_oprettet
+            ON request_log (oprettet DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_request_log_tenant_endpoint
+            ON request_log (tenant_id, endpoint, oprettet DESC)
+        """)
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_request_log_fejl
+            ON request_log (success, oprettet DESC)
+            WHERE success = FALSE
+        """)
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("DEBUG: request_log-tabellen er klar")
+    except Exception as e:
+        print(f"DEBUG: ensure_request_log_tabel fejlede (ikke kritisk): {e}")
+
+
+def _sanitize_error_detail(detail) -> str:
+    """Fjerner mulige PII-bidder fra error-strings før de skrives til
+    request_log. Exception-beskeder kan utilsigtet indeholde:
+      - Email-adresser fra Supabase-auth-fejl
+      - Filstier fra IO-fejl (afslører folder-strukturer)
+      - Bidder af klagetekst når JSON-parse fejler ('Expected: { got: <user text>')
+      - Sagsnumre, navne, beløb fra prompt-fragments
+
+    Vi stripper alt der ligner PII og afkorter til 200 tegn. Behold dog
+    nok info til at admin kan diagnosticere — fx exception-typen.
+    """
+    if not detail:
+        return None
+    import re as _re
+    s = str(detail)
+    # Email-adresser
+    s = _re.sub(r"\S+@\S+\.\S+", "[email]", s)
+    # Absolutte file paths (Unix + Windows)
+    s = _re.sub(r"(/[\w./\-]+|[A-Z]:\\[\w\\\-.]+)", "[path]", s)
+    # Filnavne med extension (kan indeholde sagsnumre)
+    s = _re.sub(
+        r"\b[\w\-]+\.(pdf|docx|zip|jpg|jpeg|png|mp4|doc|xlsx)\b",
+        "[file]",
+        s,
+        flags=_re.IGNORECASE,
+    )
+    # Sagsnummer-format
+    s = _re.sub(r"\b\d{2}[-./]\d{2,4}[-./]\d{4,8}\b", "[sagsnr]", s)
+    # CPR-numre (DK)
+    s = _re.sub(r"\b\d{6}-?\d{4}\b", "[cpr]", s)
+    # Beløb
+    s = _re.sub(
+        r"\b\d{1,3}(?:[.,]\d{3})*(?:[.,]\d+)?\s*(?:kr|DKK|EUR|USD)\b",
+        "[beloeb]",
+        s,
+        flags=_re.IGNORECASE,
+    )
+    # Begræns længde
+    if len(s) > 200:
+        s = s[:200] + "..."
+    return s
+
+
+def log_request(
+    *,
+    request_id: str,
+    tenant_id: int = None,
+    endpoint: str,
+    model: str = None,
+    input_tokens: int = None,
+    output_tokens: int = None,
+    latency_ms: int,
+    success: bool,
+    http_status: int = None,
+    error_kategori: str = None,
+    error_detail: str = None,
+    truncation_detekteret: bool = False,
+    paragraf_advarsler: int = 0,
+    ulaeselige_filer: int = 0,
+) -> None:
+    """
+    Logger én række pr. AI-endpoint-request til request_log.
+
+    Fail safe: hvis DB er nede eller insert fejler, suppresses fejlen
+    helt (vi vil aldrig at logning blokerer en bruger-request). Sentry
+    fanger evt. underliggende DB-problemer separat.
+
+    error_kategori kanonisk værdi-sæt:
+      - "overload" (Anthropic 529)
+      - "timeout"
+      - "parse" (AI-output kunne ikke parses som forventet)
+      - "truncation" (output afkortet selv efter retry)
+      - "validation" (4xx — bruger-fejl, ikke server)
+      - "other" (alt andet)
+    """
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO request_log
+                (request_id, tenant_id, endpoint, model,
+                 input_tokens, output_tokens, latency_ms,
+                 success, http_status, error_kategori, error_detail,
+                 truncation_detekteret, paragraf_advarsler, ulaeselige_filer)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                request_id,
+                tenant_id,
+                endpoint,
+                model,
+                input_tokens,
+                output_tokens,
+                latency_ms,
+                success,
+                http_status,
+                error_kategori,
+                _sanitize_error_detail(error_detail),
+                truncation_detekteret,
+                paragraf_advarsler,
+                ulaeselige_filer,
+            ),
+        )
+        conn.commit()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        # Log skal ALDRIG blokere request-flowet. Suppress og print.
+        print(f"DEBUG: log_request fejlede (ikke kritisk): {e}")
+
+
+# ────────────────────────────────────────────────────────────────
+# GDPR AUDIT-LOGGING
+# ────────────────────────────────────────────────────────────────
+# Canonical writer til gdpr_audit_log. Alle persondata-relevante
+# brugerhandlinger SKAL gå gennem skriv_gdpr_audit eller en af
+# convenience-wrapperne (log_visning, log_eksport, log_login osv.).
+# Dette er datagrundlaget for GDPR art. 30 (oversigt over
+# behandlingsaktiviteter) og art. 32 (sikkerhed for behandling).
+#
+# Designprincipper:
+#   - Fail-safe: en exception i audit-skrivning må ALDRIG kaste op
+#     i kalderen og blokere brugerens flow. Logges til stdout +
+#     Sentry, men brugerens action går igennem.
+#   - Idempotent: kan kaldes inde i eller uden for en eksisterende
+#     transaktion (conn-parameter).
+#   - Tenant-bundet: alle audit-rows har tenant_id så de filtreres
+#     korrekt i admin-UI'en når en kunde-revisor henter sin egen
+#     log.
+#   - Bevarer email selv om bruger slettes (user_id → NULL via FK
+#     ON DELETE SET NULL, men user_email bevares).
+# ────────────────────────────────────────────────────────────────
+
+# Gyldige handling-værdier — match CHECK-constraint i opret_tabeller.
+GYLDIGE_AUDIT_HANDLINGER = frozenset({
+    "upload",
+    "analyse",
+    "visning",
+    "eksport",
+    "anonymisering",
+    "sletning",
+    "cross_tenant_share",
+    "tilbage_kald",
+    "login_success",
+    "login_failed",
+    "logout",
+    "password_reset",
+    "admin_user_oprettet",
+    "admin_user_slettet",
+    "admin_user_inviteret",
+    "admin_tenant_oprettet",
+    "admin_tenant_opdateret",
+})
+
+
+def skriv_gdpr_audit(
+    *,
+    handling: str,
+    tenant_id: int,
+    sag_id=None,
+    user_id: int = None,
+    user_email: str = None,
+    ip_adresse: str = None,
+    metadata: dict = None,
+    conn=None,
+) -> None:
+    """
+    Skriv én række til gdpr_audit_log. Idempotent, fail-safe.
+
+    Args:
+        handling: én af GYLDIGE_AUDIT_HANDLINGER. Hvis ukendt, logges
+            advarsel og handlingen sættes til 'tilbage_kald' (catch-all)
+            så DB-CHECK-constraint ikke ryger.
+        tenant_id: ALTID påkrævet — audit-rows skal kunne filtreres
+            pr. tenant til kunde-revision.
+        sag_id: typisk mine_dokumenter.id eller analyse_arkiv.id som
+            string. Bruges som "objekt-pegepind". For ikke-objekt-
+            handlinger (login/logout) sættes til en stabil placeholder
+            som user_email eller "n/a".
+        user_id: vores users.id. NULL hvis brugeren slettes senere.
+        user_email: snapshot — beholdes selv om user slettes så vi
+            kan svare "hvem var dette" ved revision.
+        ip_adresse: request.client.host. Best-effort; kan være None.
+        metadata: vilkårlig JSONB — fil-navne, beløb, kategori osv.
+        conn: hvis given, bruges samme connection (caller ejer commit).
+            Hvis None, åbner og committer egen connection.
+    """
+    import json as _json
+    import traceback as _tb
+
+    if handling not in GYLDIGE_AUDIT_HANDLINGER:
+        print(
+            f"WARNING: skriv_gdpr_audit ukendt handling={handling!r} — "
+            "logges som 'tilbage_kald' for at undgå constraint-fejl"
+        )
+        handling = "tilbage_kald"
+
+    sag_id_str = "n/a" if sag_id is None else str(sag_id)
+
+    own_conn = conn is None
+    try:
+        if own_conn:
+            conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO gdpr_audit_log
+                (sag_id, tenant_id, handling, metadata,
+                 user_id, user_email, ip_adresse)
+            VALUES (%s, %s, %s, %s::jsonb, %s, %s, %s::inet)
+            """,
+            (
+                sag_id_str,
+                tenant_id,
+                handling,
+                _json.dumps(metadata or {}, default=str),
+                user_id,
+                (user_email or "").lower() or None,
+                ip_adresse,
+            ),
+        )
+        cur.close()
+        if own_conn:
+            conn.commit()
+    except Exception as e:
+        # Fail-safe: rapport til stdout + Sentry, men kast ALDRIG videre.
+        print(f"DEBUG: skriv_gdpr_audit fejlede (ikke kritisk): {e}")
+        print(_tb.format_exc())
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(e)
+        except Exception:
+            pass
+    finally:
+        if own_conn and conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def hent_gdpr_audit_log(
+    *,
+    tenant_id: int = None,
+    user_id: int = None,
+    sag_id: str = None,
+    handling: str = None,
+    fra_dato=None,
+    til_dato=None,
+    limit: int = 500,
+) -> list:
+    """
+    Hent rækker fra gdpr_audit_log med filtre. Bruges af admin-UI til
+    revisions-fremvisning. ALDRIG cross-tenant — hvis tenant_id er sat,
+    filtreres på den.
+
+    Returnerer liste af dicts (nyeste først). Tom liste ved DB-fejl.
+    """
+    where = []
+    params = []
+    if tenant_id is not None:
+        where.append("tenant_id = %s")
+        params.append(int(tenant_id))
+    if user_id is not None:
+        where.append("user_id = %s")
+        params.append(int(user_id))
+    if sag_id is not None:
+        where.append("sag_id = %s")
+        params.append(str(sag_id))
+    if handling is not None:
+        where.append("handling = %s")
+        params.append(handling)
+    if fra_dato is not None:
+        where.append("tidspunkt >= %s")
+        params.append(fra_dato)
+    if til_dato is not None:
+        where.append("tidspunkt < %s")
+        params.append(til_dato)
+
+    where_sql = (" WHERE " + " AND ".join(where)) if where else ""
+    sql = (
+        "SELECT id, tidspunkt, handling, sag_id, tenant_id, "
+        "       user_id, user_email, ip_adresse::text, metadata "
+        "FROM gdpr_audit_log"
+        f"{where_sql} "
+        "ORDER BY tidspunkt DESC LIMIT %s"
+    )
+    params.append(int(limit))
+
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(sql, tuple(params))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        return [
+            {
+                "id": r[0],
+                "tidspunkt": r[1].isoformat() if r[1] else None,
+                "handling": r[2],
+                "sag_id": r[3],
+                "tenant_id": r[4],
+                "user_id": r[5],
+                "user_email": r[6],
+                "ip_adresse": r[7],
+                "metadata": r[8],
+            }
+            for r in rows
+        ]
+    except Exception as e:
+        print(f"DEBUG: hent_gdpr_audit_log fejlede: {e}")
+        return []
+
+
+def hent_gyldige_pakkerejselov_paragraffer() -> set:
+    """
+    Returnerer sættet af paragraf-numre der findes i pakkerejseloven
+    (lovgivning er public — ingen tenant-isolation). Bruges af ai_engine
+    til at validere at AI ikke hallucinerer §-referencer der ikke
+    eksisterer.
+
+    Filerne er gemt med navn 'pakkerejseloven_§22.txt' osv. fra
+    pakkerejselov_scraper.py. Vi parser nummeret ud af filnavnet og
+    returnerer det som strings ("22", "11", "1" osv.) — så et hit på
+    "§ 22 stk. 3" kan reduceres til "22" og verificeres.
+
+    Returnerer tom set hvis DB er nede eller ingen lovgivning er
+    indlæst — kalderen skal i så fald springe valideringen over (fail
+    open) for ikke at blokere normal drift.
+    """
+    import re as _re
+    try:
+        conn = _connect()
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT filnavn FROM mine_dokumenter "
+            "WHERE dokumenttype = 'lovgivning' "
+            "AND filnavn LIKE 'pakkerejseloven_%'"
+        )
+        raekker = cur.fetchall()
+        cur.close()
+        conn.close()
+        gyldige = set()
+        for (filnavn,) in raekker:
+            m = _re.search(r"§\s*(\d+)", filnavn or "")
+            if m:
+                gyldige.add(m.group(1))
+        return gyldige
+    except Exception as e:
+        print(f"DEBUG: hent_gyldige_pakkerejselov_paragraffer fejlede: {e}")
+        return set()
+
+
+def hent_alle_sager(tenant_id=None, land=None):
     """
     Returnerer alle sager der er synlige for den aktive tenant:
-    public docs (is_public=TRUE) PLUS tenant-private docs.
+    public docs i tenant's land (is_public=TRUE AND land=%s) PLUS
+    tenant-private docs (tenant_id=%s).
 
     tenant_id default = aktiv tenant (TUI i B1, logged-in bruger i B3).
-    Sættes til 0 eller negativ for kun at få public docs.
+    land      default = aktiv tenant's land via hent_aktiv_tenant_land()
+              ('DK', 'NO' osv.). Sættes typisk eksplicit fra scripts der
+              ikke kører under en HTTP-request.
+
+    Land-filtreringen sikrer at danske tenants ikke ser norske offentlige
+    afgørelser blandet ind i fallback-RAG (og omvendt). Private docs
+    krydsfiltreres alene via tenant_id.
     """
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
+    if land is None:
+        land = hent_aktiv_tenant_land()
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -1809,10 +2418,10 @@ def hent_alle_sager(tenant_id=None):
                    ) AS indhold_endelig,
                    oprettet_dato, dokumenttype
             FROM mine_dokumenter
-            WHERE is_public = TRUE OR tenant_id = %s
+            WHERE (is_public = TRUE AND land = %s) OR tenant_id = %s
             ORDER BY oprettet_dato DESC
         """
-        params = _decrypt_key_param() + (tenant_id,)
+        params = _decrypt_key_param() + (land, tenant_id)
         cur.execute(sql, params)
         raekker = cur.fetchall()
         cur.close()
@@ -1832,18 +2441,25 @@ def hent_alle_sager(tenant_id=None):
         return []
 
 
-def hent_sager_af_type(dokumenttype, limit=None, tenant_id=None):
+def hent_sager_af_type(dokumenttype, limit=None, tenant_id=None, land=None):
     """
     Returnerer alle dokumenter af en given dokumenttype, filtreret så
-    man kun ser public docs + den aktive tenant's private docs.
+    man kun ser public docs i tenant's land + den aktive tenant's
+    private docs.
 
     Bruges bl.a. til at hente ALLE anonymiseringsregler som fast kontekst
     til anonymiseringsopgaver (i modsætning til RAG-baseret topp-k-søgning).
+
+    land default = aktiv tenant's land. Land-filteret sikrer at fx norske
+    tenants ikke ser danske pakkerejselov-paragrafer blandet ind når der
+    hentes 'lovgivning' som fuld kontekst.
 
     GDPR Fase 3: COALESCE mellem dekrypteret + plaintext-kolonne.
     """
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
+    if land is None:
+        land = hent_aktiv_tenant_land()
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -1858,15 +2474,15 @@ def hent_sager_af_type(dokumenttype, limit=None, tenant_id=None):
                    kilde_url
             FROM mine_dokumenter
             WHERE dokumenttype = %s
-              AND (is_public = TRUE OR tenant_id = %s)
+              AND ((is_public = TRUE AND land = %s) OR tenant_id = %s)
             ORDER BY filnavn ASC
         """
         key_params = _decrypt_key_param()
         if limit is not None:
             cur.execute(base_sql + " LIMIT %s",
-                        key_params + (dokumenttype, tenant_id, int(limit)))
+                        key_params + (dokumenttype, land, tenant_id, int(limit)))
         else:
-            cur.execute(base_sql, key_params + (dokumenttype, tenant_id))
+            cur.execute(base_sql, key_params + (dokumenttype, land, tenant_id))
         raekker = cur.fetchall()
         cur.close()
         conn.close()
@@ -2053,6 +2669,7 @@ def find_relevante_chunks(
     udeluk_dokument_id=None,
     dokumenttype="afgoerelse",
     tenant_id=None,
+    land=None,
 ):
     """
     Chunk-baseret RAG-søgning. Returnerer de top_k mest relevante
@@ -2072,32 +2689,41 @@ def find_relevante_chunks(
     tenant_id: tenant-isolation. Default = aktiv tenant. Returnerer
                public docs (Ankenævn-afgørelser) PLUS denne tenant's
                private docs.
+    land:      land-isolation for OFFENTLIGE docs. Default = aktiv
+               tenant's land. Danske tenants ser kun danske offentlige
+               afgørelser, norske kun norske osv. Private docs (tenant's
+               egne) påvirkes ikke — tenant_id alene afgør det.
     """
     if sporgsmaal_embedding is None:
         return []
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
+    if land is None:
+        land = hent_aktiv_tenant_land()
 
     try:
         conn = _connect()
         cur = conn.cursor()
 
+        # WHERE-klausul:
+        # - public docs filtreres på land (DK ser DK, NO ser NO)
+        # - private docs identificeres KUN på tenant_id (egne data ses
+        #   altid uanset land — det er typisk samme land som tenant'en
+        #   men teknisk uafhængigt)
         where = [
             "c.embedding IS NOT NULL",
             "m.dokumenttype = %s",
-            "(m.is_public = TRUE OR m.tenant_id = %s)",
+            "((m.is_public = TRUE AND m.land = %s) OR m.tenant_id = %s)",
         ]
         # Params i SAMME rækkefølge som %s-placeholderne i SQL'en:
         #   1. SELECT vector for similarity
         #   2. WHERE dokumenttype
-        #   3. WHERE tenant_id
-        #   4. (optional) WHERE udeluk_dokument_id
-        #   5. ORDER BY vector
-        #   6. LIMIT
-        # OBS: tidligere version havde ordering-bug der betød at chunk-
-        # pipelinen returnerede [] silently og altid faldt tilbage til
-        # hele-dokument-RAG. Det er fixet her.
-        params = [sporgsmaal_embedding, dokumenttype, tenant_id]
+        #   3. WHERE land (for public-grenen)
+        #   4. WHERE tenant_id (for private-grenen)
+        #   5. (optional) WHERE udeluk_dokument_id
+        #   6. ORDER BY vector
+        #   7. LIMIT
+        params = [sporgsmaal_embedding, dokumenttype, land, tenant_id]
         if udeluk_dokument_id:
             where.append("c.dokument_id <> %s")
             params.append(udeluk_dokument_id)
@@ -2148,7 +2774,7 @@ def find_relevante_chunks(
 
 
 def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse",
-                        tenant_id=None):
+                        tenant_id=None, land=None):
     """
     Stikord/keyword-søgning på chunks (ILIKE). Bruges til hybrid søgning
     sammen med find_relevante_chunks: keyword-resultater fanger sager
@@ -2157,6 +2783,8 @@ def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse",
 
     tenant_id: tenant-isolation. Default = aktiv tenant. Returnerer
                public docs PLUS denne tenant's private docs.
+    land:      land-isolation for OFFENTLIGE docs. Default = aktiv
+               tenant's land. Se find_relevante_chunks for detaljer.
 
     Returnerer samme dict-struktur som find_relevante_chunks (uden
     similarity-feltet — vi kan ikke sammenligne BM25-rank direkte med
@@ -2166,6 +2794,8 @@ def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse",
         return []
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
+    if land is None:
+        land = hent_aktiv_tenant_land()
     try:
         conn = _connect()
         cur = conn.cursor()
@@ -2177,7 +2807,7 @@ def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse",
 
         where = [
             "m.dokumenttype = %s",
-            "(m.is_public = TRUE OR m.tenant_id = %s)",
+            "((m.is_public = TRUE AND m.land = %s) OR m.tenant_id = %s)",
             # GDPR Fase 3: Skip krypterede parent-dokumenter — deres
             # chunks indeholder typisk plaintext men sjældent meningsfuldt
             # match-data (chunks-tabellen er kun bygget for afgørelser
@@ -2185,7 +2815,7 @@ def soeg_chunks_keyword(stikord, top_k=30, dokumenttype="afgoerelse",
             # håndtere det her.
             "m.er_krypteret = FALSE",
         ]
-        params = [dokumenttype, tenant_id]
+        params = [dokumenttype, land, tenant_id]
         for ord_ in ord_liste:
             where.append("c.indhold ILIKE %s")
             params.append(f"%{ord_}%")
@@ -2741,6 +3371,7 @@ def find_relevante_sager(
     udeluk_filnavn=None,
     dokumenttype=None,
     tenant_id=None,
+    land=None,
 ):
     """
     Kernen i RAG: find de top_k mest relevante sager via cosine similarity.
@@ -2753,6 +3384,8 @@ def find_relevante_sager(
                   ('afgoerelse', 'klage', 'vilkaar'). Default = alle.
     tenant_id:   tenant-isolation. Default = aktiv tenant. Returnerer
                  public docs PLUS denne tenant's private docs.
+    land:        land-isolation for OFFENTLIGE docs. Default = aktiv
+                 tenant's land. Se find_relevante_chunks for detaljer.
 
     I pgvector betyder '<=>' cosine-distance (0 = identisk, 2 = modsat).
     Vi sorterer ASC så de mest relevante kommer først, og returnerer også
@@ -2762,6 +3395,8 @@ def find_relevante_sager(
         return []
     if tenant_id is None:
         tenant_id = hent_aktiv_tenant_id()
+    if land is None:
+        land = hent_aktiv_tenant_land()
 
     try:
         conn = _connect()
@@ -2778,11 +3413,13 @@ def find_relevante_sager(
         key_params = list(_decrypt_key_param())
 
         # Byg WHERE-klausulen dynamisk
+        # - public docs filtreres på land (DK ser DK, NO ser NO osv.)
+        # - private docs identificeres KUN på tenant_id
         where = [
             "embedding IS NOT NULL",
-            "(is_public = TRUE OR tenant_id = %s)",
+            "((is_public = TRUE AND land = %s) OR tenant_id = %s)",
         ]
-        params = key_params + [sporgsmaal_embedding, tenant_id]
+        params = key_params + [sporgsmaal_embedding, land, tenant_id]
         if udeluk_filnavn:
             where.append("filnavn <> %s")
             params.append(udeluk_filnavn)
