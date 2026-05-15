@@ -1,8 +1,201 @@
 import os
 import re
+import time
 import base64
 from dotenv import load_dotenv
 import anthropic
+
+
+# ─────────── HALLUCINATIONS-VALIDERING: PARAGRAFFER ───────────
+#
+# AI-output kan citere "§ 22 stk. 3 i pakkerejseloven" — men hvis § 22
+# ikke findes i loven, er det en hallucination der kan ende i et formelt
+# svarbrev til Ankenævnet. Vi validerer post-hoc mod den DB-cachede
+# liste over faktiske paragraffer fra pakkerejselov_scraper.py.
+#
+# Lazy-cached på modul-niveau: hentes første gang valideringen kaldes,
+# og holdes i hukommelsen for resten af process-levetiden. Fail open:
+# hvis DB er nede eller ingen lovgivning er indlæst, springes validering
+# bare over (log warning) — ingen blokering af normal drift.
+
+_GYLDIGE_PARAGRAFFER: set = None  # type: ignore
+_PARAGRAF_HENVISNING_RE = None  # lazy-compiled regex
+
+
+def _hent_gyldige_paragraffer_cached() -> set:
+    """Lazy-cache. Henter ÉN gang per process."""
+    global _GYLDIGE_PARAGRAFFER
+    if _GYLDIGE_PARAGRAFFER is None:
+        try:
+            _GYLDIGE_PARAGRAFFER = hent_gyldige_pakkerejselov_paragraffer() or set()
+            if _GYLDIGE_PARAGRAFFER:
+                print(
+                    f"DEBUG: Paragraf-validering — indlæste "
+                    f"{len(_GYLDIGE_PARAGRAFFER)} paragraffer fra pakkerejselov"
+                )
+            else:
+                print(
+                    "WARN: Paragraf-validering — DB returnerede tom liste "
+                    "over pakkerejselov-paragraffer. Validering deaktiveret."
+                )
+        except Exception as e:
+            print(f"WARN: Paragraf-validering — kunne ikke hente liste: {e}")
+            _GYLDIGE_PARAGRAFFER = set()
+    return _GYLDIGE_PARAGRAFFER
+
+
+def valider_paragraf_citationer(tekst: str) -> list:
+    """
+    Scanner et stykke AI-genereret tekst for §-referencer til
+    pakkerejseloven og returnerer en liste over de citationer der IKKE
+    matcher en faktisk paragraf i loven.
+
+    Returnerer fx ["§ 99", "§ 47"] hvis AI'en har hallucineret de to
+    paragraffer. Tom liste hvis alt er gyldigt.
+
+    Strategi: Vi fanger KUN §-referencer der eksplicit nævner
+    pakkerejseloven (inden for ~50 tegn) — ellers risikerer vi at
+    flagge §-citationer fra andre love (forbrugeraftaleloven, aftaleloven
+    osv.) som hallucinationer. Bedre at have falske negativer end falske
+    positiver i et juridisk værktøj.
+    """
+    global _PARAGRAF_HENVISNING_RE
+    if not tekst or not tekst.strip():
+        return []
+
+    gyldige = _hent_gyldige_paragraffer_cached()
+    if not gyldige:
+        return []  # fail open
+
+    import re as _re
+    if _PARAGRAF_HENVISNING_RE is None:
+        # Match "§ N" eller "§§ N og M" eller "§ N stk. M" — kun nummeret
+        # på paragrafen interesserer os.
+        _PARAGRAF_HENVISNING_RE = _re.compile(r"§\s*(\d+)")
+
+    # Find §-numre der står tæt på "pakkerejselov" (inden for 80 tegn
+    # før/efter). Det forhindrer false positives fra fx "§ 36 i
+    # aftaleloven" eller "§ 18 i forbrugeraftaleloven".
+    ugyldige = []
+    tekst_lower = tekst.lower()
+    for m in _PARAGRAF_HENVISNING_RE.finditer(tekst):
+        nr = m.group(1)
+        if nr in gyldige:
+            continue
+        # Tjek om "pakkerejselov" optræder tæt på citationen
+        start = max(0, m.start() - 80)
+        slut = min(len(tekst), m.end() + 80)
+        kontekst = tekst_lower[start:slut]
+        if "pakkerejselov" in kontekst:
+            citation = f"§ {nr}"
+            if citation not in ugyldige:
+                ugyldige.append(citation)
+    return ugyldige
+
+
+# Detekter Anthropic-overload (HTTP 529 — midlertidig overbelastning fra
+# deres side). Sker især i peak-timer. Vi vil retry'e disse separat fra
+# andre fejl, og propagere dem op til frontenden hvis retry-loopet
+# udløber, så Next.js kan retry'e hele endpoint'en.
+def _er_overload_fejl(e: Exception) -> bool:
+    msg = str(e)
+    return (
+        "529" in msg
+        or "Overloaded" in msg
+        or "overloaded_error" in msg.lower()
+    )
+
+
+# ─────────── TOKEN-USAGE ACCUMULATOR ───────────
+#
+# Hver request kalder typisk 3-5 AI-funktioner (klagepunkter, tidsforhold,
+# foerstevurdering osv.). For SLA-logning vil vi akkumulere det samlede
+# token-forbrug for HELE requesten — ikke kun pr. funktion.
+#
+# ContextVar er async-safe og isoleret pr. request i FastAPI's loop.
+# api/main.py kalder reset_token_usage() ved start og hent_token_usage()
+# ved slut. _kald_anthropic_robust kalder _registrer_token_usage(response)
+# for hver gang den får et response retur.
+from contextvars import ContextVar
+_token_usage_ctx: ContextVar[dict] = ContextVar(
+    "token_usage_ctx", default=None  # type: ignore
+)
+
+
+def reset_token_usage() -> None:
+    """Kald ved start af hver endpoint-request."""
+    _token_usage_ctx.set({"input": 0, "output": 0, "kald": 0, "truncation": False})
+
+
+def hent_token_usage() -> dict:
+    """Kald ved slut af endpoint-request. Returnerer akkumuleret usage
+    eller None hvis reset_token_usage ikke blev kaldt."""
+    return _token_usage_ctx.get()
+
+
+def _registrer_token_usage(response, blev_afkortet: bool = False) -> None:
+    """Tilføjer denne respons' token-forbrug til den løbende sum."""
+    state = _token_usage_ctx.get()
+    if state is None:
+        return  # uden for request-kontext (fx ved batch-jobs)
+    try:
+        usage = getattr(response, "usage", None)
+        if usage:
+            state["input"] += int(getattr(usage, "input_tokens", 0) or 0)
+            state["output"] += int(getattr(usage, "output_tokens", 0) or 0)
+        state["kald"] += 1
+        if blev_afkortet:
+            state["truncation"] = True
+    except Exception:
+        pass  # token-tracking må aldrig blokere request
+
+
+# ─────────── CIRCUIT-BREAKER ───────────
+#
+# Når Anthropic er varigt overbelastet (massivt nedbrud), giver det ikke
+# mening at hver eneste request venter 9 retries × ~4s = ~30s før de
+# fejler. Bedre: når vi har set 5 overloads inden for 60 sekunder, åbn
+# kredsløbet i 60 sekunder — nye requests fejler hurtigt med en venlig
+# "AI midlertidigt overbelastet"-besked.
+#
+# Module-level state er per-uvicorn-worker. Med 1 worker (vores setup)
+# er det ren-shared. Med flere workers ville hver have sin egen breaker,
+# hvilket er acceptabelt fail-soft adfærd.
+
+_BREAKER_VINDUE_SEK = 60
+_BREAKER_GRAENSE = 5
+_BREAKER_KOELE_PERIODE_SEK = 60
+_breaker_overload_tidspunkter: list = []
+_breaker_aabent_indtil: float = 0.0
+
+
+def _circuit_breaker_aabent() -> bool:
+    """Returnerer True hvis kredsløbet er åbent (skal fail fast)."""
+    return time.time() < _breaker_aabent_indtil
+
+
+def _circuit_breaker_registrer_overload() -> None:
+    """Registrer en 529-fejl. Åbner kredsløbet hvis tærsklen overskrides."""
+    global _breaker_aabent_indtil, _breaker_overload_tidspunkter
+    nu = time.time()
+    # Behold kun overloads inden for vinduet
+    _breaker_overload_tidspunkter = [
+        t for t in _breaker_overload_tidspunkter if t > nu - _BREAKER_VINDUE_SEK
+    ]
+    _breaker_overload_tidspunkter.append(nu)
+    if len(_breaker_overload_tidspunkter) >= _BREAKER_GRAENSE:
+        _breaker_aabent_indtil = nu + _BREAKER_KOELE_PERIODE_SEK
+        print(
+            f"WARN: Circuit-breaker ÅBNET — {len(_breaker_overload_tidspunkter)} "
+            f"overloads inden for {_BREAKER_VINDUE_SEK}s. "
+            f"Fail-fast i {_BREAKER_KOELE_PERIODE_SEK}s."
+        )
+
+
+class CircuitBreakerOpenError(Exception):
+    """Rejses når breaker er åben og en ny AI-request afvises fast.
+    Mappes til HTTP 503 i api/main.py."""
+    pass
 
 from embeddings import embed_sporgsmaal, rerank
 from database import (
@@ -13,6 +206,7 @@ from database import (
     soeg_chunks_keyword,
     antal_chunks_total,
     hent_dokument_indhold,
+    hent_gyldige_pakkerejselov_paragraffer,
 )
 
 # Læs API-nøgle fra .env (ikke hardcoded i koden)
@@ -468,6 +662,32 @@ def _sprog_anchor_end() -> str:
         "Hvis EN setning ender opp på dansk i ditt svar, er svaret feil.\n"
         "Skriv som en NORSK jurist for en NORSK kunde i et NORSK selskap.\n"
     )
+
+
+def _system_med_cache(prompt_tekst):
+    """
+    Wrap'er en system-prompt-streng som content-block-liste med
+    `cache_control: ephemeral` så Anthropic genbruger KV-cachen mellem
+    kald med samme prefix.
+
+    Effekt:
+      • 90% rabat på cached input-tokens ($0,30/M vs $3/M for Sonnet)
+      • 100-300 ms hurtigere TTFT (server-side, ingen kvalitets-impact)
+
+    Cache-TTL er 5 minutter. Tærskel: ~1024 tokens for Sonnet — er prompten
+    kortere ignorerer Anthropic blot cache_control (ingen fejl, ingen rabat).
+    SDK 0.96+ understøtter dette uden beta-headers.
+
+    Returnerer altid en liste, så al downstream-kode (continuation-kald
+    via _faerdiggoer_hvis_afkortet) får samme format.
+    """
+    return [
+        {
+            "type": "text",
+            "text": prompt_tekst,
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 def _format_dato(dato):
@@ -1136,6 +1356,118 @@ def _hent_relevante_eller_fald_tilbage(soge_tekst, udeluk_filnavn=None):
     return alle[:TOP_K_FALLBACK], "fallback"
 
 
+def _kald_anthropic_robust(
+    create_kwargs: dict,
+    ceiling_tokens: int = 32000,
+    label: str = "ai-kald",
+):
+    """
+    Robust wrapper for client.messages.create() med to lag beskyttelse:
+
+    1. Overload-retry: hvis Anthropic returnerer 529 (overloaded), retry'es
+       op til 3 gange med eksponentielt backoff (2s, 4s). Hvis alle 3
+       fejler propageres exception så endpoint kan svare HTTP 503 og
+       frontend's p-retry tager over.
+
+    2. Truncation-retry: hvis stop_reason == "max_tokens" (output afkortet
+       midt i et JSON-felt, klagepunkt, sætning), kaldet retries med
+       fordoblet max_tokens op til ceiling_tokens. Forhindrer den
+       allerværste type fejl — tavse afkortninger hvor brugeren tror de
+       har det fulde svar.
+
+    Hvis selv ceiling_tokens stadig giver max_tokens-truncation, returneres
+    det afkortede svar med en WARN-log. Kalderen kan så bruge
+    _repair_truncated_json (for JSON) eller _faerdiggoer_hvis_afkortet
+    (for plain text) som sidste lag fallback.
+
+    Returnerer det endelige response. Modificerer ikke create_kwargs.
+
+    Parameters:
+        create_kwargs: argumenterne til client.messages.create()
+        ceiling_tokens: max grænse for retries. Default 32000 — passende
+            for de fleste outputs. Claude Sonnet 4 understøtter op til
+            64k output tokens, så vi har headroom.
+        label: kort identifier brugt i debug-logs (fx "udled_klagepunkter")
+    """
+    nuv_max = create_kwargs.get("max_tokens", 4000)
+
+    # Lag 0: Circuit-breaker. Hvis vi for nylig har set N overloads,
+    # afvis nye requests hurtigt så brugeren ikke venter 30s på en
+    # garanteret fejl.
+    if _circuit_breaker_aabent():
+        print(
+            f"DEBUG: {label} — circuit-breaker åbent, fast-fail "
+            f"(prøv igen om ~{int(_breaker_aabent_indtil - time.time())}s)"
+        )
+        raise CircuitBreakerOpenError(
+            "AI midlertidigt overbelastet — circuit-breaker aktiveret"
+        )
+
+    # Lag 1: 529-retry på det initielle kald
+    response = None
+    for forsoeg in range(3):
+        try:
+            response = client.messages.create(**create_kwargs)
+            break
+        except Exception as e:
+            if _er_overload_fejl(e):
+                _circuit_breaker_registrer_overload()
+                if forsoeg < 2:
+                    wait = 2 ** (forsoeg + 1)
+                    print(
+                        f"DEBUG: {label} — Anthropic overloaded (529), "
+                        f"retry {forsoeg + 1}/3 om {wait}s"
+                    )
+                    time.sleep(wait)
+                    continue
+            raise
+
+    # Lag 2: truncation-retry med fordoblet max_tokens
+    stop = getattr(response, "stop_reason", None)
+    forsoegt_max = nuv_max
+    while stop == "max_tokens" and forsoegt_max < ceiling_tokens:
+        ny_max = min(forsoegt_max * 2, ceiling_tokens)
+        if ny_max <= forsoegt_max:
+            break
+        print(
+            f"DEBUG: {label} afkortet ved max_tokens={forsoegt_max} — "
+            f"retry med max_tokens={ny_max}"
+        )
+        forsoegt_max = ny_max
+        retry_kwargs = dict(create_kwargs)
+        retry_kwargs["max_tokens"] = ny_max
+        # 529-retry også på re-attempts (kan ramme i loopet)
+        for forsoeg in range(3):
+            try:
+                response = client.messages.create(**retry_kwargs)
+                break
+            except Exception as e:
+                if _er_overload_fejl(e):
+                    _circuit_breaker_registrer_overload()
+                    if forsoeg < 2:
+                        wait = 2 ** (forsoeg + 1)
+                        print(
+                            f"DEBUG: {label} truncation-retry — overloaded, "
+                            f"retry {forsoeg + 1}/3 om {wait}s"
+                        )
+                        time.sleep(wait)
+                        continue
+                raise
+        stop = getattr(response, "stop_reason", None)
+
+    blev_afkortet = stop == "max_tokens"
+    if blev_afkortet:
+        print(
+            f"WARN: {label} STADIG afkortet ved ceiling={ceiling_tokens} "
+            "tokens — downstream skal håndtere afkortet output"
+        )
+
+    # Registrér token-forbrug til SLA-tracking (no-op uden for request-context).
+    _registrer_token_usage(response, blev_afkortet=blev_afkortet)
+
+    return response
+
+
 def _faerdiggoer_hvis_afkortet(
     response,
     system_prompt,
@@ -1182,11 +1514,18 @@ def _faerdiggoer_hvis_afkortet(
             fortsaet_msgs = list(messages) + [
                 {"role": "assistant", "content": samlet_tekst},
             ]
+            # Auto-wrap string-system-prompts som cached content-blocks så
+            # continuation-kald også får cache-rabat. Lister passeres uændret.
+            _system_param = (
+                _system_med_cache(system_prompt)
+                if isinstance(system_prompt, str)
+                else system_prompt
+            )
             fortsaettelse = client.messages.create(
                 model=MODEL,
                 max_tokens=max_tokens,
                 temperature=0,
-                system=system_prompt,
+                system=_system_param,
                 messages=fortsaet_msgs,
             )
             ekstra = fortsaettelse.content[0].text or ""
@@ -1231,7 +1570,7 @@ def spoerg_ai(spoergsmaal, sager=None):
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
-            system=_system_prompt(),
+            system=_system_med_cache(_system_prompt()),
             messages=messages,
         )
         return _faerdiggoer_hvis_afkortet(
@@ -1894,16 +2233,24 @@ def generer_tjekliste(sag):
 
         user_content = _byg_sag_content(sag, indled, slutning)
 
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=6000,
-            temperature=0,
-            system=_system_prompt(),
-            messages=[{"role": "user", "content": user_content}],
+        response = _kald_anthropic_robust(
+            create_kwargs={
+                "model": MODEL,
+                "max_tokens": 6000,
+                "temperature": 0,
+                "system": _system_med_cache(_system_prompt()),
+                "messages": [{"role": "user", "content": user_content}],
+            },
+            ceiling_tokens=16000,
+            label="generer_tjekliste",
         )
         return response.content[0].text
 
     except Exception as e:
+        # Overload (529) propageres så api/main.py kan returnere 503 og
+        # frontend retry'er. Andre fejl returneres som tekst (gammel adfærd).
+        if _er_overload_fejl(e):
+            raise
         return f"Fejl i generering af tjekliste: {str(e)}"
 
 
@@ -2474,7 +2821,7 @@ def generer_svarbrev(
             model=MODEL,
             max_tokens=6000,  # svarbreve kan være længere end analyser
             temperature=0.2,  # lidt temperatur til et mere naturligt sprog
-            system=_system_prompt(),
+            system=_system_med_cache(_system_prompt()),
             messages=[{"role": "user", "content": user_content}],
         )
         svarbrev_tekst = response.content[0].text
@@ -2710,8 +3057,8 @@ def _check_og_rens_forbudte_ord(svarbrev_tekst):
     )
 
     try:
-        # Sprog-bevidst inline system. På norske tenants er svarbrevet på
-        # norsk, og korrektoren skal bevare det norske sprog.
+        # Sprog-bevidst inline system. På norske tenants er svarbrevet
+        # på norsk, og korrektoren skal bevare det norske sprog.
         if _hent_sprog() == "no":
             _inline_system_korr = (
                 "Du er en presis korrektor som fjerner spesifikke "
@@ -2991,103 +3338,191 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
     import json as _json
     import re as _re
 
-    indled = (
-        f"{_sprog_direktiv()}"
-        "Du er en præcis juridisk research-assistent. Din ENESTE opgave "
-        "lige nu er at identificere ALLE klagepunkter klager rejser mod "
-        "rejseselskabet i nedenstående sag.\n\n"
-        "KRITISK INSTRUKTION (LÆS GRUNDIGT):\n"
-        "- Læs HVER ENESTE fil i sagen grundigt.\n"
-        "- Læs derefter ALT materialet igennem TO GANGE for at sikre "
-        "at du ikke har misset noget. Det er BEDRE at oplistede et "
-        "klagepunkt for meget end et for lidt.\n"
-        "- Inkludér STORE OG SMÅ klagepunkter — ALLE klagepunkter "
-        "skal med, uanset om de virker centrale eller marginale.\n"
-        "- Husk at klagepunkter inkluderer BÅDE:\n"
-        "  • Konkrete mangler ved rejsen (hotel-standard, mad, "
-        "transport, pool, værelse, beliggenhed, faciliteter, "
-        "støj, rengøring, manglende ydelser osv.)\n"
-        "  • Procesuelle/relations-klager (dårlig kommunikation, "
-        "ventetider, tonen i korrespondance, manglende information, "
-        "sagsbehandlingstid, kompensations-tilbuddets størrelse, "
-        "guide-håndtering, refusion-procedurer osv.)\n"
-        "  • Krav om kompensation/refusion (også selvom det måske "
-        "er afvist eller delvist accepteret)\n"
-        "- Hvis klager nævner 12 forskellige problemer, skal alle "
-        "12 stå på listen. Tag ALDRIG genvej eller gruppér flere "
-        "punkter sammen.\n"
-        "- Hvert klagepunkt formuleres som ÉN kort sætning "
-        "(max 20 ord).\n\n"
-        "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
-        "Mange dokumenter er på engelsk (hotel-mails, korrespondance osv.). "
-        f"Du SKAL formulere ALLE klagepunkter på {_sprog()} — også når de "
-        f"stammer fra engelsk-sprogede bilag. Brug PRÆCISE {_sprog_adj()} termer, "
-        "ikke direkte ord-for-ord-oversættelser:\n"
-        "  • 'mangel' (ikke 'deficiency')\n"
-        "  • 'rettidig reklamation' (ikke 'timely complaint')\n"
-        "  • 'manglende bistand' (ikke 'lack of assistance')\n"
-        "Klagepunkterne skal kunne læses og forstås direkte af en "
-        "dansk jurist uden behov for at konsultere originalsproget.\n\n"
-        "FILER FRA SAGEN FØLGER NEDENFOR:\n"
-    )
-
-    sagsakter_block = ""
-    if sagsakter_tekst and sagsakter_tekst.strip():
-        sagsakter_block = (
-            f"\n\nSUPPLERENDE SAGSAKTER (interne notater, mails osv. "
-            f"der kan indeholde flere klagepunkter):\n"
-            f"{sagsakter_tekst[:6000]}"
+    # ─── Sprog-bevidst prompt-scaffold ───────────────────────────
+    # AI'en spejler stærkt det sprog der dominerer prompten. For norske
+    # tenants SKAL hele scaffoldet være på norsk — ellers spejler AI'en
+    # dansk uanset om system + anchor er norsk.
+    if _hent_sprog() == "no":
+        indled = (
+            f"{_sprog_direktiv()}"
+            "Du er en presis juridisk research-assistent. Din ENESTE oppgave "
+            "akkurat nå er å identifisere ALLE klagepunktene som klager "
+            "reiser mot reiseselskapet i nedenstående sak.\n\n"
+            "KRITISK INSTRUKS (LES GRUNDIG):\n"
+            "- Les HVERT ENESTE dokument i saken grundig.\n"
+            "- Les deretter ALT materialet TO GANGER for å sikre at du "
+            "ikke har oversett noe. Det er BEDRE å liste opp et "
+            "klagepunkt for mye enn ett for lite.\n"
+            "- Inkluder STORE OG SMÅ klagepunkter — ALLE klagepunktene "
+            "skal med, uansett om de virker sentrale eller marginale.\n"
+            "- Husk at klagepunktene inkluderer BÅDE:\n"
+            "  • Konkrete mangler ved reisen (hotellstandard, mat, "
+            "transport, basseng, rom, beliggenhet, fasiliteter, "
+            "støy, rengjøring, manglende ytelser osv.)\n"
+            "  • Prosessuelle/relasjonsklager (dårlig kommunikasjon, "
+            "ventetid, tonen i korrespondansen, manglende informasjon, "
+            "saksbehandlingstid, kompensasjonstilbudets størrelse, "
+            "reiseleder-håndtering, refusjonsprosedyrer osv.)\n"
+            "  • Krav om kompensasjon/refusjon (også selv om det "
+            "kanskje er avvist eller delvis akseptert)\n"
+            "- Hvis klager nevner 12 forskjellige problemer, skal alle "
+            "12 stå på listen. Ta ALDRI snarvei eller grupper flere "
+            "punkter sammen.\n"
+            "- Hvert klagepunkt formuleres som ÉN kort setning "
+            "(maks 20 ord) på NORSK BOKMÅL.\n\n"
+            "OVERSETTELSE FRA ENGELSK (eller andre språk):\n"
+            "Mange dokumenter er på engelsk (hotellpost, korrespondanse osv.). "
+            "Du SKAL formulere ALLE klagepunktene på NORSK BOKMÅL — også når "
+            "de stammer fra engelskspråklige vedlegg. Bruk PRESISE NORSKE "
+            "juridiske termer, ikke direkte ord-for-ord-oversettelser:\n"
+            "  • 'mangel' (ikke 'deficiency')\n"
+            "  • 'rettidig reklamasjon' (ikke 'timely complaint')\n"
+            "  • 'manglende bistand' (ikke 'lack of assistance')\n"
+            "Klagepunktene skal kunne leses og forstås direkte av en "
+            "norsk jurist uten behov for å konsultere originalspråket.\n\n"
+            "VIKTIG — UNNGÅ DANSKE ORD:\n"
+            "  ✓ 'barn'      ✗ IKKE 'børn'\n"
+            "  ✓ 'stengt'    ✗ IKKE 'lukket'\n"
+            "  ✓ 'oppholdet' ✗ IKKE 'opholdet'\n"
+            "  ✓ 'mulighet'  ✗ IKKE 'mulighed'\n"
+            "  ✓ 'reiseleder' ✗ IKKE 'rejseleder'\n\n"
+            "DOKUMENTER FRA SAKEN FØLGER NEDENFOR:\n"
         )
 
-    slutning = (
-        sagsakter_block +
-        "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
-        "ingen markdown, ingen kodeblok:\n"
-        "{\n"
-        '  "klagepunkter": [\n'
-        '    "Klagepunkt 1 i én kort sætning",\n'
-        '    "Klagepunkt 2 i én kort sætning",\n'
-        '    "..."\n'
-        '  ]\n'
-        "}\n\n"
-        "ABSOLUT REGEL: Returnér ALLE klagepunkter — ingen undtagelser. "
-        "Hellere ét for mange end ét for lidt. Det er kritisk at "
-        "INTET klagepunkt overses, da det får alvorlige konsekvenser "
-        "for downstream juridisk rådgivning."
-        + _sprog_anchor_end()
-    )
+        sagsakter_block = ""
+        if sagsakter_tekst and sagsakter_tekst.strip():
+            sagsakter_block = (
+                f"\n\nSUPPLERENDE SAKSAKTER (interne notater, e-poster osv. "
+                f"som kan inneholde flere klagepunkter):\n"
+                f"{sagsakter_tekst[:6000]}"
+            )
+
+        slutning = (
+            sagsakter_block +
+            "\n\nRETURNER KUN dette JSON-objektet — ingen forklaring, "
+            "ingen markdown, ingen kodeblokk:\n"
+            "{\n"
+            '  "klagepunkter": [\n'
+            '    "Klagepunkt 1 i ÉN kort setning på NORSK BOKMÅL",\n'
+            '    "Klagepunkt 2 i ÉN kort setning på NORSK BOKMÅL",\n'
+            '    "..."\n'
+            '  ]\n'
+            "}\n\n"
+            "ABSOLUTT REGEL: Returner ALLE klagepunkter på NORSK BOKMÅL — "
+            "ingen unntak. Heller ett for mye enn ett for lite. Det er "
+            "kritisk at INTET klagepunkt overses, da det får alvorlige "
+            "konsekvenser for downstream juridisk rådgivning."
+            + _sprog_anchor_end()
+        )
+    else:
+        # ─── DK (byte-identisk med pre-lokaliserings-state) ───
+        indled = (
+            f"{_sprog_direktiv()}"
+            "Du er en præcis juridisk research-assistent. Din ENESTE opgave "
+            "lige nu er at identificere ALLE klagepunkter klager rejser mod "
+            "rejseselskabet i nedenstående sag.\n\n"
+            "KRITISK INSTRUKTION (LÆS GRUNDIGT):\n"
+            "- Læs HVER ENESTE fil i sagen grundigt.\n"
+            "- Læs derefter ALT materialet igennem TO GANGE for at sikre "
+            "at du ikke har misset noget. Det er BEDRE at oplistede et "
+            "klagepunkt for meget end et for lidt.\n"
+            "- Inkludér STORE OG SMÅ klagepunkter — ALLE klagepunkter "
+            "skal med, uanset om de virker centrale eller marginale.\n"
+            "- Husk at klagepunkter inkluderer BÅDE:\n"
+            "  • Konkrete mangler ved rejsen (hotel-standard, mad, "
+            "transport, pool, værelse, beliggenhed, faciliteter, "
+            "støj, rengøring, manglende ydelser osv.)\n"
+            "  • Procesuelle/relations-klager (dårlig kommunikation, "
+            "ventetider, tonen i korrespondance, manglende information, "
+            "sagsbehandlingstid, kompensations-tilbuddets størrelse, "
+            "guide-håndtering, refusion-procedurer osv.)\n"
+            "  • Krav om kompensation/refusion (også selvom det måske "
+            "er afvist eller delvist accepteret)\n"
+            "- Hvis klager nævner 12 forskellige problemer, skal alle "
+            "12 stå på listen. Tag ALDRIG genvej eller gruppér flere "
+            "punkter sammen.\n"
+            "- Hvert klagepunkt formuleres som ÉN kort sætning "
+            "(max 20 ord).\n\n"
+            "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
+            "Mange dokumenter er på engelsk (hotel-mails, korrespondance osv.). "
+            f"Du SKAL formulere ALLE klagepunkter på {_sprog()} — også når de "
+            f"stammer fra engelsk-sprogede bilag. Brug PRÆCISE {_sprog_adj()} termer, "
+            "ikke direkte ord-for-ord-oversættelser:\n"
+            "  • 'mangel' (ikke 'deficiency')\n"
+            "  • 'rettidig reklamation' (ikke 'timely complaint')\n"
+            "  • 'manglende bistand' (ikke 'lack of assistance')\n"
+            "Klagepunkterne skal kunne læses og forstås direkte af en "
+            "dansk jurist uden behov for at konsultere originalsproget.\n\n"
+            "FILER FRA SAGEN FØLGER NEDENFOR:\n"
+        )
+
+        sagsakter_block = ""
+        if sagsakter_tekst and sagsakter_tekst.strip():
+            sagsakter_block = (
+                f"\n\nSUPPLERENDE SAGSAKTER (interne notater, mails osv. "
+                f"der kan indeholde flere klagepunkter):\n"
+                f"{sagsakter_tekst[:6000]}"
+            )
+
+        slutning = (
+            sagsakter_block +
+            "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
+            "ingen markdown, ingen kodeblok:\n"
+            "{\n"
+            '  "klagepunkter": [\n'
+            '    "Klagepunkt 1 i én kort sætning",\n'
+            '    "Klagepunkt 2 i én kort sætning",\n'
+            '    "..."\n'
+            '  ]\n'
+            "}\n\n"
+            "ABSOLUT REGEL: Returnér ALLE klagepunkter — ingen undtagelser. "
+            "Hellere ét for mange end ét for lidt. Det er kritisk at "
+            "INTET klagepunkt overses, da det får alvorlige konsekvenser "
+            "for downstream juridisk rådgivning."
+            + _sprog_anchor_end()
+        )
 
     try:
         user_content = _byg_sag_content(sag, indled, slutning)
 
-        # Sprog-bevidst inline system — på norske tenants skal den selv
+        # Sprog-bevidst inline system — på norske tenants SKAL den selv
         # være på norsk så AI'en ikke fornemmer dansk fra system-laget.
         if _hent_sprog() == "no":
             _inline_system_klp = (
-                "Du er en grundig juridisk research-assistent spesialisert "
-                f"i {_hent_klageorgan_navn()} saker. Du leverer alltid "
-                "uttømmende, presise klagepunkt-lister. ALT du skriver i "
-                "svaret skal være på NORSK BOKMÅL — ikke dansk."
+                "Du er en grundig juridisk research-assistent "
+                f"spesialisert i {_hent_klageorgan_navn()} saker. Du "
+                "leverer alltid uttømmende, presise klagepunkt-lister. "
+                "ALT du skriver i svaret skal være på NORSK BOKMÅL — "
+                "ikke dansk."
             )
         else:
             _inline_system_klp = (
-                "Du er en grundig juridisk research-assistent specialiseret "
-                f"i {_hent_klageorgan_navn()} sager. Du leverer altid "
-                "udtømmende, præcise klagepunkt-lister."
+                "Du er en grundig juridisk research-assistent "
+                f"specialiseret i {_hent_klageorgan_navn()} sager. Du "
+                "leverer altid udtømmende, præcise klagepunkt-lister."
             )
 
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=2000,
-            temperature=0,
-            system=_inline_system_klp,
-            messages=[{"role": "user", "content": user_content}],
+        response = _kald_anthropic_robust(
+            create_kwargs={
+                "model": MODEL,
+                "max_tokens": 2000,
+                "temperature": 0,
+                "system": _inline_system_klp,
+                "messages": [{"role": "user", "content": user_content}],
+            },
+            ceiling_tokens=8000,
+            label="udled_alle_klagepunkter",
         )
 
         svar = response.content[0].text.strip()
         svar = _re.sub(r"^```(?:json)?\s*", "", svar)
         svar = _re.sub(r"\s*```$", "", svar).strip()
-        data = _json.loads(svar)
+        try:
+            data = _json.loads(svar)
+        except _json.JSONDecodeError:
+            # JSON kan stadig være afkortet hvis ceiling blev ramt — prøv
+            # repair der lukker åbne strings/arrays pænt.
+            data = _repair_truncated_json(svar) or {}
 
         klagepunkter = data.get("klagepunkter", [])
         if isinstance(klagepunkter, str):
@@ -3098,6 +3533,8 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
 
         return klagepunkter
     except Exception as e:
+        if _er_overload_fejl(e):
+            raise
         print(f"DEBUG: udled_alle_klagepunkter fejlede: {e}")
         return []
 
@@ -3228,74 +3665,156 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
     _navn = _hent_navn()
     _klageorgan = _hent_klageorgan_navn()
 
-    indled = (
-        f"{_sprog_direktiv()}"
-        "Du er en præcis juridisk research-assistent specialiseret i "
-        f"{_klageorgan} sager. Din ENESTE opgave lige nu er at "
-        "kortlægge TIDSFORHOLDET mellem hvornår klager konstaterede "
-        "mangler/problemer og hvornår klager kontaktede rejseselskabet "
-        f"({_navn}) om dem.\n\n"
-        "═══════════════════════════════════════════════════════════════\n"
-        "KRITISK PRINCIP: KILDE-FORANKRING (ingen gæt — ingen 'ca.')\n"
-        "═══════════════════════════════════════════════════════════════\n"
-        "Du må KUN bruge datoer og tidspunkter der EKSPLICIT fremgår af "
-        "materialet. Du må ALDRIG:\n"
-        "  ✗ Bruge 'ca.' eller cirka-datoer\n"
-        "  ✗ Beregne datoer baseret på antagelser ('formentlig dag 2')\n"
-        "  ✗ Slynge en dato ind hvis du ikke har den dokumenteret\n"
-        "  ✗ Antage at noget ikke skete (fx 'INGEN henvendelse') med "
-        "mindre dette EKSPLICIT bekræftes i bilagene\n\n"
-        "Hvis en dato/tidspunkt for en bestemt begivenhed ikke fremgår "
-        "klart af materialet, SKAL du i stedet skrive at det IKKE kan "
-        "verificeres — fx:\n"
-        "  '[Bilag XX viser klage indsendt — eksakt konstateringsdato "
-        "for manglen kan ikke verificeres af materialet og bør tjekkes "
-        "manuelt]'\n"
-        "  'Reklamation indsendt 23. juni 2025 — konstateringsdato for "
-        "den underliggende mangel fremgår ikke klart af bilagene og bør "
-        "verificeres manuelt'\n\n"
-        "Hvor datoer FREMGÅR KLART af bilagene (fx i mail-headers, "
-        "datoer på dokumenter, eksplicitte datostempler), bruger du dem "
-        "med fuld præcision. Henvis ALTID til bilag når du angiver en "
-        "verificeret dato, fx '[Bilag 08]'.\n\n"
-        "═══════════════════════════════════════════════════════════════\n"
-        "JURIDISK BAGGRUND:\n"
-        "═══════════════════════════════════════════════════════════════\n"
-        f"{_klageorgan} vægter RETTIDIG REKLAMATION ekstremt højt. "
-        "Hvis klager:\n"
-        f"  • Kontaktede {_navn} samme dag eller umiddelbart efter en mangel "
-        "blev konstateret (på destinationen) → RETTIDIG reklamation, "
-        "neutralt for sagen\n"
-        f"  • Ventede flere dage efter konstatering med at kontakte {_navn} "
-        f"→ POTENTIELT FOR SEN reklamation, fordel for {_navn}\n"
-        f"  • Først kontaktede {_navn} EFTER hjemkomst → ALMINDELIGVIS FOR "
-        f"SEN reklamation, stærkt forsvarsargument for {_navn}\n\n"
-        "INSTRUKTION:\n"
-        "1. Find rejseperioden (udrejse + hjemrejse) — KUN hvis det "
-        "fremgår af bilagene.\n"
-        "2. For HVERT klagepunkt der er identificeret i bilagene:\n"
-        "   - Hvornår blev manglen konstateret? Brug KUN datoer der "
-        "  EKSPLICIT fremgår. Ellers skriv 'konstateringsdato kan "
-        "  ikke verificeres — bør tjekkes manuelt'.\n"
-        f"   - Hvornår kontaktede klager {_navn} om det? Brug KUN dato fra "
-        "  e-mail-headers, dokumentdato eller eksplicit dato i bilag. "
-        "  Ellers skriv 'kontaktdato kan ikke verificeres — bør "
-        "  tjekkes manuelt'.\n"
-        "   - Beregn forsinkelse i dage KUN når BEGGE datoer er "
-        "  verificerede.\n"
-        "3. Vurdér samlet om reklamationen var rettidig — kun baseret "
-        "på verificerede datoer.\n\n"
-        "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
-        "Hotel-mails, korrespondance og bookings er ofte på engelsk. "
-        f"Du SKAL skrive ALT output på {_sprog()}:\n"
-        f"  • Datoer på {_sprog()} format ('12. juni 2025', ikke '12 June 2025')\n"
-        f"  • Vurderinger og observationer i {_sprog_adj()} juridiske termer\n"
-        "  • Brug 'rettidig reklamation' (ikke 'timely complaint'),\n"
-        f"    'mangel' (ikke 'deficiency'), 'henvendelse til {_navn}' osv.\n"
-        f"Output skal kunne læses direkte af en {_sprog_adj_sg()} jurist uden\n"
-        "konsultation af originalsproget.\n\n"
-        "FILER FRA SAGEN FØLGER NEDENFOR:\n"
-    )
+    # ─── Sprog-bevidst prompt-scaffold ───────────────────────────
+    # Tidsforhold-prompten er én af de største (~150 linjer). Når sprog=no
+    # SKAL hele scaffoldet være på norsk — ellers spejler AI'en dansk.
+    if _hent_sprog() == "no":
+        indled = (
+            f"{_sprog_direktiv()}"
+            "Du er en presis juridisk research-assistent spesialisert i "
+            f"{_klageorgan}-saker. Din ENESTE oppgave akkurat nå er å "
+            "kartlegge TIDSFORHOLDET mellom når klager konstaterte "
+            "mangler/problemer og når klager kontaktet reiseselskapet "
+            f"({_navn}) om dem.\n\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "KRITISK PRINSIPP: KILDEFORANKRING (ingen gjetting — ingen 'ca.')\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "Du må KUN bruke datoer og tidspunkter som EKSPLISITT fremgår "
+            "av materialet. Du må ALDRI:\n"
+            "  ✗ Bruke 'ca.' eller cirka-datoer\n"
+            "  ✗ Beregne datoer basert på antagelser ('antagelig dag 2')\n"
+            "  ✗ Slenge inn en dato hvis du ikke har den dokumentert\n"
+            "  ✗ Anta at noe ikke skjedde (f.eks. 'INGEN henvendelse') med "
+            "mindre dette EKSPLISITT bekreftes i vedleggene\n\n"
+            "Hvis en dato/tidspunkt for en bestemt hendelse ikke fremgår "
+            "tydelig av materialet, SKAL du i stedet skrive at det IKKE kan "
+            "verifiseres — f.eks.:\n"
+            "  '[Vedlegg XX viser klage innsendt — eksakt konstateringsdato "
+            "for mangelen kan ikke verifiseres av materialet og bør sjekkes "
+            "manuelt]'\n"
+            "  'Reklamasjon innsendt 23. juni 2025 — konstateringsdato for "
+            "den underliggende mangelen fremgår ikke tydelig av vedleggene og "
+            "bør verifiseres manuelt'\n\n"
+            "Der datoer FREMGÅR TYDELIG av vedleggene (f.eks. i e-post-"
+            "headere, datoer på dokumenter, eksplisitte datostempler), bruker "
+            "du dem med full presisjon. Henvis ALLTID til vedlegg når du "
+            "angir en verifisert dato, f.eks. '[Vedlegg 08]'.\n\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "JURIDISK BAKGRUNN:\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            f"{_klageorgan} vektlegger RETTIDIG REKLAMASJON ekstremt høyt. "
+            "Hvis klager:\n"
+            f"  • Kontaktet {_navn} samme dag eller umiddelbart etter en "
+            "mangel ble konstatert (på destinasjonen) → RETTIDIG "
+            "reklamasjon, nøytralt for saken\n"
+            f"  • Ventet flere dager etter konstatering med å kontakte {_navn} "
+            f"→ POTENSIELT FOR SEN reklamasjon, fordel for {_navn}\n"
+            f"  • Først kontaktet {_navn} ETTER hjemkomst → VANLIGVIS FOR "
+            f"SEN reklamasjon, sterkt forsvarsargument for {_navn}\n\n"
+            "INSTRUKS:\n"
+            "1. Finn reiseperioden (utreise + hjemreise) — KUN hvis det "
+            "fremgår av vedleggene.\n"
+            "2. For HVERT klagepunkt som er identifisert i vedleggene:\n"
+            "   - Når ble mangelen konstatert? Bruk KUN datoer som "
+            "  EKSPLISITT fremgår. Ellers skriv 'konstateringsdato kan "
+            "  ikke verifiseres — bør sjekkes manuelt'.\n"
+            f"   - Når kontaktet klager {_navn} om det? Bruk KUN dato fra "
+            "  e-post-headere, dokumentdato eller eksplisitt dato i "
+            "  vedlegg. Ellers skriv 'kontaktdato kan ikke verifiseres — "
+            "  bør sjekkes manuelt'.\n"
+            "   - Beregn forsinkelse i dager KUN når BEGGE datoer er "
+            "  verifisert.\n"
+            "3. Vurder samlet om reklamasjonen var rettidig — kun basert "
+            "på verifiserte datoer.\n\n"
+            "OVERSETTELSE FRA ENGELSK (eller andre språk):\n"
+            "Hotell-e-poster, korrespondanse og bookinger er ofte på "
+            "engelsk. Du SKAL skrive ALT output på NORSK BOKMÅL:\n"
+            "  • Datoer på norsk format ('12. juni 2025', ikke '12 June 2025')\n"
+            "  • Vurderinger og observasjoner med NORSKE juridiske termer\n"
+            "  • Bruk 'rettidig reklamasjon' (ikke 'timely complaint'),\n"
+            f"    'mangel' (ikke 'deficiency'), 'henvendelse til {_navn}' osv.\n"
+            "Outputet skal kunne leses direkte av en norsk jurist uten "
+            "behov for å konsultere originalspråket.\n\n"
+            "VIKTIG — UNNGÅ DANSKE ORD:\n"
+            "  ✓ 'barn'      ✗ IKKE 'børn'\n"
+            "  ✓ 'stengt'    ✗ IKKE 'lukket'\n"
+            "  ✓ 'oppholdet' ✗ IKKE 'opholdet'\n"
+            "  ✓ 'kontaktet' ✗ IKKE 'kontaktede'\n"
+            "  ✓ 'reiseleder' ✗ IKKE 'rejseleder'\n"
+            "  ✓ 'avgjørende' ✗ IKKE 'afgørende'\n"
+            "  ✓ 'gjestene'  ✗ IKKE 'gæsterne'\n\n"
+            "DOKUMENTER FRA SAKEN FØLGER NEDENFOR:\n"
+        )
+    else:
+        # ─── DK (byte-identisk med pre-lokaliserings-state) ───
+        indled = (
+            f"{_sprog_direktiv()}"
+            "Du er en præcis juridisk research-assistent specialiseret i "
+            f"{_klageorgan} sager. Din ENESTE opgave lige nu er at "
+            "kortlægge TIDSFORHOLDET mellem hvornår klager konstaterede "
+            "mangler/problemer og hvornår klager kontaktede rejseselskabet "
+            f"({_navn}) om dem.\n\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "KRITISK PRINCIP: KILDE-FORANKRING (ingen gæt — ingen 'ca.')\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "Du må KUN bruge datoer og tidspunkter der EKSPLICIT fremgår af "
+            "materialet. Du må ALDRIG:\n"
+            "  ✗ Bruge 'ca.' eller cirka-datoer\n"
+            "  ✗ Beregne datoer baseret på antagelser ('formentlig dag 2')\n"
+            "  ✗ Slynge en dato ind hvis du ikke har den dokumenteret\n"
+            "  ✗ Antage at noget ikke skete (fx 'INGEN henvendelse') med "
+            "mindre dette EKSPLICIT bekræftes i bilagene\n\n"
+            "Hvis en dato/tidspunkt for en bestemt begivenhed ikke fremgår "
+            "klart af materialet, SKAL du i stedet skrive at det IKKE kan "
+            "verificeres — fx:\n"
+            "  '[Bilag XX viser klage indsendt — eksakt konstateringsdato "
+            "for manglen kan ikke verificeres af materialet og bør tjekkes "
+            "manuelt]'\n"
+            "  'Reklamation indsendt 23. juni 2025 — konstateringsdato for "
+            "den underliggende mangel fremgår ikke klart af bilagene og bør "
+            "verificeres manuelt'\n\n"
+            "Hvor datoer FREMGÅR KLART af bilagene (fx i mail-headers, "
+            "datoer på dokumenter, eksplicitte datostempler), bruger du dem "
+            "med fuld præcision. Henvis ALTID til bilag når du angiver en "
+            "verificeret dato, fx '[Bilag 08]'.\n\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            "JURIDISK BAGGRUND:\n"
+            "═══════════════════════════════════════════════════════════════\n"
+            f"{_klageorgan} vægter RETTIDIG REKLAMATION ekstremt højt. "
+            "Hvis klager:\n"
+            f"  • Kontaktede {_navn} samme dag eller umiddelbart efter en mangel "
+            "blev konstateret (på destinationen) → RETTIDIG reklamation, "
+            "neutralt for sagen\n"
+            f"  • Ventede flere dage efter konstatering med at kontakte {_navn} "
+            f"→ POTENTIELT FOR SEN reklamation, fordel for {_navn}\n"
+            f"  • Først kontaktede {_navn} EFTER hjemkomst → ALMINDELIGVIS FOR "
+            f"SEN reklamation, stærkt forsvarsargument for {_navn}\n\n"
+            "INSTRUKTION:\n"
+            "1. Find rejseperioden (udrejse + hjemrejse) — KUN hvis det "
+            "fremgår af bilagene.\n"
+            "2. For HVERT klagepunkt der er identificeret i bilagene:\n"
+            "   - Hvornår blev manglen konstateret? Brug KUN datoer der "
+            "  EKSPLICIT fremgår. Ellers skriv 'konstateringsdato kan "
+            "  ikke verificeres — bør tjekkes manuelt'.\n"
+            f"   - Hvornår kontaktede klager {_navn} om det? Brug KUN dato fra "
+            "  e-mail-headers, dokumentdato eller eksplicit dato i bilag. "
+            "  Ellers skriv 'kontaktdato kan ikke verificeres — bør "
+            "  tjekkes manuelt'.\n"
+            "   - Beregn forsinkelse i dage KUN når BEGGE datoer er "
+            "  verificerede.\n"
+            "3. Vurdér samlet om reklamationen var rettidig — kun baseret "
+            "på verificerede datoer.\n\n"
+            "OVERSÆTTELSE FRA ENGELSK (eller andre sprog):\n"
+            "Hotel-mails, korrespondance og bookings er ofte på engelsk. "
+            f"Du SKAL skrive ALT output på {_sprog()}:\n"
+            f"  • Datoer på {_sprog()} format ('12. juni 2025', ikke '12 June 2025')\n"
+            f"  • Vurderinger og observationer i {_sprog_adj()} juridiske termer\n"
+            "  • Brug 'rettidig reklamation' (ikke 'timely complaint'),\n"
+            f"    'mangel' (ikke 'deficiency'), 'henvendelse til {_navn}' osv.\n"
+            f"Output skal kunne læses direkte af en {_sprog_adj_sg()} jurist uden\n"
+            "konsultation af originalsproget.\n\n"
+            "FILER FRA SAGEN FØLGER NEDENFOR:\n"
+        )
 
     sagsakter_block = ""
     if sagsakter_tekst and sagsakter_tekst.strip():
@@ -3305,116 +3824,224 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
             f"{sagsakter_tekst[:8000]}"
         )
 
-    slutning = (
-        sagsakter_block +
-        "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
-        "ingen markdown, ingen kodeblok:\n"
-        "{\n"
-        '  "rejseperiode": "fx 8.-22. juni 2025 — eller fremgår ikke",\n'
-        '  "har_problematisk_forsinkelse": true|false,\n'
-        '  "samlet_vurdering": "2-4 sætninger der opsummerer om '
-        'reklamationen var rettidig. Vær KONKRET og NÆVN DATOERNE. '
-        'Hvis intet kan udledes, skriv det ærligt.",\n'
-        '  "konkrete_observationer": [\n'
-        '    "Kort beskrivelse af hvert relevant tidsforhold, fx: '
-        f'\\"Pool-problem konstateret 9. juni, {_navn} kontaktet samme dag — '
-        'rettidig\\" eller \\"Ekstraseng-problem konstateret 8. juni, '
-        f'{_navn} først kontaktet 14. juni efter hjemkomst (6 dages '
-        'forsinkelse) — for sen reklamation\\"",\n'
-        '    "..."\n'
-        '  ],\n'
-        '  "kunne_ikke_udledes": true|false,\n'
-        '  "begivenheder": [\n'
-        '    {\n'
-        '      "dato": "8. juni 2025",\n'
-        '      "tidspunkt": "14:30 eller null hvis ikke angivet",\n'
-        '      "type": "ankomst|klage_til_guide|tui_reaktion|klage_til_tui|afgang|andet",\n'
-        f'      "aktoer": "Klager / {_navn} guide / {_navn} kundeservice / Hotel / etc.",\n'
-        '      "beskrivelse": "1-2 sætninger om hvad der skete",\n'
-        '      "betydning": "neutral|positiv_for_tui|negativ_for_tui"\n'
-        '    }\n'
-        '  ]\n'
-        "}\n\n"
-        "BEMÆRK om enum-værdier ('type' og 'betydning'): Strengene "
-        "indeholder suffixet '_tui' som er HISTORISK — de bruges som "
-        "interne identifikatorer i UI-renderingen. Brug dem PRÆCIS som "
-        f"angivet uanset hvilket selskab ({_navn}) du analyserer for. "
-        "'positiv_for_tui' betyder 'positiv for det aktive selskab', "
-        "'tui_reaktion' betyder 'reaktion fra det aktive selskab' osv.\n\n"
-        "VIGTIGE REGLER:\n"
-        "- har_problematisk_forsinkelse SKAL være TRUE KUN hvis AT "
-        "LEAST ÉN mangel BEVISLIGT (med verificerede datoer fra "
-        "bilagene) blev reklameret med betydelig forsinkelse.\n"
-        "- har_problematisk_forsinkelse SKAL være FALSE hvis alle "
-        "mangler blev rettidigt reklameret eller hvis du ikke har "
-        "verificerede datoer.\n"
-        "- Hvis materialet IKKE indeholder tilstrækkelige datoer til at "
-        "udlede dette, sæt kunne_ikke_udledes=true og skriv det ærligt "
-        "i samlet_vurdering. OPFIND ALDRIG datoer.\n"
-        "- konkrete_observationer SKAL formuleres ærligt med kilde:\n"
-        f"  ✓ KORREKT: 'Reklamation modtaget af {_navn} 23. juni 2025 [Bilag 13]'\n"
-        f"  ✓ KORREKT: '{_navn}'s svar fremsendt 14. juli 2025 [Bilag 14] — "
-        "dato for klagers oprindelige konstatering af manglen kan ikke "
-        "verificeres af materialet og bør tjekkes manuelt'\n"
-        "  ✗ FORKERT: 'Mangel konstateret ca. 28.-29. maj 2025' "
-        "(brug ALDRIG 'ca.')\n"
-        f"  ✗ FORKERT: 'INGEN henvendelse til {_navn} under rejsen' (brug "
-        "ALDRIG sådanne påstande uden EKSPLICIT bekræftelse i bilag)\n"
-        "  ✗ FORKERT: 'Mangel konstateret dag 2 af opholdet' (gæt "
-        "baseret på rejseperiode)\n"
-        "- Hvis du er i tvivl om en dato, skriv eksplicit at den IKKE "
-        "kan verificeres og BØR TJEKKES MANUELT. Det er ALTID bedre at "
-        "være ærlig om manglende information end at gætte.\n"
-        "\n"
-        "REGLER FOR begivenheder (TIDSLINJE):\n"
-        "- DESTINATIONS-PERIODEN ER VIGTIGST: Den juridiske vurdering "
-        "  vægter primært hvad der skete PÅ DESTINATIONEN — om klager "
-        "  reklamerede til guide/hotel/kundeservice mens man stadig var "
-        f"  der, og hvordan {_navn} reagerede dér og da. Dette er hjertet af "
-        "  'rettidig reklamation'-vurderingen.\n"
-        "- Vær EKSTRA OMHYGGELIG og DETALJERET med begivenheder mellem "
-        "  ankomst og afgang. Hver enkelt henvendelse til guide, hver "
-        f"  reaktion fra hotel, hver gang {_navn} svarede ude på destinationen "
-        "  — alt skal med, præcist dateret. Det er på destinationen at "
-        "  rejseselskabet enten har haft chancen for at afhjælpe (eller ej).\n"
-        "- Inkludér ALLE relevante kronologiske begivenheder med dato:\n"
-        "  • Klagers ankomst til destinationen (markér 'type': 'ankomst')\n"
-        "  • Hver gang klager henvendte sig til guide/hotel/kundeservice "
-        "    PÅ destinationen — disse er HØJEST PRIORITET\n"
-        f"  • Hver gang {_navn}/hotel reagerede/svarede/handlede PÅ destinationen "
-        "    — disse er HØJEST PRIORITET\n"
-        "  • Klagers afgang fra destinationen (markér 'type': 'afgang')\n"
-        f"  • Begivenheder EFTER hjemkomst (klage til {_navn}'s kundeservice "
-        f"    hjemmefra, klage til Ankenævnet, {_navn}'s svar hjemmefra) — "
-        "    disse må gerne medtages, men er sekundære. Vær kortfattet "
-        "    her — fokus skal stadig ligge på destinationen.\n"
-        "- Sortér ALTID kronologisk (ældste først).\n"
-        "- 'type': 'afgang' SKAL bruges til selve hjemrejsen så frontend'en "
-        "  kan markere hvad der er post-destination.\n"
-        "- Inkludér tidspunkt KUN hvis det fremgår af materialet — "
-        "ellers sæt 'tidspunkt': null.\n"
-        "- 'aktoer' beskriver hvem der handler/skriver (ikke hvem der "
-        f"modtager). Brug 'Klager', '{_navn} guide', '{_navn} kundeservice', "
-        "'Hotel', 'Pakkerejse-Ankenævnet'.\n"
-        f"- 'betydning' er hvordan begivenheden påvirker {_navn}'s "
-        f"forsvarsposition: 'positiv_for_tui' (fx {_navn} reagerede hurtigt, "
-        f"klager reklamerede sent), 'negativ_for_tui' (fx {_navn} ignorerede "
-        "klage, lang ventetid på respons), 'neutral' (faktuel begivenhed "
-        "uden vurdering).\n"
-        "- Hvis ingen datoer kan udledes, returnér tom liste: "
-        '"begivenheder": [].\n'
-        "- OPFIND ALDRIG datoer eller begivenheder.\n"
-        + _sprog_anchor_end()
-    )
+    if _hent_sprog() == "no":
+        slutning = (
+            sagsakter_block +
+            "\n\nRETURNER KUN dette JSON-objektet — ingen forklaring, "
+            "ingen markdown, ingen kodeblokk. ALT skal skrives på NORSK "
+            "BOKMÅL:\n"
+            "{\n"
+            '  "rejseperiode": "f.eks. 8.-22. juni 2025 — eller fremgår ikke",\n'
+            '  "har_problematisk_forsinkelse": true|false,\n'
+            '  "samlet_vurdering": "2-4 setninger på NORSK BOKMÅL som '
+            'oppsummerer om reklamasjonen var rettidig. Vær KONKRET og '
+            'NEVN DATOENE. Hvis intet kan utledes, skriv det ærlig.",\n'
+            '  "konkrete_observationer": [\n'
+            '    "Kort beskrivelse av hvert relevant tidsforhold på NORSK '
+            'BOKMÅL, f.eks.: '
+            f'\\"Bassengproblem konstatert 9. juni, {_navn} kontaktet samme '
+            'dag — rettidig\\" eller \\"Ekstrasengproblem konstatert 8. '
+            f'juni, {_navn} først kontaktet 14. juni etter hjemkomst (6 '
+            'dagers forsinkelse) — for sen reklamasjon\\"",\n'
+            '    "..."\n'
+            '  ],\n'
+            '  "kunne_ikke_udledes": true|false,\n'
+            '  "begivenheder": [\n'
+            '    {\n'
+            '      "dato": "8. juni 2025",\n'
+            '      "tidspunkt": "14:30 eller null hvis ikke angitt",\n'
+            '      "type": "ankomst|klage_til_guide|tui_reaktion|klage_til_tui|afgang|andet",\n'
+            f'      "aktoer": "Klager / {_navn} reiseleder / {_navn} '
+            'kundeservice / Hotell / osv.",\n'
+            '      "beskrivelse": "1-2 setninger på NORSK BOKMÅL om hva som skjedde",\n'
+            '      "betydning": "neutral|positiv_for_tui|negativ_for_tui"\n'
+            '    }\n'
+            '  ]\n'
+            "}\n\n"
+            "MERK om enum-verdier ('type' og 'betydning'): Strengene "
+            "inneholder suffikset '_tui' som er HISTORISK — de brukes som "
+            "interne identifikatorer i UI-renderingen. Bruk dem PRESIST "
+            f"som angitt uansett hvilket selskap ({_navn}) du analyserer "
+            "for. 'positiv_for_tui' betyr 'positiv for det aktive "
+            "selskapet', 'tui_reaktion' betyr 'reaksjon fra det aktive "
+            "selskapet' osv.\n\n"
+            "VIKTIGE REGLER:\n"
+            "- har_problematisk_forsinkelse SKAL være TRUE KUN hvis MINST "
+            "ÉN mangel BEVISLIG (med verifiserte datoer fra vedleggene) "
+            "ble reklamert med betydelig forsinkelse.\n"
+            "- har_problematisk_forsinkelse SKAL være FALSE hvis alle "
+            "mangler ble rettidig reklamert eller hvis du ikke har "
+            "verifiserte datoer.\n"
+            "- Hvis materialet IKKE inneholder tilstrekkelige datoer til "
+            "å utlede dette, sett kunne_ikke_udledes=true og skriv det "
+            "ærlig i samlet_vurdering. FINN ALDRI PÅ datoer.\n"
+            "- konkrete_observationer SKAL formuleres ærlig med kilde på "
+            "NORSK BOKMÅL:\n"
+            f"  ✓ KORREKT: 'Reklamasjon mottatt av {_navn} 23. juni 2025 [Vedlegg 13]'\n"
+            f"  ✓ KORREKT: '{_navn}s svar sendt 14. juli 2025 [Vedlegg 14] — "
+            "dato for klagers opprinnelige konstatering av mangelen kan "
+            "ikke verifiseres av materialet og bør sjekkes manuelt'\n"
+            "  ✗ FEIL: 'Mangel konstatert ca. 28.-29. mai 2025' "
+            "(bruk ALDRI 'ca.')\n"
+            f"  ✗ FEIL: 'INGEN henvendelse til {_navn} under reisen' (bruk "
+            "ALDRI slike påstander uten EKSPLISITT bekreftelse i vedlegg)\n"
+            "  ✗ FEIL: 'Mangel konstatert dag 2 av oppholdet' (gjetning "
+            "basert på reiseperioden)\n"
+            "- Hvis du er i tvil om en dato, skriv eksplisitt at den IKKE "
+            "kan verifiseres og BØR SJEKKES MANUELT. Det er ALLTID bedre "
+            "å være ærlig om manglende informasjon enn å gjette.\n"
+            "\n"
+            "REGLER FOR begivenheder (TIDSLINJE):\n"
+            "- DESTINASJONSPERIODEN ER VIKTIGST: Den juridiske vurderingen "
+            "  vektlegger primært hva som skjedde PÅ DESTINASJONEN — om "
+            "  klager reklamerte til reiseleder/hotell/kundeservice mens "
+            f"  man fortsatt var der, og hvordan {_navn} reagerte der og "
+            "  da. Dette er hjertet av 'rettidig reklamasjon'-vurderingen.\n"
+            "- Vær EKSTRA OMHYGGELIG og DETALJERT med hendelser mellom "
+            "  ankomst og avgang. Hver enkelt henvendelse til "
+            f"  reiseleder, hver reaksjon fra hotell, hver gang {_navn} "
+            "  svarte ute på destinasjonen — alt skal med, presist "
+            "  datert. Det er på destinasjonen at reiseselskapet enten "
+            "  har hatt sjansen til å avhjelpe (eller ikke).\n"
+            "- Inkluder ALLE relevante kronologiske hendelser med dato:\n"
+            "  • Klagers ankomst til destinasjonen (marker 'type': 'ankomst')\n"
+            "  • Hver gang klager henvendte seg til reiseleder/hotell/"
+            "    kundeservice PÅ destinasjonen — disse er HØYESTE PRIORITET\n"
+            f"  • Hver gang {_navn}/hotell reagerte/svarte/handlet PÅ "
+            "    destinasjonen — disse er HØYESTE PRIORITET\n"
+            "  • Klagers avgang fra destinasjonen (marker 'type': 'afgang')\n"
+            f"  • Hendelser ETTER hjemkomst (klage til {_navn}s "
+            f"    kundeservice hjemmefra, klage til Nemnda, {_navn}s svar "
+            "    hjemmefra) — disse kan gjerne medtas, men er sekundære. "
+            "    Vær kortfattet her — fokus skal fortsatt ligge på "
+            "    destinasjonen.\n"
+            "- Sorter ALLTID kronologisk (eldste først).\n"
+            "- 'type': 'afgang' SKAL brukes til selve hjemreisen så "
+            "  frontenden kan markere hva som er post-destinasjon.\n"
+            "- Inkluder tidspunkt KUN hvis det fremgår av materialet — "
+            "ellers sett 'tidspunkt': null.\n"
+            "- 'aktoer' beskriver hvem som handler/skriver (ikke hvem "
+            f"som mottar). Bruk 'Klager', '{_navn} reiseleder', '{_navn} "
+            "kundeservice', 'Hotell', 'Pakkereisenemnda'.\n"
+            f"- 'betydning' er hvordan hendelsen påvirker {_navn}s "
+            f"forsvarsposisjon: 'positiv_for_tui' (f.eks. {_navn} reagerte "
+            f"raskt, klager reklamerte sent), 'negativ_for_tui' (f.eks. "
+            f"{_navn} ignorerte klage, lang ventetid på respons), "
+            "'neutral' (faktuell hendelse uten vurdering).\n"
+            "- Hvis ingen datoer kan utledes, returner tom liste: "
+            '"begivenheder": [].\n'
+            "- FINN ALDRI PÅ datoer eller hendelser.\n"
+            + _sprog_anchor_end()
+        )
+    else:
+        # ─── DK (byte-identisk med pre-lokaliserings-state) ───
+        slutning = (
+            sagsakter_block +
+            "\n\nRETURNÉR KUN dette JSON-objekt — ingen forklaring, "
+            "ingen markdown, ingen kodeblok:\n"
+            "{\n"
+            '  "rejseperiode": "fx 8.-22. juni 2025 — eller fremgår ikke",\n'
+            '  "har_problematisk_forsinkelse": true|false,\n'
+            '  "samlet_vurdering": "2-4 sætninger der opsummerer om '
+            'reklamationen var rettidig. Vær KONKRET og NÆVN DATOERNE. '
+            'Hvis intet kan udledes, skriv det ærligt.",\n'
+            '  "konkrete_observationer": [\n'
+            '    "Kort beskrivelse af hvert relevant tidsforhold, fx: '
+            f'\\"Pool-problem konstateret 9. juni, {_navn} kontaktet samme dag — '
+            'rettidig\\" eller \\"Ekstraseng-problem konstateret 8. juni, '
+            f'{_navn} først kontaktet 14. juni efter hjemkomst (6 dages '
+            'forsinkelse) — for sen reklamation\\"",\n'
+            '    "..."\n'
+            '  ],\n'
+            '  "kunne_ikke_udledes": true|false,\n'
+            '  "begivenheder": [\n'
+            '    {\n'
+            '      "dato": "8. juni 2025",\n'
+            '      "tidspunkt": "14:30 eller null hvis ikke angivet",\n'
+            '      "type": "ankomst|klage_til_guide|tui_reaktion|klage_til_tui|afgang|andet",\n'
+            f'      "aktoer": "Klager / {_navn} guide / {_navn} kundeservice / Hotel / etc.",\n'
+            '      "beskrivelse": "1-2 sætninger om hvad der skete",\n'
+            '      "betydning": "neutral|positiv_for_tui|negativ_for_tui"\n'
+            '    }\n'
+            '  ]\n'
+            "}\n\n"
+            "BEMÆRK om enum-værdier ('type' og 'betydning'): Strengene "
+            "indeholder suffixet '_tui' som er HISTORISK — de bruges som "
+            "interne identifikatorer i UI-renderingen. Brug dem PRÆCIS som "
+            f"angivet uanset hvilket selskab ({_navn}) du analyserer for. "
+            "'positiv_for_tui' betyder 'positiv for det aktive selskab', "
+            "'tui_reaktion' betyder 'reaktion fra det aktive selskab' osv.\n\n"
+            "VIGTIGE REGLER:\n"
+            "- har_problematisk_forsinkelse SKAL være TRUE KUN hvis AT "
+            "LEAST ÉN mangel BEVISLIGT (med verificerede datoer fra "
+            "bilagene) blev reklameret med betydelig forsinkelse.\n"
+            "- har_problematisk_forsinkelse SKAL være FALSE hvis alle "
+            "mangler blev rettidigt reklameret eller hvis du ikke har "
+            "verificerede datoer.\n"
+            "- Hvis materialet IKKE indeholder tilstrækkelige datoer til at "
+            "udlede dette, sæt kunne_ikke_udledes=true og skriv det ærligt "
+            "i samlet_vurdering. OPFIND ALDRIG datoer.\n"
+            "- konkrete_observationer SKAL formuleres ærligt med kilde:\n"
+            f"  ✓ KORREKT: 'Reklamation modtaget af {_navn} 23. juni 2025 [Bilag 13]'\n"
+            f"  ✓ KORREKT: '{_navn}'s svar fremsendt 14. juli 2025 [Bilag 14] — "
+            "dato for klagers oprindelige konstatering af manglen kan ikke "
+            "verificeres af materialet og bør tjekkes manuelt'\n"
+            "  ✗ FORKERT: 'Mangel konstateret ca. 28.-29. maj 2025' "
+            "(brug ALDRIG 'ca.')\n"
+            f"  ✗ FORKERT: 'INGEN henvendelse til {_navn} under rejsen' (brug "
+            "ALDRIG sådanne påstande uden EKSPLICIT bekræftelse i bilag)\n"
+            "  ✗ FORKERT: 'Mangel konstateret dag 2 af opholdet' (gæt "
+            "baseret på rejseperiode)\n"
+            "- Hvis du er i tvivl om en dato, skriv eksplicit at den IKKE "
+            "kan verificeres og BØR TJEKKES MANUELT. Det er ALTID bedre at "
+            "være ærlig om manglende information end at gætte.\n"
+            "\n"
+            "REGLER FOR begivenheder (TIDSLINJE):\n"
+            "- DESTINATIONS-PERIODEN ER VIGTIGST: Den juridiske vurdering "
+            "  vægter primært hvad der skete PÅ DESTINATIONEN — om klager "
+            "  reklamerede til guide/hotel/kundeservice mens man stadig var "
+            f"  der, og hvordan {_navn} reagerede dér og da. Dette er hjertet af "
+            "  'rettidig reklamation'-vurderingen.\n"
+            "- Vær EKSTRA OMHYGGELIG og DETALJERET med begivenheder mellem "
+            "  ankomst og afgang. Hver enkelt henvendelse til guide, hver "
+            f"  reaktion fra hotel, hver gang {_navn} svarede ude på destinationen "
+            "  — alt skal med, præcist dateret. Det er på destinationen at "
+            "  rejseselskabet enten har haft chancen for at afhjælpe (eller ej).\n"
+            "- Inkludér ALLE relevante kronologiske begivenheder med dato:\n"
+            "  • Klagers ankomst til destinationen (markér 'type': 'ankomst')\n"
+            "  • Hver gang klager henvendte sig til guide/hotel/kundeservice "
+            "    PÅ destinationen — disse er HØJEST PRIORITET\n"
+            f"  • Hver gang {_navn}/hotel reagerede/svarede/handlede PÅ destinationen "
+            "    — disse er HØJEST PRIORITET\n"
+            "  • Klagers afgang fra destinationen (markér 'type': 'afgang')\n"
+            f"  • Begivenheder EFTER hjemkomst (klage til {_navn}'s kundeservice "
+            f"    hjemmefra, klage til Ankenævnet, {_navn}'s svar hjemmefra) — "
+            "    disse må gerne medtages, men er sekundære. Vær kortfattet "
+            "    her — fokus skal stadig ligge på destinationen.\n"
+            "- Sortér ALTID kronologisk (ældste først).\n"
+            "- 'type': 'afgang' SKAL bruges til selve hjemrejsen så frontend'en "
+            "  kan markere hvad der er post-destination.\n"
+            "- Inkludér tidspunkt KUN hvis det fremgår af materialet — "
+            "ellers sæt 'tidspunkt': null.\n"
+            "- 'aktoer' beskriver hvem der handler/skriver (ikke hvem der "
+            f"modtager). Brug 'Klager', '{_navn} guide', '{_navn} kundeservice', "
+            "'Hotel', 'Pakkerejse-Ankenævnet'.\n"
+            f"- 'betydning' er hvordan begivenheden påvirker {_navn}'s "
+            f"forsvarsposition: 'positiv_for_tui' (fx {_navn} reagerede hurtigt, "
+            f"klager reklamerede sent), 'negativ_for_tui' (fx {_navn} ignorerede "
+            "klage, lang ventetid på respons), 'neutral' (faktuel begivenhed "
+            "uden vurdering).\n"
+            "- Hvis ingen datoer kan udledes, returnér tom liste: "
+            '"begivenheder": [].\n'
+            "- OPFIND ALDRIG datoer eller begivenheder.\n"
+            + _sprog_anchor_end()
+        )
 
     try:
         user_content = _byg_sag_content(sag, indled, slutning)
 
-        # Sprog-bevidst system-prompt — vi bruger en kort inline-system
-        # her i stedet for _system_prompt() (RAG-konteksten er ikke
-        # nødvendig for ren tidsforhold-ekstraktion). På norske tenants
-        # SKAL den dog være på norsk så AI'en ikke fornemmer dansk fra
-        # system-laget. Hvis dette aldrig fanger, falder vi til DA.
+        # Sprog-bevidst inline system. På norske tenants SKAL den selv
+        # være på norsk så AI'en ikke fornemmer dansk fra system-laget.
         if _hent_sprog() == "no":
             _inline_system = (
                 "Du er en presis juridisk research-assistent. Du finner "
@@ -3424,22 +4051,24 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
             )
         else:
             _inline_system = (
-                "Du er en præcis juridisk research-assistent. Du finder "
-                "kun datoer der faktisk fremgår af materialet — du "
-                "opfinder ALDRIG tidsangivelser."
+                "Du er en præcis juridisk research-assistent. Du "
+                "finder kun datoer der faktisk fremgår af materialet — "
+                "du opfinder ALDRIG tidsangivelser."
             )
 
-        # Hævet fra 2000 → 6000 → 10000 tokens. Den seneste justering
-        # skete fordi store sager (35+ klagepunkter, mange begivenheder)
-        # producerede JSON der overskred 6000-grænsen og blev trunkeret
-        # midt i en string. 10000 giver sikker margen op til ~50
-        # begivenheder + lange observationer.
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=10000,
-            temperature=0,
-            system=_inline_system,
-            messages=[{"role": "user", "content": user_content}],
+        # Hævet fra 2000 → 6000 → 10000 tokens. Hvis selv 10k ikke er
+        # nok (mange begivenheder, lange observationer) retry'er
+        # _kald_anthropic_robust automatisk med 20k.
+        response = _kald_anthropic_robust(
+            create_kwargs={
+                "model": MODEL,
+                "max_tokens": 10000,
+                "temperature": 0,
+                "system": _inline_system,
+                "messages": [{"role": "user", "content": user_content}],
+            },
+            ceiling_tokens=20000,
+            label="udled_tidsforhold",
         )
 
         svar = response.content[0].text.strip()
@@ -3518,8 +4147,48 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
             "begivenheder": begivenheder,
         }
     except Exception as e:
+        if _er_overload_fejl(e):
+            raise
         print(f"DEBUG: udled_tidsforhold fejlede: {e}")
         return None
+
+
+def _findes_sagsnummer_i_kilde(
+    sagsnummer: str, sag: dict, sagsakter_tekst: str = ""
+) -> bool:
+    """
+    Anchoring-check: verificerer at et sagsnummer fra AI-output rent
+    faktisk findes i kildematerialet (filtekster, sagsakter, filnavne).
+    Forhindrer at AI hallucinerer et plausibelt-udseende sagsnummer der
+    aldrig stod i sagen — hvilket ville ende i brevhoved-feltet og blive
+    sendt til Nævnet med forkert reference.
+    """
+    if not sagsnummer or not sagsnummer.strip():
+        return False
+    import re as _re
+
+    # Normalisér: tillad både '-', '.', '/' og whitespace mellem cifrene
+    # når vi sammenligner. AI'en kan skrive "25-109-8024327" mens kilden
+    # har "25.109.8024327" eller "25 109 8024327".
+    def _norm(s: str) -> str:
+        return _re.sub(r"[\s\-./]", "", s)
+
+    normaliseret = _norm(sagsnummer)
+    if not normaliseret.isdigit() or len(normaliseret) < 4:
+        # Ikke et velformet nummer — kan ikke verificeres
+        return False
+
+    tekst_dele = []
+    for fil in (sag.get("filer") or []):
+        if fil.get("filnavn"):
+            tekst_dele.append(fil["filnavn"])
+        if fil.get("tekst"):
+            tekst_dele.append(fil["tekst"])
+    if sagsakter_tekst:
+        tekst_dele.append(sagsakter_tekst)
+
+    samlet_norm = _norm("\n".join(tekst_dele))
+    return normaliseret in samlet_norm
 
 
 def _regex_find_sagsnummer(sag, sagsakter_tekst=""):
@@ -3685,10 +4354,8 @@ def udled_sagsmetadata(sag, sagsakter_tekst=""):
         user_content = _byg_sag_content(sag, indled, slutning)
 
         # Sprog-bevidst inline system. Ekstraktion af sagsnummer + navn
-        # er language-agnostic (filer kan være på dansk/norsk/engelsk), så
-        # vi har ikke behov for at tvinge norsk output — dette returnerer
-        # JSON med rå værdier. Vi formulerer dog system på norsk når aktiv
-        # tenant er norsk for konsistens.
+        # er language-agnostic (filer kan være på flere sprog), så vi
+        # formulerer dog system-prompten på tenant-sproget for konsistens.
         if _hent_sprog() == "no":
             _inline_system_ext = (
                 "Du er en presis dokument-ekstraktor. Du finner kun "
@@ -3697,27 +4364,56 @@ def udled_sagsmetadata(sag, sagsakter_tekst=""):
         else:
             _inline_system_ext = (
                 "Du er en præcis dokument-ekstraktor. Du finder kun "
-                "værdier der EKSPLICIT fremgår — du opfinder aldrig data."
+                "værdier der EKSPLICIT fremgår — du opfinder aldrig "
+                "data."
             )
 
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=400,  # JSON er ekstremt lille
-            temperature=0,
-            system=_inline_system_ext,
-            messages=[{"role": "user", "content": user_content}],
+        response = _kald_anthropic_robust(
+            create_kwargs={
+                "model": MODEL,
+                "max_tokens": 400,  # JSON er ekstremt lille
+                "temperature": 0,
+                "system": _inline_system_ext,
+                "messages": [{"role": "user", "content": user_content}],
+            },
+            ceiling_tokens=2000,
+            label="udled_sagsmetadata",
         )
 
         svar = response.content[0].text.strip()
         svar = _re.sub(r"^```(?:json)?\s*", "", svar)
         svar = _re.sub(r"\s*```$", "", svar).strip()
 
-        data = _json.loads(svar)
+        try:
+            data = _json.loads(svar)
+        except _json.JSONDecodeError:
+            data = _repair_truncated_json(svar) or {}
 
         sagsnummer = str(data.get("sagsnummer") or "").strip()
         klagers_navn = str(data.get("klagers_navn") or "").strip()
 
-        # Regex-fallback hvis AI'en ikke fandt et sagsnummer.
+        # ANCHORING-CHECK: hvis AI returnerede et sagsnummer, verificér at
+        # det rent faktisk findes i kildematerialet. AI'en kan hallucinere
+        # et plausibelt sagsnummer (rigtigt format, men opfundet) — det må
+        # ALDRIG ende i brevhovedet på det svarbrev der sendes til Nævnet.
+        # Hvis nummeret IKKE findes i kilden, behandl det som "ikke fundet"
+        # og fald tilbage til regex-søgning i raw-teksten.
+        if sagsnummer:
+            try:
+                if not _findes_sagsnummer_i_kilde(
+                    sagsnummer, sag, sagsakter_tekst
+                ):
+                    print(
+                        f"WARN: udled_sagsmetadata — AI returnerede sagsnummer "
+                        f"'{sagsnummer}' der ikke findes i kildematerialet "
+                        "(muligt hallucineret). Forkaster og bruger regex-fallback."
+                    )
+                    sagsnummer = ""
+            except Exception as _e:
+                print(f"DEBUG: sagsnummer-anchoring fejlede: {_e}")
+
+        # Regex-fallback hvis AI'en ikke fandt et sagsnummer (eller hvis
+        # AI'en hallucinerede et — vi nulstillede det ovenfor).
         # Mange klageskemaer/sagsakter indeholder nummeret eksplicit
         # (i filnavn eller med anchor-ord) — så vi kan tit fange det
         # selvom AI'en var for forsigtig.
@@ -3738,6 +4434,8 @@ def udled_sagsmetadata(sag, sagsakter_tekst=""):
             "klagers_navn": klagers_navn,
         }
     except Exception as e:
+        if _er_overload_fejl(e):
+            raise
         print(f"DEBUG: udled_sagsmetadata fejlede: {e}")
         # Selvom AI-kaldet fejlede, prøver vi stadig regex-fallback
         # på sagsnummeret — så vi i det mindste kan udfylde det felt.
@@ -3967,8 +4665,9 @@ def udled_sagsresume_strukturelt(
         # Hævet fra 800 → 2500 tokens. Store sager med mange klagepunkter
         # producerer længere resume-JSON og blev trunkeret midt i en
         # string ved 800-grænsen. 2500 giver sikker margen.
-        # System-prompten er sprog-bevidst — på norske tenants skal det
-        # være på norsk så AI'en ikke fornemmer dansk fra system-laget.
+        # System-prompten er sprog-bevidst — på norske tenants tilføjer
+        # vi et eksplicit norsk system så AI'en ikke fornemmer dansk fra
+        # system-laget. Default ingen system (uændret for DA).
         if _hent_sprog() == "no":
             _resume_system = (
                 "Du er en presis juridisk research-assistent som "
@@ -3976,7 +4675,7 @@ def udled_sagsresume_strukturelt(
                 "skriver i svaret skal være på NORSK BOKMÅL — ikke dansk."
             )
         else:
-            _resume_system = None  # falder tilbage til default system
+            _resume_system = None
 
         response = client.messages.create(
             model=MODEL,
@@ -4238,6 +4937,91 @@ def _regex_find_beloeb(tekst):
     }
 
 
+def _parse_beloeb_til_tal(beloeb_str):
+    """
+    Parser et beløb-streng til et float-tal i kroner.
+
+    Forventet format (varianter accepteres):
+      "12.500 kr."   → 12500.0
+      "1.234,56 kr." → 1234.56
+      "500"          → 500.0
+      "Afvist"       → 0.0
+      "0 kr."        → 0.0
+      "ukendt" / "" / None → None (kan ikke parses)
+
+    Returnerer None hvis værdien ikke kan parses som beløb.
+    """
+    if not beloeb_str or not isinstance(beloeb_str, str):
+        return None
+    s = beloeb_str.strip().lower()
+    if s in ("", "ukendt"):
+        return None
+    if s == "afvist":
+        return 0.0
+    # Strip "kr.", "DKK", whitespace osv.
+    import re as _re
+    rens = _re.sub(r"[a-zæøå.]+\s*$", "", s).strip()
+    rens = rens.replace(" ", "")  # "12 500" → "12500"
+    # Dansk format: . som tusind-separator, , som decimal-separator.
+    # Hvis der er BÅDE . og , antager vi . er tusind og , er decimal.
+    if "." in rens and "," in rens:
+        rens = rens.replace(".", "").replace(",", ".")
+    elif "," in rens:
+        # Kun komma — hvis den optræder før de sidste to cifre er det
+        # decimal ("1234,56"), ellers tusindseparator ("1,234")
+        if _re.match(r"^\d+,\d{1,2}$", rens):
+            rens = rens.replace(",", ".")
+        else:
+            rens = rens.replace(",", "")
+    elif "." in rens:
+        # Kun punktum — sandsynligvis tusind-separator i dansk format.
+        # Hvis det optræder før præcis 3 cifre er det tusind.
+        if _re.match(r"^\d{1,3}(?:\.\d{3})+$", rens):
+            rens = rens.replace(".", "")
+    try:
+        return float(rens)
+    except (ValueError, TypeError):
+        return None
+
+
+def _infer_udfald_fra_beloeb(klagers_krav, tilkendt_beloeb):
+    """
+    Udleder udfaldet matematisk fra beløbsstrenge.
+
+    Returnerer en af:
+      "Fuld medhold til klager" — tilkendt >= krav (med 1% margin)
+      "Delvist medhold"         — 0 < tilkendt < krav
+      "Afvist"                  — tilkendt = 0
+      None                      — kan ikke udlede (mangler input)
+
+    Bruges som sidste fallback når AI'en svarede "Ukendt" men beløbene
+    er klare.
+    """
+    krav_tal = _parse_beloeb_til_tal(klagers_krav)
+    tilkendt_tal = _parse_beloeb_til_tal(tilkendt_beloeb)
+
+    # Afvist: hvis tilkendt eksplicit er 0 ELLER strengen siger "Afvist"
+    if tilkendt_tal == 0.0 or (
+        isinstance(tilkendt_beloeb, str)
+        and tilkendt_beloeb.strip().lower() == "afvist"
+    ):
+        return "Afvist"
+
+    # Hvis ét af beløbene mangler kan vi ikke sammenligne
+    if krav_tal is None or tilkendt_tal is None:
+        return None
+
+    # Fuld medhold: tilkendt >= 99% af krav (lille margin for afrunding)
+    if tilkendt_tal >= krav_tal * 0.99:
+        return "Fuld medhold til klager"
+
+    # Delvist medhold: tilkendt < krav men > 0
+    if tilkendt_tal > 0:
+        return "Delvist medhold"
+
+    return None
+
+
 def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
     """
     Generér struktureret match-metadata for hver retriever-match, til brug i
@@ -4424,13 +5208,24 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
     )
 
     try:
+        # max_tokens=6000 så vi har plads til 5 fulde match-objekter
+        # uden trunkering. Tidligere var det 3000, men ved 5 sager med
+        # detaljerede match_begrundelse-bullets blev JSON'en afkortet
+        # midt i et objekt — json.loads fejlede så hele kaldet returnerede
+        # [], og UI'et viste tomme kort med filnavn som fallback-sagsnr.
         response = client.messages.create(
             model=MODEL,
-            max_tokens=3000,
+            max_tokens=6000,
             temperature=0,
             messages=[{"role": "user", "content": prompt}],
         )
         svar = response.content[0].text.strip()
+
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            print(
+                "DEBUG: opsummer_matches_til_visning ramte max_tokens — "
+                "JSON er muligvis afkortet"
+            )
 
         # Strip eventuelle markdown-kodeblokke
         svar = _re.sub(r"^```(?:json)?\s*", "", svar)
@@ -4545,19 +5340,43 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
                     except Exception as _af_e:
                         print(f"DEBUG: udfald-afvisnings-tekst-scan fejlede: {_af_e}")
 
+            # Beløb-baseret udfald-inference: hvis vi STADIG står med
+            # "Ukendt" men har konkrete beløb for klagers krav OG tilkendt,
+            # kan vi udlede udfaldet matematisk:
+            #   • tilkendt >= krav  → Fuld medhold til klager
+            #   • 0 < tilkendt < krav → Delvist medhold
+            #   • tilkendt == 0      → Afvist
+            # Dette er deterministisk og MEGET pålideligt — bedre end
+            # AI'ens "Ukendt"-fallback.
+            if udfald_endelig.lower() == "ukendt":
+                infereret = _infer_udfald_fra_beloeb(
+                    klagers_krav, tilkendt_beloeb
+                )
+                if infereret:
+                    udfald_endelig = infereret
+
+            # Defaulter tomme felter til 'ukendt' så UI'et altid kan vise
+            # beløb-sektionen i stedet for at gemme den. Brugere foretrækker
+            # at se 'ukendt' frem for at sektionen forsvinder helt.
+            beg_renset = [
+                str(b).strip()
+                for b in (item.get("match_begrundelse") or [])
+                if str(b).strip()
+            ]
+            if not beg_renset:
+                beg_renset = [
+                    "Ingen specifik begrundelse kunne udledes — uddraget "
+                    "kan stadig være relevant som juridisk præcedens."
+                ]
             resultat.append({
                 "sagsnummer": str(item.get("sagsnummer", "")).strip(),
                 "titel": str(item.get("titel", "")).strip(),
                 "rejsearrangoer": str(item.get("rejsearrangoer", "")).strip(),
-                "klagers_krav": klagers_krav,
-                "tilkendt_beloeb": tilkendt_beloeb,
+                "klagers_krav": klagers_krav or "ukendt",
+                "tilkendt_beloeb": tilkendt_beloeb or "ukendt",
                 "udfald": udfald_endelig,
                 "juridisk_relevant_match": juridisk_relevant,
-                "match_begrundelse": [
-                    str(b).strip()
-                    for b in (item.get("match_begrundelse") or [])
-                    if str(b).strip()
-                ],
+                "match_begrundelse": beg_renset,
             })
         return resultat
 
@@ -4760,7 +5579,7 @@ def spoerg_ai_med_sag(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
-            system=_system_prompt(),
+            system=_system_med_cache(_system_prompt()),
             messages=messages,
         )
         # Automatisk fortsættelse hvis modellen blev afbrudt af
@@ -4792,7 +5611,6 @@ def spoerg_ai_med_sag(
 # der skal stå, så indholdet bliver lige så fyldigt og juridisk skarpt
 # som før. Forskellen er kun at strukturen er ufravigelig.
 FOERSTEVURDERING_TOOL_NAME = "lever_juridisk_foerstevurdering"
-
 
 def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
     """
@@ -4921,9 +5739,19 @@ def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
                     "type": "string",
                     "description": (
                         "ÉN ENKELT setning (maks 200 tegn) på klart NORSK BOKMÅL "
-                        "som oppsummerer hva denne saken samlet anbefales å ende med. "
-                        "Eksempel: 'Saken anbefales delvis avvist da reklamasjonen var "
-                        f"for sen, mens {REJSESELSKAB_NAVN} tilbyr 1.500 NOK for "
+                        "som FORUTSIER hva saken sannsynligvis ender med. Skriv "
+                        "som en juridisk vurdering, IKKE som en intern "
+                        "anbefaling — unngå akademiske formuleringer som "
+                        "'saken anbefales i hovedsak avvist'.\n\n"
+                        "Bruk i stedet en av disse formuleringene (eller en "
+                        "lignende direkte stil):\n"
+                        "  • 'Saken forventes …'\n"
+                        "  • 'Utfallet blir høyst sannsynlig …'\n"
+                        "  • 'Klagen vil sannsynligvis bli …'\n"
+                        "  • 'Nemnda vil sannsynligvis …'\n\n"
+                        "Eksempel: 'Saken forventes delvis avvist — "
+                        "reklamasjonen var for sen, men "
+                        f"{REJSESELSKAB_NAVN} tilbyr 1.500 NOK for "
                         "booking-feilen.' INGEN bullets, INGEN flere setninger, "
                         "INGEN ekstra argumentasjon — kun ÉN linje på norsk."
                     ),
@@ -5047,10 +5875,20 @@ def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
             "konklusion_en_linje": {
                 "type": "string",
                 "description": (
-                    "ÉN ENKELT sætning (max 200 tegn) der opsummerer hvad "
-                    "denne sag samlet anbefales at ende med. Eksempel: "
-                    "'Sagen anbefales delvist afvist da reklamationen var "
-                    f"for sen, mens {REJSESELSKAB_NAVN} tilbyder 1.500 kr. for "
+                    "ÉN ENKELT sætning (max 200 tegn) der i klar dansk "
+                    "FORUDSIGER hvad sagen sandsynligvis ender med. Skriv "
+                    "som en juridisk vurdering, IKKE som en intern "
+                    "anbefaling — undgå akademiske formuleringer som "
+                    "'sagen anbefales overvejende afvist'.\n\n"
+                    "Brug i stedet en af disse formuleringer (eller en "
+                    "lignende direkte stil):\n"
+                    "  • 'Sagen forventes …'\n"
+                    "  • 'Udfaldet bliver højst sandsynligt …'\n"
+                    "  • 'Klagen vil sandsynligvis blive …'\n"
+                    "  • 'Nævnet vil formentlig …'\n\n"
+                    "Eksempel: 'Sagen forventes delvist afvist — "
+                    "reklamationen var for sen, men "
+                    f"{REJSESELSKAB_NAVN} tilbyder 1.500 kr. for "
                     "booking-fejlen.' INGEN bullets, INGEN flere sætninger, "
                     "INGEN ekstra argumentation — kun ÉN linje."
                 ),
@@ -5149,50 +5987,101 @@ def udled_foerstevurdering_struktureret(
         )
 
         # ---------- BYG PROMPT-INDLEDNING ----------
-        indled = (
-            f"{_sprog_direktiv()}"
-            f"VIDENSBANK (de mest relevante tidligere afgørelser og "
-            f"{REJSESELSKAB_NAVN}'s rejsevilkår):\n{vidensbank}\n\n"
-            f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + "
-            f"bilag — {len(filer)} filer i alt):"
-        )
-
-        sagsakter_blok = ""
-        if sagsakter_tekst:
-            sagsakter_blok = (
-                "\nSAGSAKTER (intern viden: C4C-notater, e-mails, "
-                f"bookingdetaljer):\n{sagsakter_tekst}\n\n"
-                "Disse sagsakter supplerer de officielle bilag ovenfor.\n"
+        # Sprog-bevidst scaffold — på norske tenants SKAL hele prompten
+        # være på norsk så AI'en ikke spejler dansk.
+        if _hent_sprog() == "no":
+            indled = (
+                f"{_sprog_direktiv()}"
+                f"KUNNSKAPSBASE (de mest relevante tidligere avgjørelser og "
+                f"{REJSESELSKAB_NAVN}s reisevilkår):\n{vidensbank}\n\n"
+                f"SAKENS DOKUMENTER (høring fra Nemnda + klageskjema + "
+                f"vedlegg — {len(filer)} filer totalt):"
             )
 
-        slutning = (
-            sagsakter_blok
-            + klagepunkter_facit
-            + tidsforhold_facit
-            + "\n\nDIN OPGAVE:\n"
-            + "Du skal kalde tool'et "
-            + f"'{FOERSTEVURDERING_TOOL_NAME}' med en JSON-struktureret "
-            + "førstevurdering af sagen. Læs ALLE bilag, krydsrefer mellem "
-            + "klagerens påstande og bilagenes dokumentation, brug "
-            + "vidensbanken som juridisk præcedens, og inkluder "
-            + "[Bilag XX]-referencer i alle felter. Følg felt-"
-            + "beskrivelserne præcist — de definerer indholdet af hver "
-            + "sektion.\n\n"
-            + "KRITISKE REGLER FOR HVERT FELT:\n"
-            + "- 'kort_juridisk_vurdering' er KORT (2-4 sætninger).\n"
-            + "- 'konklusion_en_linje' er ÉN sætning.\n"
-            + "- 'sandsynlighedsvurdering' SKAL indeholde 3 KONKRETE "
-            + "procenttal (fuld_medhold_til_klager, delvist_medhold_til_klager, "
-            + "afvisning_af_klagen) der tilsammen summer til 100. "
-            + "Estimér ÆRLIGT baseret på sagens faktum + præcedens fra "
-            + "vidensbanken. Returnér ALDRIG 0/0/0 — selv hvis sagen er "
-            + "ufuldstændigt oplyst, gæt kvalificeret. Et eksempel på "
-            + "valid fordeling er fx 15/55/30. 'begrundelse' skal være "
-            + "3-5 sætninger der forklarer hvorfor netop denne fordeling "
-            + "er sandsynlig, gerne med henvisninger til lignende "
-            + "tidligere afgørelser fra vidensbanken."
-            + _sprog_anchor_end()
-        )
+            sagsakter_blok = ""
+            if sagsakter_tekst:
+                sagsakter_blok = (
+                    "\nSAKSAKTER (intern kunnskap: CRM-notater, e-poster, "
+                    f"bookingdetaljer):\n{sagsakter_tekst}\n\n"
+                    "Disse saksakter supplerer de offisielle vedleggene ovenfor.\n"
+                )
+
+            slutning = (
+                sagsakter_blok
+                + klagepunkter_facit
+                + tidsforhold_facit
+                + "\n\nDIN OPPGAVE:\n"
+                + "Du skal kalle verktøyet "
+                + f"'{FOERSTEVURDERING_TOOL_NAME}' med en JSON-strukturert "
+                + "førstevurdering av saken. Les ALLE vedlegg, kryssrefer "
+                + "mellom klagers påstander og vedleggenes dokumentasjon, "
+                + "bruk kunnskapsbasen som juridisk presedens, og inkluder "
+                + "[Vedlegg XX]-referanser i alle felter. Følg felt-"
+                + "beskrivelsene presist — de definerer innholdet i hver "
+                + "seksjon.\n\n"
+                + "ALT OUTPUT SKAL VÆRE PÅ NORSK BOKMÅL — IKKE DANSK.\n\n"
+                + "KRITISKE REGLER FOR HVERT FELT:\n"
+                + "- 'kort_juridisk_vurdering' er KORT (2-4 setninger på NORSK).\n"
+                + "- 'konklusion_en_linje' er ÉN setning på NORSK.\n"
+                + "- 'sandsynlighedsvurdering' SKAL inneholde 3 KONKRETE "
+                + "prosenttall (fuld_medhold_til_klager, "
+                + "delvist_medhold_til_klager, afvisning_af_klagen) som "
+                + "tilsammen summerer til 100. Estimer ÆRLIG basert på "
+                + "sakens faktum + presedens fra kunnskapsbasen. Returner "
+                + "ALDRI 0/0/0 — selv hvis saken er ufullstendig opplyst, "
+                + "gjett kvalifisert. Et eksempel på valid fordeling er "
+                + "f.eks. 15/55/30. 'begrundelse' skal være 3-5 setninger "
+                + "PÅ NORSK BOKMÅL som forklarer hvorfor nettopp denne "
+                + "fordelingen er sannsynlig, gjerne med henvisninger til "
+                + "lignende tidligere avgjørelser fra kunnskapsbasen."
+                + _sprog_anchor_end()
+            )
+        else:
+            # ─── DK (byte-identisk med pre-lokaliserings-state) ───
+            indled = (
+                f"{_sprog_direktiv()}"
+                f"VIDENSBANK (de mest relevante tidligere afgørelser og "
+                f"{REJSESELSKAB_NAVN}'s rejsevilkår):\n{vidensbank}\n\n"
+                f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + "
+                f"bilag — {len(filer)} filer i alt):"
+            )
+
+            sagsakter_blok = ""
+            if sagsakter_tekst:
+                sagsakter_blok = (
+                    "\nSAGSAKTER (intern viden: C4C-notater, e-mails, "
+                    f"bookingdetaljer):\n{sagsakter_tekst}\n\n"
+                    "Disse sagsakter supplerer de officielle bilag ovenfor.\n"
+                )
+
+            slutning = (
+                sagsakter_blok
+                + klagepunkter_facit
+                + tidsforhold_facit
+                + "\n\nDIN OPGAVE:\n"
+                + "Du skal kalde tool'et "
+                + f"'{FOERSTEVURDERING_TOOL_NAME}' med en JSON-struktureret "
+                + "førstevurdering af sagen. Læs ALLE bilag, krydsrefer mellem "
+                + "klagerens påstande og bilagenes dokumentation, brug "
+                + "vidensbanken som juridisk præcedens, og inkluder "
+                + "[Bilag XX]-referencer i alle felter. Følg felt-"
+                + "beskrivelserne præcist — de definerer indholdet af hver "
+                + "sektion.\n\n"
+                + "KRITISKE REGLER FOR HVERT FELT:\n"
+                + "- 'kort_juridisk_vurdering' er KORT (2-4 sætninger).\n"
+                + "- 'konklusion_en_linje' er ÉN sætning.\n"
+                + "- 'sandsynlighedsvurdering' SKAL indeholde 3 KONKRETE "
+                + "procenttal (fuld_medhold_til_klager, delvist_medhold_til_klager, "
+                + "afvisning_af_klagen) der tilsammen summer til 100. "
+                + "Estimér ÆRLIGT baseret på sagens faktum + præcedens fra "
+                + "vidensbanken. Returnér ALDRIG 0/0/0 — selv hvis sagen er "
+                + "ufuldstændigt oplyst, gæt kvalificeret. Et eksempel på "
+                + "valid fordeling er fx 15/55/30. 'begrundelse' skal være "
+                + "3-5 sætninger der forklarer hvorfor netop denne fordeling "
+                + "er sandsynlig, gerne med henvisninger til lignende "
+                + "tidligere afgørelser fra vidensbanken."
+                + _sprog_anchor_end()
+            )
 
         user_content = _byg_sag_content(
             sag, indled, slutning, ekstra_sagsakter_filer=sagsakter_filer
@@ -5201,6 +6090,11 @@ def udled_foerstevurdering_struktureret(
         # ---------- KALD CLAUDE MED TOOL-USE ----------
         # tool_choice tvinger modellen til at kalde præcis dette tool —
         # den kan ikke svare med fri tekst i stedet.
+        #
+        # _kald_anthropic_robust giver os: circuit-breaker, 529-retry
+        # (3 forsøg, expo backoff), truncation-retry op til ceiling,
+        # samt automatisk token-usage-tracking til SLA-loggen.
+        #
         # Schema og tool-description er sprog-bevidste — på norsk tenant
         # får AI'en norske felt-beskrivelser som signal til at output skal
         # være på norsk (felt-beskrivelser er det stærkeste sprog-signal).
@@ -5223,21 +6117,25 @@ def udled_foerstevurdering_struktureret(
                 "klagepunkter."
             )
 
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=MAX_TOKENS,
-            temperature=0,
-            system=_system_prompt(),
-            tools=[{
-                "name": FOERSTEVURDERING_TOOL_NAME,
-                "description": _tool_beskrivelse,
-                "input_schema": _byg_foerstevurdering_schema(_sprog),
-            }],
-            tool_choice={
-                "type": "tool",
-                "name": FOERSTEVURDERING_TOOL_NAME,
+        response = _kald_anthropic_robust(
+            create_kwargs={
+                "model": MODEL,
+                "max_tokens": MAX_TOKENS,
+                "temperature": 0,
+                "system": _system_med_cache(_system_prompt()),
+                "tools": [{
+                    "name": FOERSTEVURDERING_TOOL_NAME,
+                    "description": _tool_beskrivelse,
+                    "input_schema": _byg_foerstevurdering_schema(_sprog),
+                }],
+                "tool_choice": {
+                    "type": "tool",
+                    "name": FOERSTEVURDERING_TOOL_NAME,
+                },
+                "messages": [{"role": "user", "content": user_content}],
             },
-            messages=[{"role": "user", "content": user_content}],
+            ceiling_tokens=32000,
+            label="udled_foerstevurdering_struktureret",
         )
 
         # ---------- HENT TOOL-USE OUTPUT ----------
@@ -5260,6 +6158,12 @@ def udled_foerstevurdering_struktureret(
         return None, relevante
 
     except Exception as e:
+        # Anthropic-overload (529) re-raises så frontend kan retry'e
+        # endpoint'en. Andre fejl (parse, tool-call, intern crash) svales
+        # som None og kalderen viser en venlig fejlboks i stedet.
+        if _er_overload_fejl(e):
+            print(f"DEBUG: udled_foerstevurdering_struktureret — Anthropic overloaded (propagerer)")
+            raise
         print(f"DEBUG: udled_foerstevurdering_struktureret fejlede: {e}")
         return None, []
 
@@ -5320,8 +6224,32 @@ def _normalisér_foerstevurdering(data):
             ),
             "begrundelse": _str(sandsynlighed.get("begrundelse")),
         },
-        "konklusion_en_linje": _str(data.get("konklusion_en_linje")),
+        "konklusion_en_linje": _normalisér_konklusion(
+            _str(data.get("konklusion_en_linje"))
+        ),
     }
+
+
+def _normalisér_konklusion(tekst):
+    """
+    Tvinger 'forventes'-formulering i konklusions-sætningen.
+
+    AI'en falder af og til tilbage til den akademiske formulering
+    'sagen anbefales (overvejende/delvist) afvist' selv når prompten
+    beder om prædiktiv stil. Vi rewriter deterministisk her så
+    konklusionen altid lyder som en juridisk forudsigelse — ikke som
+    en intern anbefaling. Bevarer case og formuleringen i øvrigt.
+    """
+    if not tekst:
+        return tekst
+    import re as _re
+    # 'anbefales' → 'forventes' (case-bevarende på første bogstav)
+    def _erstat(m):
+        ord_ = m.group(0)
+        if ord_[0].isupper():
+            return "Forventes"
+        return "forventes"
+    return _re.sub(r"\banbefales\b", _erstat, tekst, flags=_re.IGNORECASE)
 
 
 def foerstevurdering_dict_til_markdown(data):
@@ -5483,14 +6411,35 @@ def generer_svarbrev_til_sag(
 
         user_content = _byg_sag_content(sag, indled, slutning)
 
-        response = client.messages.create(
-            model=MODEL,
-            max_tokens=6000,
-            temperature=0.2,
-            system=_system_prompt(),
-            messages=[{"role": "user", "content": user_content}],
+        messages = [{"role": "user", "content": user_content}]
+        system_prompt = _system_med_cache(_system_prompt())
+
+        response = _kald_anthropic_robust(
+            create_kwargs={
+                "model": MODEL,
+                "max_tokens": 6000,
+                "temperature": 0.2,
+                "system": system_prompt,
+                "messages": messages,
+            },
+            ceiling_tokens=24000,
+            label="generer_svarbrev",
         )
-        svarbrev_tekst = response.content[0].text
+
+        # Ekstra sikkerhedsnet for plain-text-svar: hvis selv 24k tokens
+        # ikke var nok (sjældent, men muligt ved meget lange sager), brug
+        # _faerdiggoer_hvis_afkortet til continuation-prompting hvor det
+        # delvise svar sendes som assistant-turn og modellen fortsætter.
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            print(
+                "DEBUG: svarbrev STADIG afkortet ved 24k tokens — "
+                "forsøger continuation-prompting"
+            )
+            svarbrev_tekst = _faerdiggoer_hvis_afkortet(
+                response, system_prompt, messages, max_tokens=8000
+            )
+        else:
+            svarbrev_tekst = response.content[0].text
 
         # Sikkerhedsnet: anonymiser svarbrevet + rens forbudte ord
         # (indrømmelser, delvist-ansvar-formuleringer) før retur.
@@ -5499,6 +6448,8 @@ def generer_svarbrev_til_sag(
         )
 
     except Exception as e:
+        if _er_overload_fejl(e):
+            raise
         return f"Fejl i generering af svarbrev: {str(e)}"
 
 
@@ -5604,7 +6555,7 @@ def spoerg_ai_med_klage(spoergsmaal, sager, klage, sagsakter=None):
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
-            system=_system_prompt(),
+            system=_system_med_cache(_system_prompt()),
             messages=[{"role": "user", "content": user_content}],
         )
         return response.content[0].text
