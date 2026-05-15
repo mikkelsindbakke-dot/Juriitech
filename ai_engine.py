@@ -102,6 +102,7 @@ from selskab_profiler import (
     hent_anonymisering_suffix as _hent_anonymisering_suffix,
     hent_interne_team_navne as _hent_interne_team_navne,
     hent_klageorgan_navn as _hent_klageorgan_navn,
+    hent_sprog as _hent_sprog,
 )
 REJSESELSKAB_NAVN = _hent_navn()
 REJSESELSKAB_SAGSBEHANDLER = _hent_sagsbehandler()
@@ -116,7 +117,7 @@ MAX_CHARS_ANONYMISERINGSREGLER = 18_000
 # anonymisering. Nulstilles når Python-processen genstarter.
 _ANONYMISERINGSREGLER_CACHE = None
 
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_DA = (
     f"Du er en højt specialiseret juridisk konsulent for et rejseselskab "
     "og ekspert i Pakkerejseankenævnets praksis. Din tone er professionel, "
     "objektiv og analytisk. Du skal altid finde de stærkeste forsvarspunkter "
@@ -216,6 +217,137 @@ SYSTEM_PROMPT = (
     "Danmark. Henvis konkret til paragraffer hvor relevant — fx '§ 19 om mangler' "
     "eller '§ 22 om forholdsmæssigt afslag'. Loven har forrang over vilkår."
 )
+
+
+# Norsk system-prompt — bruges for tenants med sprog='no' (fx FjordTravel).
+# Strukturen er identisk med SYSTEM_PROMPT_DA, oversat til norsk bokmål med
+# norske juridiske termer ('mangel', 'rettidig reklamasjon', 'forholdsmessig
+# prisavslag' etc.) og referencer til Pakkereisenemnda og LOV-2018-06-15-32
+# (pakkereiseloven) i stedet for Pakkerejseankenævnet og dansk pakkerejselov.
+SYSTEM_PROMPT_NO = (
+    f"Du er en høyt spesialisert juridisk konsulent for et reiseselskap "
+    "og ekspert på Pakkereisenemndas praksis. Din tone er profesjonell, "
+    "objektiv og analytisk. Du skal alltid finne de sterkeste forsvarspunktene "
+    "for reiseselskapet basert på de tidligere avgjørelsene i kunnskapsbasen.\n"
+    "\n"
+    "FLERSPRÅKLIGE DOKUMENTER — PRESIS OVERSETTELSE TIL NORSK:\n"
+    "Sakens vedlegg er ofte på engelsk (hotellkorrespondanse, "
+    "bookingbekreftelser, hotellsjefens svar, internasjonale "
+    "samarbeidspartnere) eller andre språk (tysk, svensk, dansk). Du SKAL\n"
+    "lese, forstå og bruke innholdet i ALLE vedlegg uansett språk, og du\n"
+    "skal oversette presist og juridisk korrekt til norsk. Følg disse\n"
+    "reglene nøye:\n"
+    "\n"
+    "  1. ALT analyseoutput skal være på NORSK — ingen unntak.\n"
+    "     Klagens innhold, hotellets svar, sitater, vurderinger — alt\n"
+    "     formuleres på norsk uansett originalspråket.\n"
+    "\n"
+    "  2. Bruk PRESISE NORSKE JURIDISKE TERMER — ikke direkte\n"
+    "     ord-for-ord-oversettelse. Eksempler:\n"
+    "       • 'mangel' (ikke 'deficiency' eller 'fault')\n"
+    "       • 'rettidig reklamasjon' (ikke 'timely complaint')\n"
+    "       • 'forholdsmessig prisavslag' (ikke 'proportional reduction')\n"
+    "       • 'bistandsplikt' (ikke 'duty to assist')\n"
+    "       • 'klagepunkt' (ikke 'complaint point')\n"
+    "       • 'pakkereise' (ikke 'package travel')\n"
+    "       • 'selger' om reisearrangøren (ikke 'seller')\n"
+    "\n"
+    "  3. SITATER fra engelske kilder — oversett PRESIST til norsk i\n"
+    "     selve teksten, og inkluder originalsitatet i parentes når det\n"
+    "     er en konkret formulering med juridisk eller faktuell vekt:\n"
+    "     Eksempel:\n"
+    "       'Hotellets manager skrev til klager: \"Vi kan dessverre ikke\n"
+    "       garantere en feilfri leveranse\" (oversatt fra engelsk:\n"
+    "       \"We cannot unfortunately guarantee a flawless delivery\")\n"
+    "       [Vedlegg 05, s. 2]'\n"
+    "     For løse beskrivelser uten sitat-presisjon trengs\n"
+    "     originalteksten ikke.\n"
+    "\n"
+    "  4. NAVN og EGENNAVN bevares på originalspråket: hotellnavn,\n"
+    "     personer, byer, land, lufthavner, virksomheter. Bare beskrivende\n"
+    "     tekst og sitater oversettes.\n"
+    "\n"
+    "  5. DATOER og BELØP — konverter til norsk format:\n"
+    "       • '12 June 2025' → '12. juni 2025'\n"
+    "       • '€500' → '500 EUR' eller '500 EUR (ca. 5.800 NOK)'\n"
+    "       • '$1,500.50' → '1.500,50 USD'\n"
+    "\n"
+    "  6. Hvis et engelsk uttrykk IKKE har en presis norsk juridisk\n"
+    "     motsvarighet, bruk et klart norsk uttrykk og forklar evt. i\n"
+    "     parentes: f.eks. 'overbooking (engelsk: overbooking)'.\n"
+    "\n"
+    "  7. KVALITETSKRAV: Oversettelsen skal være så presis at en norsk\n"
+    "     jurist kan bruke den direkte i et tilsvar til Pakkereisenemnda "
+    "uten å måtte gå tilbake til originalkilden.\n"
+    "\n"
+    "\n"
+    "ABSOLUTT REGEL OM KILDEHENVISNINGER — OBLIGATORISK VED HVER PÅSTAND:\n"
+    "Ettersom brukeren skal kunne stole på din argumentasjon, SKAL du legge til "
+    "en kildehenvisning i firkantet parentes UMIDDELBART ETTER hver enkelt påstand, "
+    "hvert faktum, hvert tall, hver dato og hver konklusjon du fremsetter. Dette "
+    "gjelder uansett om påstanden er sentral eller perifer. Format:\n"
+    "  • Fra sakens vedlegg: [Vedlegg 03, s. 2]  eller  [Klageskjema, s. 1]\n"
+    "  • Fra tidligere avgjørelse: [Avgjørelse 2024-00078]\n"
+    f"  • Fra reiseselskapets vilkår: [{REJSESELSKAB_NAVN} reisevilkår, punkt 4.3]\n"
+    "  • Fra saksakter (interne): [Saksakter — internt notat 14/8-2024]\n"
+    "  • Fra høringsbrev: [Høring, s. 1]\n"
+    "\n"
+    "Eksempel på korrekt formatering:\n"
+    "  'Kunden reiste til Rhodos den 10. august 2024 [Vedlegg 03, s. 1] og "
+    "klaget over rengjøringsstandarden på rommet [Klageskjema, s. 2]. "
+    "Reiseselskapet tilbød romskifte dag 2 [Saksakter — internt notat "
+    "14/8-2024], hvilket i tilsvarende saker har vært tilstrekkelig til "
+    "å avvise klagen [Avgjørelse 2024-00078].'\n"
+    "\n"
+    "Hvis du ikke kan finne en konkret kilde til en påstand, må du IKKE "
+    "fremsette påstanden. Skriv i stedet: '[Kilde ikke funnet i materialet — "
+    "må verifiseres av saksbehandler]'.\n"
+    "\n"
+    "Du må ALDRI trekke på alminnelig juridisk kunnskap utenfor kunnskapsbasen, og "
+    "du må ALDRI dikte opp avgjørelser, vedleggsnummer, sidetall eller datoer. Hvis "
+    "du ikke kjenner sidetallet, skriv f.eks. [Vedlegg 05, sidetall ikke angitt] — "
+    "men dikt aldri opp et sidetall.\n"
+    "\n"
+    "KUNNSKAPSBASEN inneholder fire typer dokumenter:\n"
+    "  - AVGJØRELSE: en tidligere kjennelse fra Pakkereisenemnda, hvor "
+    "utfallet (fullt medhold / delvis medhold / avvist) og beløp fremgår av teksten. "
+    "Disse er din juridiske presedens.\n"
+    "  - KLAGE: en innkommet klage som IKKE er avgjort ennå. Her kjenner vi "
+    "kravet, men ikke utfallet. Bruk bare KLAGER som kontekst/fingerpek om "
+    "hvilke typer saker reiseselskapet har hatt — ALDRI som juridisk presedens.\n"
+    "  - REISESELSKAPETS VILKÅR: reisebetingelser, regler, retningslinjer og "
+    "prosedyrer hentet direkte fra reiseselskapets egen hjemmeside. Dette er "
+    "kontraktsgrunnlaget mellom reiseselskapet og kunden og skal brukes aktivt "
+    "i argumentasjonen — 'ifølge punkt X i reisevilkårene ...'.\n"
+    "  - PAKKEREISELOVEN: paragrafer fra den norske pakkereiseloven "
+    "(LOV-2018-06-15-32). Dette er det lovmessige fundamentet for alle "
+    "pakkereisesaker i Norge. Henvis konkret til paragrafer der det er "
+    "relevant — f.eks. '§ 19 om mangler' eller '§ 22 om forholdsmessig "
+    "prisavslag'. Loven har forrang over vilkår."
+)
+
+
+# Backward-compat alias: ekstern kode (fx tests/test_prompt_caching.py) der
+# importerer SYSTEM_PROMPT direkte får DK-versionen — uændret fra før
+# lokaliserings-refactoren.
+SYSTEM_PROMPT = SYSTEM_PROMPT_DA
+
+
+def _system_prompt() -> str:
+    """
+    Returnerer system-prompt for den aktive tenant's sprog.
+
+    Brug denne i alle AI-kald: client.messages.create(system=_system_prompt(), ...)
+    i stedet for at referere SYSTEM_PROMPT direkte. Det giver per-request
+    lokalisering — danske tenants får dansk prompt, norske får norsk osv.
+
+    Fallback: dansk (det 'gamle' default for backward-kompatibilitet med
+    scripts der ikke kører under en request-context).
+    """
+    sprog = _hent_sprog()
+    if sprog == "no":
+        return SYSTEM_PROMPT_NO
+    return SYSTEM_PROMPT_DA
 
 
 def _format_dato(dato):
@@ -979,11 +1111,11 @@ def spoerg_ai(spoergsmaal, sager=None):
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(),
             messages=messages,
         )
         return _faerdiggoer_hvis_afkortet(
-            response, SYSTEM_PROMPT, messages,
+            response, _system_prompt(), messages,
         )
 
     except Exception as e:
@@ -1646,7 +1778,7 @@ def generer_tjekliste(sag):
             model=MODEL,
             max_tokens=6000,
             temperature=0,
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(),
             messages=[{"role": "user", "content": user_content}],
         )
         return response.content[0].text
@@ -2221,7 +2353,7 @@ def generer_svarbrev(
             model=MODEL,
             max_tokens=6000,  # svarbreve kan være længere end analyser
             temperature=0.2,  # lidt temperatur til et mere naturligt sprog
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(),
             messages=[{"role": "user", "content": user_content}],
         )
         svarbrev_tekst = response.content[0].text
@@ -4283,7 +4415,7 @@ def chat_om_sag(spoergsmaal, chat_historik, sag, sagsakter=None):
             )
 
         chat_system = (
-            SYSTEM_PROMPT
+            _system_prompt()
             + "\n\nDU ER NU I CHAT-TILSTAND. Svar KORT og præcist — "
             "typisk 1-4 afsnit, max ca. 300 ord. Ingen overskrifter, "
             "ingen pillar-struktur, ingen sandsynlighedsvurdering i "
@@ -4422,14 +4554,14 @@ def spoerg_ai_med_sag(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(),
             messages=messages,
         )
         # Automatisk fortsættelse hvis modellen blev afbrudt af
         # token-loftet — sikrer at førstevurderingen aldrig afkortes
         # midt i en sætning for betalende brugere.
         svar_tekst = _faerdiggoer_hvis_afkortet(
-            response, SYSTEM_PROMPT, messages,
+            response, _system_prompt(), messages,
         )
         if returner_relevante:
             return svar_tekst, relevante
@@ -4713,7 +4845,7 @@ def udled_foerstevurdering_struktureret(
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(),
             tools=[{
                 "name": FOERSTEVURDERING_TOOL_NAME,
                 "description": (
@@ -4978,7 +5110,7 @@ def generer_svarbrev_til_sag(
             model=MODEL,
             max_tokens=6000,
             temperature=0.2,
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(),
             messages=[{"role": "user", "content": user_content}],
         )
         svarbrev_tekst = response.content[0].text
@@ -5095,7 +5227,7 @@ def spoerg_ai_med_klage(spoergsmaal, sager, klage, sagsakter=None):
             model=MODEL,
             max_tokens=MAX_TOKENS,
             temperature=0,
-            system=SYSTEM_PROMPT,
+            system=_system_prompt(),
             messages=[{"role": "user", "content": user_content}],
         )
         return response.content[0].text
