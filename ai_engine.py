@@ -420,6 +420,56 @@ def _sprog_direktiv() -> str:
     return ""
 
 
+def _sprog_anchor_end() -> str:
+    """
+    Returnerer en KRAFTIG terminal sprog-anchor der appendes til SLUTNINGEN
+    af user-prompts. Bruger LLM'ers recency-bias — den seneste instruktion
+    i prompten vægter tungest. Indeholder konkrete norske vokabular-anker
+    så AI'en ikke bruger danske ord ('børn', 'gæsterne', 'opholdet' osv.)
+    selv om resten af prompten er dansk-formuleret.
+
+    For DK-tenants: tom streng — byte-identisk med pre-lokaliserings-state.
+    """
+    if _hent_sprog() != "no":
+        return ""
+
+    return (
+        "\n\n═══════════════════════════════════════════════════════════════\n"
+        "🇳🇴 SISTE OG VIKTIGSTE INSTRUKS — SPRÅK\n"
+        "═══════════════════════════════════════════════════════════════\n"
+        "ALT du skriver i svaret MÅ være på NORSK BOKMÅL. Dette gjelder ALLE\n"
+        "felter, ALLE setninger, ALLE vurderinger — uten unntak.\n"
+        "\n"
+        "BRUK NORSKE ORD — IKKE DANSKE. Konkrete eksempler:\n"
+        "  ✓ 'barn'           ✗ IKKE 'børn'\n"
+        "  ✓ 'stengt'         ✗ IKKE 'lukket'\n"
+        "  ✓ 'gjestene'       ✗ IKKE 'gæsterne'\n"
+        "  ✓ 'oppholdet'      ✗ IKKE 'opholdet'\n"
+        "  ✓ 'reiseleder'     ✗ IKKE 'rejseleder'\n"
+        "  ✓ 'avgjørende'     ✗ IKKE 'afgørende'\n"
+        "  ✓ 'kontaktet'      ✗ IKKE 'kontaktede'\n"
+        "  ✓ 'avhjelpe'       ✗ IKKE 'afhjælpe'\n"
+        "  ✓ 'mulighet'       ✗ IKKE 'mulighed'\n"
+        "  ✓ 'hatt'           ✗ IKKE 'haft'\n"
+        "  ✓ 'fremsatt'       ✗ IKKE 'fremsat'\n"
+        "  ✓ 'vanligvis'      ✗ IKKE 'almindeligvis'\n"
+        "  ✓ 'reklamasjon'    ✗ IKKE 'reklamation'\n"
+        "  ✓ 'prisavslag'     ✗ IKKE 'prisafslag' eller 'afslag'\n"
+        "  ✓ 'arrangøren'     ✗ IKKE 'arrangøren' med dansk bøyning\n"
+        "  ✓ 'Pakkereisenemnda' ✗ IKKE 'Pakkerejse-Ankenævnet'\n"
+        "  ✓ 'pakkereiseloven'  ✗ IKKE 'pakkerejseloven'\n"
+        "  ✓ 'rettidig reklamasjon' ✗ IKKE 'rettidig reklamation'\n"
+        "  ✓ 'forholdsmessig prisavslag' ✗ IKKE 'forholdsmæssigt afslag'\n"
+        "  ✓ datoer på norsk format ('6. april 2026')\n"
+        "\n"
+        "Sitater fra danske eller engelske bilag MÅ oversettes til norsk i\n"
+        "din analyse (bilag-navnet kan beholdes uendret).\n"
+        "\n"
+        "Hvis EN setning ender opp på dansk i ditt svar, er svaret feil.\n"
+        "Skriv som en NORSK jurist for en NORSK kunde i et NORSK selskap.\n"
+    )
+
+
 def _format_dato(dato):
     if dato is None:
         return "ukendt dato"
@@ -2660,14 +2710,25 @@ def _check_og_rens_forbudte_ord(svarbrev_tekst):
     )
 
     try:
+        # Sprog-bevidst inline system. På norske tenants er svarbrevet på
+        # norsk, og korrektoren skal bevare det norske sprog.
+        if _hent_sprog() == "no":
+            _inline_system_korr = (
+                "Du er en presis korrektor som fjerner spesifikke "
+                "forbudte ord uten å endre noe annet i teksten. "
+                "Bevar det opprinnelige språket i teksten."
+            )
+        else:
+            _inline_system_korr = (
+                "Du er en præcis korrektor der fjerner specifikke "
+                "forbudte ord uden at ændre andet i teksten."
+            )
+
         response = client.messages.create(
             model=MODEL,
             max_tokens=6000,
             temperature=0,
-            system=(
-                "Du er en præcis korrektor der fjerner specifikke "
-                "forbudte ord uden at ændre andet i teksten."
-            ),
+            system=_inline_system_korr,
             messages=[{
                 "role": "user",
                 "content": instruktion + svarbrev_tekst,
@@ -2993,20 +3054,33 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
         "Hellere ét for mange end ét for lidt. Det er kritisk at "
         "INTET klagepunkt overses, da det får alvorlige konsekvenser "
         "for downstream juridisk rådgivning."
+        + _sprog_anchor_end()
     )
 
     try:
         user_content = _byg_sag_content(sag, indled, slutning)
 
+        # Sprog-bevidst inline system — på norske tenants skal den selv
+        # være på norsk så AI'en ikke fornemmer dansk fra system-laget.
+        if _hent_sprog() == "no":
+            _inline_system_klp = (
+                "Du er en grundig juridisk research-assistent spesialisert "
+                f"i {_hent_klageorgan_navn()} saker. Du leverer alltid "
+                "uttømmende, presise klagepunkt-lister. ALT du skriver i "
+                "svaret skal være på NORSK BOKMÅL — ikke dansk."
+            )
+        else:
+            _inline_system_klp = (
+                "Du er en grundig juridisk research-assistent specialiseret "
+                f"i {_hent_klageorgan_navn()} sager. Du leverer altid "
+                "udtømmende, præcise klagepunkt-lister."
+            )
+
         response = client.messages.create(
             model=MODEL,
             max_tokens=2000,
             temperature=0,
-            system=(
-                "Du er en grundig juridisk research-assistent specialiseret "
-                f"i {_hent_klageorgan_navn()} sager. Du leverer altid "
-                "udtømmende, præcise klagepunkt-lister."
-            ),
+            system=_inline_system_klp,
             messages=[{"role": "user", "content": user_content}],
         )
 
@@ -3330,10 +3404,30 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
         "- Hvis ingen datoer kan udledes, returnér tom liste: "
         '"begivenheder": [].\n'
         "- OPFIND ALDRIG datoer eller begivenheder.\n"
+        + _sprog_anchor_end()
     )
 
     try:
         user_content = _byg_sag_content(sag, indled, slutning)
+
+        # Sprog-bevidst system-prompt — vi bruger en kort inline-system
+        # her i stedet for _system_prompt() (RAG-konteksten er ikke
+        # nødvendig for ren tidsforhold-ekstraktion). På norske tenants
+        # SKAL den dog være på norsk så AI'en ikke fornemmer dansk fra
+        # system-laget. Hvis dette aldrig fanger, falder vi til DA.
+        if _hent_sprog() == "no":
+            _inline_system = (
+                "Du er en presis juridisk research-assistent. Du finner "
+                "kun datoer som faktisk fremgår av materialet — du "
+                "finner ALDRI på tidsangivelser. ALT du skriver i svaret "
+                "skal være på NORSK BOKMÅL — ikke dansk."
+            )
+        else:
+            _inline_system = (
+                "Du er en præcis juridisk research-assistent. Du finder "
+                "kun datoer der faktisk fremgår af materialet — du "
+                "opfinder ALDRIG tidsangivelser."
+            )
 
         # Hævet fra 2000 → 6000 → 10000 tokens. Den seneste justering
         # skete fordi store sager (35+ klagepunkter, mange begivenheder)
@@ -3344,11 +3438,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
             model=MODEL,
             max_tokens=10000,
             temperature=0,
-            system=(
-                "Du er en præcis juridisk research-assistent. Du finder "
-                "kun datoer der faktisk fremgår af materialet — du "
-                "opfinder ALDRIG tidsangivelser."
-            ),
+            system=_inline_system,
             messages=[{"role": "user", "content": user_content}],
         )
 
@@ -3594,14 +3684,27 @@ def udled_sagsmetadata(sag, sagsakter_tekst=""):
     try:
         user_content = _byg_sag_content(sag, indled, slutning)
 
+        # Sprog-bevidst inline system. Ekstraktion af sagsnummer + navn
+        # er language-agnostic (filer kan være på dansk/norsk/engelsk), så
+        # vi har ikke behov for at tvinge norsk output — dette returnerer
+        # JSON med rå værdier. Vi formulerer dog system på norsk når aktiv
+        # tenant er norsk for konsistens.
+        if _hent_sprog() == "no":
+            _inline_system_ext = (
+                "Du er en presis dokument-ekstraktor. Du finner kun "
+                "verdier som EKSPLISITT fremgår — du finner aldri på data."
+            )
+        else:
+            _inline_system_ext = (
+                "Du er en præcis dokument-ekstraktor. Du finder kun "
+                "værdier der EKSPLICIT fremgår — du opfinder aldrig data."
+            )
+
         response = client.messages.create(
             model=MODEL,
             max_tokens=400,  # JSON er ekstremt lille
             temperature=0,
-            system=(
-                "Du er en præcis dokument-ekstraktor. Du finder kun "
-                "værdier der EKSPLICIT fremgår — du opfinder aldrig data."
-            ),
+            system=_inline_system_ext,
             messages=[{"role": "user", "content": user_content}],
         )
 
@@ -3730,15 +3833,26 @@ def udled_bilag_overskrifter(filer):
     )
 
     try:
+        # Sprog-bevidst inline system. På norske tenants skal de
+        # foreslåede bilag-overskrifter være norske.
+        if _hent_sprog() == "no":
+            _inline_system_klass = (
+                "Du er en presis dokument-klassifikator. Du foreslår "
+                "korte NORSKE overskrifter til vedlegg — du finner "
+                "aldri på innhold som ikke står i teksten."
+            )
+        else:
+            _inline_system_klass = (
+                "Du er en præcis dokument-klassifikator. Du foreslår "
+                "korte danske overskrifter til bilag — du opfinder "
+                "aldrig indhold der ikke står i teksten."
+            )
+
         response = client.messages.create(
             model=MODEL,
             max_tokens=1500,  # rigeligt til 25 korte overskrifter
             temperature=0,
-            system=(
-                "Du er en præcis dokument-klassifikator. Du foreslår "
-                "korte danske overskrifter til bilag — du opfinder "
-                "aldrig indhold der ikke står i teksten."
-            ),
+            system=_inline_system_klass,
             messages=[{"role": "user", "content": indled + slutning}],
         )
 
@@ -3846,16 +3960,29 @@ def udled_sagsresume_strukturelt(
         "    'Forligstilbud på 2.000-4.000 kr. er den mest realistiske udgang'\n"
         f"- Alt på {_sprog()}.\n"
         "- Hvis en oplysning ikke fremgår, skriv 'fremgår ikke' frem for at opfinde."
+        + _sprog_anchor_end()
     )
 
     try:
         # Hævet fra 800 → 2500 tokens. Store sager med mange klagepunkter
         # producerer længere resume-JSON og blev trunkeret midt i en
         # string ved 800-grænsen. 2500 giver sikker margen.
+        # System-prompten er sprog-bevidst — på norske tenants skal det
+        # være på norsk så AI'en ikke fornemmer dansk fra system-laget.
+        if _hent_sprog() == "no":
+            _resume_system = (
+                "Du er en presis juridisk research-assistent som "
+                "produserer korte JSON-resume av klagesaker. ALT du "
+                "skriver i svaret skal være på NORSK BOKMÅL — ikke dansk."
+            )
+        else:
+            _resume_system = None  # falder tilbage til default system
+
         response = client.messages.create(
             model=MODEL,
             max_tokens=2500,
             temperature=0,
+            **({"system": _resume_system} if _resume_system else {}),
             messages=[{"role": "user", "content": prompt}],
         )
         svar = response.content[0].text.strip()
@@ -4666,131 +4793,283 @@ def spoerg_ai_med_sag(
 # som før. Forskellen er kun at strukturen er ufravigelig.
 FOERSTEVURDERING_TOOL_NAME = "lever_juridisk_foerstevurdering"
 
-FOERSTEVURDERING_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "klagens_kernepunkter": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                "Liste af de PRIMÆRE klagepunkter klager rejser mod "
-                "rejseselskabet. Hvert element er en kort beskrivelse "
-                "af et klagepunkt (max ~150 tegn). Inkludér ALLE "
-                "klagepunkter fra den verificerede liste i "
-                "kontekstprompten — uden undtagelse. Hvis klager "
-                "nævner 8 problemer, angiv 8 elementer. Hvis 17, "
-                "angiv 17. Brug formatet 'Klagepunkt N: [beskrivelse] "
-                "[Bilag XX]' hvor [Bilag XX] er en eksplicit "
-                "kildehenvisning i firkantede parenteser."
-            ),
-        },
-        "yderligere_klagepunkter_og_detaljer": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                "Liste af SEKUNDÆRE klagepunkter, kontekstuelle "
-                "detaljer og mindre kritikpunkter. Disse er IKKE "
-                "primære for den juridiske vurdering men giver et "
-                "komplet billede. Hver post er en kort beskrivelse "
-                "med [Bilag XX]-reference. Hvis der ingen sekundære "
-                "punkter er, returnér en tom liste []."
-            ),
-        },
-        "rejseselskabets_stillingtagen_indtil_nu": {
-            "type": "string",
-            "description": (
-                f"Beskriv KRONOLOGISK hvad rejseselskabet ({REJSESELSKAB_NAVN}) "
-                "har gjort, tilbudt eller afvist i "
-                "forhold til klagen INDEN Nævnet blev involveret. "
-                "Inkluder konkrete datoer fra mail-korrespondance og "
-                "sagsakter. Strukturér som flere afsnit (separer med "
-                "\\n\\n) hvis der er flere faser (på destinationen, "
-                "efter hjemkomst, sagsbehandlers svar, osv.). Brug "
-                "[Bilag XX]-referencer. Hvis det ikke fremgår tydeligt, "
-                "skriv 'fremgår ikke af bilagene'."
-            ),
-        },
-        "kort_juridisk_vurdering": {
-            "type": "string",
-            "description": (
-                "2-4 sætninger om de centrale juridiske spørgsmål i "
-                "sagen. Hvilke paragraffer i pakkerejseloven finder "
-                "anvendelse? Hvad er kernen i den juridiske "
-                "vurdering? Brug konkrete §-henvisninger (fx '§ 22', "
-                "'§ 25') og bilag-referencer. SKAL VÆRE KORT — ikke "
-                "flere afsnit, ikke nummererede underargumenter, ikke "
-                "Argument 1/2/3-format. Den fulde argumentation hører "
-                "ikke hjemme her."
-            ),
-        },
-        "sandsynlighedsvurdering": {
+
+def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
+    """
+    Builder for tool-use-schemaet til førstevurderingen. Returnerer
+    ENTEN det danske (byte-identiske) eller det norske schema afhængigt
+    af aktiv tenants sprog.
+
+    KRITISK: tool-schema-felternes 'description' er det signalet AI'en
+    spejler ALLERMEST. Hvis beskrivelsen er dansk, kommer outputtet på
+    dansk — uanset system-prompt og user-prompt. Derfor SKAL alle felt-
+    beskrivelser være på tenant-sproget.
+
+    For DK-tenants: byte-identisk med pre-lokaliserings-state.
+    """
+    if sprog == "no":
+        return {
             "type": "object",
             "properties": {
-                "fuld_medhold_til_klager": {
-                    "type": "integer",
+                "klagens_kernepunkter": {
+                    "type": "array",
+                    "items": {"type": "string"},
                     "description": (
-                        "Procentpoint (0-100) for sandsynligheden af "
-                        "FULDT medhold til klager."
+                        "Liste over de PRIMÆRE klagepunktene klager reiser mot "
+                        "reiseselskapet. Hvert element er en kort beskrivelse "
+                        "av et klagepunkt (maks ~150 tegn). Inkluder ALLE "
+                        "klagepunkter fra den verifiserte listen i "
+                        "kontekstprompten — uten unntak. Hvis klager "
+                        "nevner 8 problemer, angi 8 elementer. Hvis 17, "
+                        "angi 17. Bruk formatet 'Klagepunkt N: [beskrivelse] "
+                        "[Vedlegg XX]' hvor [Vedlegg XX] er en eksplisitt "
+                        "kildehenvisning i firkantede parenteser. ALT skal "
+                        "skrives på NORSK BOKMÅL."
                     ),
                 },
-                "delvist_medhold_til_klager": {
-                    "type": "integer",
+                "yderligere_klagepunkter_og_detaljer": {
+                    "type": "array",
+                    "items": {"type": "string"},
                     "description": (
-                        "Procentpoint (0-100) for sandsynligheden af "
-                        "DELVIST medhold til klager."
+                        "Liste over SEKUNDÆRE klagepunkter, kontekstuelle "
+                        "detaljer og mindre kritikkpunkter. Disse er IKKE "
+                        "primære for den juridiske vurderingen, men gir et "
+                        "komplett bilde. Hver post er en kort beskrivelse "
+                        "med [Vedlegg XX]-referanse. Hvis det ikke finnes "
+                        "sekundære punkter, returner en tom liste []. "
+                        "ALT skal skrives på NORSK BOKMÅL."
                     ),
                 },
-                "afvisning_af_klagen": {
-                    "type": "integer",
-                    "description": (
-                        "Procentpoint (0-100) for sandsynligheden af "
-                        "FULD afvisning af klagen."
-                    ),
-                },
-                "begrundelse": {
+                "rejseselskabets_stillingtagen_indtil_nu": {
                     "type": "string",
                     "description": (
-                        "Kort begrundelse for de tre procenter (3-5 "
-                        "sætninger) der forklarer hvorfor netop denne "
-                        "fordeling er sandsynlig. Kan henvise til "
-                        "tidligere afgørelser fra vidensbanken via "
-                        "[Afgørelse XX-YYYY (ÅÅÅÅ)]-format."
+                        f"Beskriv KRONOLOGISK hva reiseselskapet ({REJSESELSKAB_NAVN}) "
+                        "har gjort, tilbudt eller avvist i "
+                        "forhold til klagen FØR Nemnda ble involvert. "
+                        "Inkluder konkrete datoer fra e-postkorrespondanse og "
+                        "saksakter. Strukturer som flere avsnitt (separer med "
+                        "\\n\\n) hvis det er flere faser (på destinasjonen, "
+                        "etter hjemkomst, saksbehandlers svar, osv.). Bruk "
+                        "[Vedlegg XX]-referanser. Hvis det ikke fremgår tydelig, "
+                        "skriv 'fremgår ikke av vedleggene'. "
+                        "ALT skal skrives på NORSK BOKMÅL — ikke dansk."
+                    ),
+                },
+                "kort_juridisk_vurdering": {
+                    "type": "string",
+                    "description": (
+                        "2-4 setninger om de sentrale juridiske spørsmålene i "
+                        "saken. Hvilke paragrafer i pakkereiseloven kommer til "
+                        "anvendelse? Hva er kjernen i den juridiske "
+                        "vurderingen? Bruk konkrete §-henvisninger (f.eks. '§ 22', "
+                        "'§ 25') og vedlegg-referanser. SKAL VÆRE KORT — ikke "
+                        "flere avsnitt, ikke nummererte underargumenter, ikke "
+                        "Argument 1/2/3-format. Den fulle argumentasjonen hører "
+                        "ikke hjemme her. ALT skal skrives på NORSK BOKMÅL."
+                    ),
+                },
+                "sandsynlighedsvurdering": {
+                    "type": "object",
+                    "properties": {
+                        "fuld_medhold_til_klager": {
+                            "type": "integer",
+                            "description": (
+                                "Prosentpoeng (0-100) for sannsynligheten av "
+                                "FULLT medhold til klager."
+                            ),
+                        },
+                        "delvist_medhold_til_klager": {
+                            "type": "integer",
+                            "description": (
+                                "Prosentpoeng (0-100) for sannsynligheten av "
+                                "DELVIS medhold til klager."
+                            ),
+                        },
+                        "afvisning_af_klagen": {
+                            "type": "integer",
+                            "description": (
+                                "Prosentpoeng (0-100) for sannsynligheten av "
+                                "FULL avvisning av klagen."
+                            ),
+                        },
+                        "begrundelse": {
+                            "type": "string",
+                            "description": (
+                                "Kort begrunnelse for de tre prosentene (3-5 "
+                                "setninger) som forklarer hvorfor nettopp denne "
+                                "fordelingen er sannsynlig. Kan henvise til "
+                                "tidligere avgjørelser fra kunnskapsbasen via "
+                                "[Avgjørelse XX-YYYY (ÅÅÅÅ)]-format. "
+                                "ALT skal skrives på NORSK BOKMÅL."
+                            ),
+                        },
+                    },
+                    "required": [
+                        "fuld_medhold_til_klager",
+                        "delvist_medhold_til_klager",
+                        "afvisning_af_klagen",
+                        "begrundelse",
+                    ],
+                    "description": (
+                        "Tre prosenttall som summerer til 100 + en begrunnelse. "
+                        "Selv hvis saken er ufullstendig opplyst, estimer "
+                        "ærlig basert på hva du kan utlede. Begrunnelsen "
+                        "skal skrives på NORSK BOKMÅL."
+                    ),
+                },
+                "konklusion_en_linje": {
+                    "type": "string",
+                    "description": (
+                        "ÉN ENKELT setning (maks 200 tegn) på klart NORSK BOKMÅL "
+                        "som oppsummerer hva denne saken samlet anbefales å ende med. "
+                        "Eksempel: 'Saken anbefales delvis avvist da reklamasjonen var "
+                        f"for sen, mens {REJSESELSKAB_NAVN} tilbyr 1.500 NOK for "
+                        "booking-feilen.' INGEN bullets, INGEN flere setninger, "
+                        "INGEN ekstra argumentasjon — kun ÉN linje på norsk."
                     ),
                 },
             },
             "required": [
-                "fuld_medhold_til_klager",
-                "delvist_medhold_til_klager",
-                "afvisning_af_klagen",
-                "begrundelse",
+                "klagens_kernepunkter",
+                "yderligere_klagepunkter_og_detaljer",
+                "rejseselskabets_stillingtagen_indtil_nu",
+                "kort_juridisk_vurdering",
+                "sandsynlighedsvurdering",
+                "konklusion_en_linje",
             ],
-            "description": (
-                "Tre procenttal der summer til 100 + en begrundelse. "
-                "Selv hvis sagen er ufuldstændigt oplyst, estimér "
-                "ærligt baseret på hvad du kan udlede."
-            ),
+        }
+
+    # ─── Default: DK (byte-identisk med pre-lokaliserings-state) ───
+    return {
+        "type": "object",
+        "properties": {
+            "klagens_kernepunkter": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Liste af de PRIMÆRE klagepunkter klager rejser mod "
+                    "rejseselskabet. Hvert element er en kort beskrivelse "
+                    "af et klagepunkt (max ~150 tegn). Inkludér ALLE "
+                    "klagepunkter fra den verificerede liste i "
+                    "kontekstprompten — uden undtagelse. Hvis klager "
+                    "nævner 8 problemer, angiv 8 elementer. Hvis 17, "
+                    "angiv 17. Brug formatet 'Klagepunkt N: [beskrivelse] "
+                    "[Bilag XX]' hvor [Bilag XX] er en eksplicit "
+                    "kildehenvisning i firkantede parenteser."
+                ),
+            },
+            "yderligere_klagepunkter_og_detaljer": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Liste af SEKUNDÆRE klagepunkter, kontekstuelle "
+                    "detaljer og mindre kritikpunkter. Disse er IKKE "
+                    "primære for den juridiske vurdering men giver et "
+                    "komplet billede. Hver post er en kort beskrivelse "
+                    "med [Bilag XX]-reference. Hvis der ingen sekundære "
+                    "punkter er, returnér en tom liste []."
+                ),
+            },
+            "rejseselskabets_stillingtagen_indtil_nu": {
+                "type": "string",
+                "description": (
+                    f"Beskriv KRONOLOGISK hvad rejseselskabet ({REJSESELSKAB_NAVN}) "
+                    "har gjort, tilbudt eller afvist i "
+                    "forhold til klagen INDEN Nævnet blev involveret. "
+                    "Inkluder konkrete datoer fra mail-korrespondance og "
+                    "sagsakter. Strukturér som flere afsnit (separer med "
+                    "\\n\\n) hvis der er flere faser (på destinationen, "
+                    "efter hjemkomst, sagsbehandlers svar, osv.). Brug "
+                    "[Bilag XX]-referencer. Hvis det ikke fremgår tydeligt, "
+                    "skriv 'fremgår ikke af bilagene'."
+                ),
+            },
+            "kort_juridisk_vurdering": {
+                "type": "string",
+                "description": (
+                    "2-4 sætninger om de centrale juridiske spørgsmål i "
+                    "sagen. Hvilke paragraffer i pakkerejseloven finder "
+                    "anvendelse? Hvad er kernen i den juridiske "
+                    "vurdering? Brug konkrete §-henvisninger (fx '§ 22', "
+                    "'§ 25') og bilag-referencer. SKAL VÆRE KORT — ikke "
+                    "flere afsnit, ikke nummererede underargumenter, ikke "
+                    "Argument 1/2/3-format. Den fulde argumentation hører "
+                    "ikke hjemme her."
+                ),
+            },
+            "sandsynlighedsvurdering": {
+                "type": "object",
+                "properties": {
+                    "fuld_medhold_til_klager": {
+                        "type": "integer",
+                        "description": (
+                            "Procentpoint (0-100) for sandsynligheden af "
+                            "FULDT medhold til klager."
+                        ),
+                    },
+                    "delvist_medhold_til_klager": {
+                        "type": "integer",
+                        "description": (
+                            "Procentpoint (0-100) for sandsynligheden af "
+                            "DELVIST medhold til klager."
+                        ),
+                    },
+                    "afvisning_af_klagen": {
+                        "type": "integer",
+                        "description": (
+                            "Procentpoint (0-100) for sandsynligheden af "
+                            "FULD afvisning af klagen."
+                        ),
+                    },
+                    "begrundelse": {
+                        "type": "string",
+                        "description": (
+                            "Kort begrundelse for de tre procenter (3-5 "
+                            "sætninger) der forklarer hvorfor netop denne "
+                            "fordeling er sandsynlig. Kan henvise til "
+                            "tidligere afgørelser fra vidensbanken via "
+                            "[Afgørelse XX-YYYY (ÅÅÅÅ)]-format."
+                        ),
+                    },
+                },
+                "required": [
+                    "fuld_medhold_til_klager",
+                    "delvist_medhold_til_klager",
+                    "afvisning_af_klagen",
+                    "begrundelse",
+                ],
+                "description": (
+                    "Tre procenttal der summer til 100 + en begrundelse. "
+                    "Selv hvis sagen er ufuldstændigt oplyst, estimér "
+                    "ærligt baseret på hvad du kan udlede."
+                ),
+            },
+            "konklusion_en_linje": {
+                "type": "string",
+                "description": (
+                    "ÉN ENKELT sætning (max 200 tegn) der opsummerer hvad "
+                    "denne sag samlet anbefales at ende med. Eksempel: "
+                    "'Sagen anbefales delvist afvist da reklamationen var "
+                    f"for sen, mens {REJSESELSKAB_NAVN} tilbyder 1.500 kr. for "
+                    "booking-fejlen.' INGEN bullets, INGEN flere sætninger, "
+                    "INGEN ekstra argumentation — kun ÉN linje."
+                ),
+            },
         },
-        "konklusion_en_linje": {
-            "type": "string",
-            "description": (
-                "ÉN ENKELT sætning (max 200 tegn) der opsummerer hvad "
-                "denne sag samlet anbefales at ende med. Eksempel: "
-                "'Sagen anbefales delvist afvist da reklamationen var "
-                f"for sen, mens {REJSESELSKAB_NAVN} tilbyder 1.500 kr. for "
-                "booking-fejlen.' INGEN bullets, INGEN flere sætninger, "
-                "INGEN ekstra argumentation — kun ÉN linje."
-            ),
-        },
-    },
-    "required": [
-        "klagens_kernepunkter",
-        "yderligere_klagepunkter_og_detaljer",
-        "rejseselskabets_stillingtagen_indtil_nu",
-        "kort_juridisk_vurdering",
-        "sandsynlighedsvurdering",
-        "konklusion_en_linje",
-    ],
-}
+        "required": [
+            "klagens_kernepunkter",
+            "yderligere_klagepunkter_og_detaljer",
+            "rejseselskabets_stillingtagen_indtil_nu",
+            "kort_juridisk_vurdering",
+            "sandsynlighedsvurdering",
+            "konklusion_en_linje",
+        ],
+    }
+
+
+# Backward-compat alias — ekstern kode og kald-sites uden sprog-context
+# får DK-versionen. Identisk med pre-lokaliserings-state.
+FOERSTEVURDERING_SCHEMA = _byg_foerstevurdering_schema("da")
 
 
 def udled_foerstevurdering_struktureret(
@@ -4912,6 +5191,7 @@ def udled_foerstevurdering_struktureret(
             + "3-5 sætninger der forklarer hvorfor netop denne fordeling "
             + "er sandsynlig, gerne med henvisninger til lignende "
             + "tidligere afgørelser fra vidensbanken."
+            + _sprog_anchor_end()
         )
 
         user_content = _byg_sag_content(
@@ -4921,6 +5201,28 @@ def udled_foerstevurdering_struktureret(
         # ---------- KALD CLAUDE MED TOOL-USE ----------
         # tool_choice tvinger modellen til at kalde præcis dette tool —
         # den kan ikke svare med fri tekst i stedet.
+        # Schema og tool-description er sprog-bevidste — på norsk tenant
+        # får AI'en norske felt-beskrivelser som signal til at output skal
+        # være på norsk (felt-beskrivelser er det stærkeste sprog-signal).
+        _sprog = _hent_sprog()
+        if _sprog == "no":
+            _tool_beskrivelse = (
+                "Lever en strukturert juridisk førstevurdering av "
+                "saken som JSON på NORSK BOKMÅL. Alle 6 felter er "
+                "obligatoriske og skal fylles ut basert på sakens "
+                "dokumenter, kunnskapsbasens presedens og de "
+                "verifiserte klagepunktene. ALT output skal være "
+                "på norsk bokmål — ikke dansk."
+            )
+        else:
+            _tool_beskrivelse = (
+                "Lever en struktureret juridisk førstevurdering af "
+                "sagen som JSON. Alle 6 felter er obligatoriske og "
+                "skal udfyldes baseret på sagens dokumenter, "
+                "vidensbankens præcedens og de verificerede "
+                "klagepunkter."
+            )
+
         response = client.messages.create(
             model=MODEL,
             max_tokens=MAX_TOKENS,
@@ -4928,14 +5230,8 @@ def udled_foerstevurdering_struktureret(
             system=_system_prompt(),
             tools=[{
                 "name": FOERSTEVURDERING_TOOL_NAME,
-                "description": (
-                    "Lever en struktureret juridisk førstevurdering af "
-                    "sagen som JSON. Alle 6 felter er obligatoriske og "
-                    "skal udfyldes baseret på sagens dokumenter, "
-                    "vidensbankens præcedens og de verificerede "
-                    "klagepunkter."
-                ),
-                "input_schema": FOERSTEVURDERING_SCHEMA,
+                "description": _tool_beskrivelse,
+                "input_schema": _byg_foerstevurdering_schema(_sprog),
             }],
             tool_choice={
                 "type": "tool",
