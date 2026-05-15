@@ -1061,6 +1061,7 @@ def _byg_anonymisering_prompt():
     """
     navn = _hent_navn()
     suffix = _hent_anonymisering_suffix()
+    klageorgan = _hent_klageorgan_navn()
     team_navne = _hent_interne_team_navne()
     # "After Travel team, kundeservice, salg" — bygges dynamisk fra
     # profilens interne_team_navne. Hvis listen er tom, falder vi
@@ -1072,7 +1073,7 @@ def _byg_anonymisering_prompt():
 
     return f"""
 Du forbereder dokumenter (bilag) som {navn} sender til
-Pakkerejse-Ankenævnet sammen med svarbrevet. Disse bilag bruges som
+{klageorgan} sammen med svarbrevet. Disse bilag bruges som
 dokumentation, og reglerne for hvad der må fremgå er ANDERLEDES end
 for selve svarbrevet.
 
