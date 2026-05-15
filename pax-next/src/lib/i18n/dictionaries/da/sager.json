@@ -1,0 +1,40 @@
+{
+  "sager": {
+    "tilbage_til_forsiden": "Tilbage til forsiden",
+    "ny_sag": "Ny sag",
+    "titel": "Gemte sager",
+    "tenant_meta": "Tenant: {tenant} · {antal} sag(er)",
+    "ikke_linket_tenant": "Din konto er ikke linket til en tenant",
+    "tom_state": "Ingen gemte sager endnu. Upload en klage på /sag/ny og tryk \"Gem som sag\" efter analyse.",
+    "tom_state_prefix": "Ingen gemte sager endnu. Upload en klage på",
+    "tom_state_suffix": "og tryk \"Gem som sag\" efter analyse.",
+    "tom_state_link": "/sag/ny",
+    "opdateret": "Opdateret {dato}",
+    "oprettet": "Oprettet {dato}",
+    "aabn": "Åbn"
+  },
+  "sag": {
+    "tilbage_til_gemte_sager": "Tilbage til gemte sager",
+    "ny_sag": "Ny sag",
+    "meta_id_opdateret": "#{id} · Opdateret {opdateret}",
+    "meta_oprettet": "Oprettet {dato}",
+    "fejl_ikke_logget_ind": "Ikke logget ind",
+    "fejl_ikke_linket_tenant": "Din konto er ikke linket til en tenant — kontakt admin",
+    "fejl_titel_mangler": "Titel mangler",
+    "fejl_tom_state": "Tom state — intet at gemme",
+    "fejl_sag_anden_tenant": "Sag tilhører anden tenant — afvist",
+    "fejl_ikke_linket_kort": "Ikke linket til tenant",
+    "fejl_sag_findes_ikke": "Sag findes ikke i din tenant",
+    "fejl_ukendt": "Ukendt fejl"
+  },
+  "gemt_sag": {
+    "oprindelige_filer": "Oprindelige filer",
+    "fil_fallback": "Fil {nr}",
+    "fil_indhold_ikke_gemt": "Selve fil-indholdet er ikke gemt. Hvis du vil generere et nyt svarbrev eller tjekliste, skal du uploade filerne igen på forsiden.",
+    "ingen_data_fejl": "Den gemte sag indeholder ingen data.",
+    "uventet_format_fejl": "Den gemte data har et uventet format.",
+    "laese_fejl": "Kunne ikke læse den gemte sag: {detalje}. Sagen kan være korrupt eller gemt med en ældre version.",
+    "ukendt_fejl": "ukendt fejl",
+    "ingen_analyse": "Den gemte sag indeholder ikke en færdig analyse. Det kan ske hvis sagen blev gemt før analysen var færdig — upload filerne igen på forsiden for at køre en ny analyse."
+  }
+}

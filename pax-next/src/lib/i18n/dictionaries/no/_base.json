@@ -1,0 +1,114 @@
+{
+  "_meta": {
+    "sprog": "Norsk bokmål",
+    "kommentar": "Overlay — manglende nøgler falder tilbage til da.json."
+  },
+
+  "app": {
+    "navn": "juriitech PAX",
+    "beskrivelse": "Juridisk AI-assistent til Pakkereisenemnda — analyse, presedenssøk og svarbrev-generering."
+  },
+
+  "login": {
+    "titel": "Logg inn",
+    "beskrivelse": "Logg inn med din juriitech PAX-konto.",
+    "email_label": "E-post",
+    "email_placeholder": "deg@firma.no",
+    "password_label": "Passord",
+    "log_ind_knap": "Logg inn",
+    "logger_ind": "Logger inn...",
+    "glemt_password": "Glemt passordet?",
+    "fejl_generisk": "Innlogging mislyktes. Prøv igjen.",
+    "fejl_credentials": "Feil e-post eller passord.",
+    "fejl_ikke_inviteret": "Du er ikke invitert som bruker ennå. Kontakt administratoren din."
+  },
+
+  "nav": {
+    "forside": "Hjem",
+    "sager": "Saker",
+    "arkiv": "Arkiv",
+    "admin": "Admin",
+    "log_ud": "Logg ut"
+  },
+
+  "forside": {
+    "tagline": "Din juridiske AI-assistent",
+    "intro": "PAX kjører en grundig analyse, finner presedens i Pakkereisenemndas avgjørelser og hjelper deg hele veien til et ferdig svarbrev.",
+    "upload_titel": "Last opp klagesak",
+    "upload_beskrivelse": "Dra klageskjema + vedlegg hit, eller klikk for å velge filer.",
+    "upload_knap": "Velg filer",
+    "kør_analyse": "Kjør analyse",
+    "kører_analyse": "Analyserer sak...",
+    "instrukser_label": "Ytterligere instruksjoner (valgfritt)",
+    "instrukser_placeholder": "F.eks.: «Fokuser på spørsmålet om forhåndsvarsel»",
+    "ingen_filer": "Ingen filer valgt"
+  },
+
+  "analyse": {
+    "titel": "Analyse",
+    "praecedens": "Presedens",
+    "praecedens_beskrivelse": "Tidligere avgjørelser fra Pakkereisenemnda som ligner denne saken.",
+    "ingen_praecedens": "Ingen relevante presedens-saker funnet.",
+    "lovgivning": "Lovgivning",
+    "tidsforhold": "Tidsforhold",
+    "sandsynlighed": "Sannsynlighetsvurdering",
+    "sandsynlighed_medhold": "Medhold",
+    "sandsynlighed_delvist": "Delvis medhold",
+    "sandsynlighed_afvist": "Ikke medhold",
+    "klagepunkter": "Klagepunkter",
+    "anbefaling": "Anbefaling",
+    "match_kvalitet_god": "God match",
+    "match_kvalitet_begraenset": "Begrenset match"
+  },
+
+  "svarbrev": {
+    "titel": "Svarbrev",
+    "generer": "Generer svarbrev",
+    "genererer": "Genererer svarbrev...",
+    "download_docx": "Last ned som Word",
+    "download_pdf": "Last ned som PDF",
+    "kopier": "Kopier til utklippstavle",
+    "kopieret": "Kopiert!"
+  },
+
+  "tjekliste": {
+    "titel": "Sjekkliste",
+    "beskrivelse": "Forslag til konkrete handlinger før svaret sendes."
+  },
+
+  "knap": {
+    "gem_sag": "Lagre sak",
+    "gemmer": "Lagrer...",
+    "gemt": "Lagret",
+    "slet": "Slett",
+    "sletter": "Sletter...",
+    "annuller": "Avbryt",
+    "bekraeft": "Bekreft",
+    "bekraeft_slet": "Ja, slett",
+    "fortsaet": "Fortsett",
+    "tilbage": "Tilbake",
+    "luk": "Lukk",
+    "prøv_igen": "Prøv igjen"
+  },
+
+  "toast": {
+    "sag_gemt": "Saken er lagret",
+    "sag_slettet": "Saken er slettet",
+    "fejl_generisk": "Noe gikk galt. Prøv igjen.",
+    "fejl_api": "Kunne ikke nå API-et. Sjekk tilkoblingen din.",
+    "fejl_upload": "Opplasting mislyktes",
+    "uventet_fejl": "Uventet feil: {besked}"
+  },
+
+  "arkiv": {
+    "titel": "Arkiv",
+    "tomt": "Du har ennå ingen lagrede saker.",
+    "søg_placeholder": "Søk i arkiv...",
+    "sagsnr": "Saksnr.",
+    "klager": "Klager",
+    "dato": "Dato",
+    "udfald": "Utfall",
+    "se_sag": "Se sak",
+    "slet_arkiv": "Slett fra arkiv"
+  }
+}

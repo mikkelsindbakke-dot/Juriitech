@@ -1,0 +1,75 @@
+{
+  "_meta": {
+    "sprog": "Dansk",
+    "kommentar": "Forside-hero + småkomponenter (knapper, gem/slet, gemt-sag, api-health). Default-strings — andre sprog overlay'er."
+  },
+
+  "forside": {
+    "til_forsiden_aria": "Til forsiden",
+    "ny_sag_overskrift": "Ny sag",
+    "hero_paragraf": "Upload klage og bilag (PDF, DOCX, PNG, JPG eller ZIP). juriitech PAX kører en grundig analyse, finder præcedens i {klageorgan} afgørelser og hjælper dig hele vejen til et færdigt svarbrev.",
+    "klageorgan_genitiv": "Pakkerejse-Ankenævnets"
+  },
+
+  "knap": {
+    "gem": "Gem",
+    "annuller": "Annullér",
+    "bekraeft_slet": "Bekræft slet",
+    "slet": "Slet",
+    "sletter": "Sletter...",
+    "punktum_punktum_punktum": "..."
+  },
+
+  "gem_sag": {
+    "knap_aabne": "Gem som sag",
+    "titel_label": "Titel",
+    "titel_placeholder": "fx 'TUI · Gran Canaria pool-lukning'",
+    "gem": "Gem",
+    "gemmer": "Gemmer...",
+    "annuller": "Annuller",
+    "skriv_titel_fejl": "Skriv en titel.",
+    "gemt_toast": "Gemt som \"{titel}\"",
+    "gemt_admin_fejl": "Kunne ikke gemme: {fejl}",
+    "gemt_kvittering_prefix": "✓ Sagen er gemt (id #{id}). Find den under ",
+    "gemt_kvittering_link": "Gemte sager",
+    "gemt_kvittering_suffix": "."
+  },
+
+  "slet_sag": {
+    "slettede_toast": "Slettede \"{titel}\"",
+    "slet_admin_fejl": "Kunne ikke slette: {fejl}"
+  },
+
+  "slet_arkiv": {
+    "slettede_toast": "Slettede \"{titel}\"",
+    "slet_admin_fejl": "Kunne ikke slette: {fejl}"
+  },
+
+  "gemt_sag": {
+    "ingen_data_fejl": "Den gemte sag indeholder ingen data.",
+    "uventet_format_fejl": "Den gemte data har et uventet format.",
+    "laese_fejl": "Kunne ikke læse den gemte sag: {detalje}. Sagen kan være korrupt eller gemt med en ældre version.",
+    "ukendt_fejl": "ukendt fejl",
+    "oprindelige_filer": "Oprindelige filer",
+    "fil_fallback": "Fil {nr}",
+    "fil_indhold_ikke_gemt": "Selve fil-indholdet er ikke gemt. Hvis du vil generere et nyt svarbrev eller tjekliste, skal du uploade filerne igen på forsiden.",
+    "ingen_analyse": "Den gemte sag indeholder ikke en færdig analyse. Det kan ske hvis sagen blev gemt før analysen var færdig — upload filerne igen på forsiden for at køre en ny analyse."
+  },
+
+  "api_health": {
+    "ping_knap": "Ping FastAPI",
+    "pinger": "Pinger...",
+    "mangler_url_fejl": "NEXT_PUBLIC_API_URL ikke sat i .env.local",
+    "api_status_fejl": "API svarede {status}",
+    "ok_toast": "FastAPI svarer OK — alle Python-moduler loadet",
+    "moduler_fejlede_toast": "FastAPI kører, men nogle moduler fejlede import",
+    "kan_ikke_naa_api": "Kan ikke nå API: {detalje}. Husk at starte uvicorn på port 8000.",
+    "ukendt_fejl": "ukendt fejl",
+    "service_label": "Service:",
+    "moduler_label": "Python-moduler:"
+  },
+
+  "pax_logo": {
+    "aria_label": "juriitech PAX"
+  }
+}

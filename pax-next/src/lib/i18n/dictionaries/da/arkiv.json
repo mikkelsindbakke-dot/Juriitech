@@ -1,0 +1,27 @@
+{
+  "arkiv": {
+    "tilbage_til_forsiden": "Tilbage til forsiden",
+    "tilbage_til_arkivet": "Tilbage til arkivet",
+    "ny_sag": "Ny sag",
+    "titel": "Arkiv",
+    "tenant_meta": "Tenant: {tenant} · {antal} indgang(e)",
+    "tenant_meta_filter": " · filter: {filter}",
+    "ikke_linket_tenant": "Din konto er ikke linket til en tenant",
+    "filter_alle": "Alle",
+    "type_analyse": "Analyse",
+    "type_svarbrev": "Svarbrev",
+    "type_tjekliste": "Tjekliste",
+    "tom_state_filter": "Ingen {type}-indgange.",
+    "tom_state": "Arkivet er tomt. Generer en analyse, et svarbrev eller en tjekliste.",
+    "klage_label": "Klage",
+    "spoergsmaal_titel": "Spørgsmål",
+    "instrukser_titel": "Særlige instrukser",
+    "sagsakter_titel": "Sagsakter ({antal} tegn)",
+    "fejl_ikke_logget_ind": "Ikke logget ind",
+    "fejl_ikke_linket_tenant": "Ikke linket til tenant",
+    "fejl_titel_indhold": "Titel og indhold skal være udfyldt",
+    "fejl_insert_uden_id": "Insert returnerede ingen id",
+    "fejl_indgang_findes_ikke": "Indgang findes ikke i din tenant",
+    "fejl_ukendt": "Ukendt fejl"
+  }
+}

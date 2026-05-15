@@ -1,0 +1,75 @@
+{
+  "_meta": {
+    "sprog": "Norsk bokmål",
+    "kommentar": "Overlay — manglende nøkler faller tilbake til da/common.json."
+  },
+
+  "forside": {
+    "til_forsiden_aria": "Til forsiden",
+    "ny_sag_overskrift": "Ny sak",
+    "hero_paragraf": "Last opp klage og vedlegg (PDF, DOCX, PNG, JPG eller ZIP). juriitech PAX kjører en grundig analyse, finner presedens i {klageorgan} avgjørelser og hjelper deg hele veien til et ferdig svarbrev.",
+    "klageorgan_genitiv": "Pakkereisenemndas"
+  },
+
+  "knap": {
+    "gem": "Lagre",
+    "annuller": "Avbryt",
+    "bekraeft_slet": "Bekreft sletting",
+    "slet": "Slett",
+    "sletter": "Sletter...",
+    "punktum_punktum_punktum": "..."
+  },
+
+  "gem_sag": {
+    "knap_aabne": "Lagre som sak",
+    "titel_label": "Tittel",
+    "titel_placeholder": "F.eks. 'TUI · Gran Canaria bassengstenging'",
+    "gem": "Lagre",
+    "gemmer": "Lagrer...",
+    "annuller": "Avbryt",
+    "skriv_titel_fejl": "Skriv en tittel.",
+    "gemt_toast": "Lagret som \"{titel}\"",
+    "gemt_admin_fejl": "Kunne ikke lagre: {fejl}",
+    "gemt_kvittering_prefix": "✓ Saken er lagret (id #{id}). Finn den under ",
+    "gemt_kvittering_link": "Lagrede saker",
+    "gemt_kvittering_suffix": "."
+  },
+
+  "slet_sag": {
+    "slettede_toast": "Slettet \"{titel}\"",
+    "slet_admin_fejl": "Kunne ikke slette: {fejl}"
+  },
+
+  "slet_arkiv": {
+    "slettede_toast": "Slettet \"{titel}\"",
+    "slet_admin_fejl": "Kunne ikke slette: {fejl}"
+  },
+
+  "gemt_sag": {
+    "ingen_data_fejl": "Den lagrede saken inneholder ingen data.",
+    "uventet_format_fejl": "De lagrede dataene har et uventet format.",
+    "laese_fejl": "Kunne ikke lese den lagrede saken: {detalje}. Saken kan være korrupt eller lagret med en eldre versjon.",
+    "ukendt_fejl": "ukjent feil",
+    "oprindelige_filer": "Opprinnelige filer",
+    "fil_fallback": "Fil {nr}",
+    "fil_indhold_ikke_gemt": "Selve filinnholdet er ikke lagret. Hvis du vil generere et nytt svarbrev eller en ny sjekkliste, må du laste opp filene på nytt på forsiden.",
+    "ingen_analyse": "Den lagrede saken inneholder ikke en ferdig analyse. Det kan skje hvis saken ble lagret før analysen var ferdig — last opp filene på nytt på forsiden for å kjøre en ny analyse."
+  },
+
+  "api_health": {
+    "ping_knap": "Ping FastAPI",
+    "pinger": "Pinger...",
+    "mangler_url_fejl": "NEXT_PUBLIC_API_URL er ikke satt i .env.local",
+    "api_status_fejl": "API-et svarte {status}",
+    "ok_toast": "FastAPI svarer OK — alle Python-moduler er lastet",
+    "moduler_fejlede_toast": "FastAPI kjører, men noen moduler feilet under import",
+    "kan_ikke_naa_api": "Kan ikke nå API: {detalje}. Husk å starte uvicorn på port 8000.",
+    "ukendt_fejl": "ukjent feil",
+    "service_label": "Tjeneste:",
+    "moduler_label": "Python-moduler:"
+  },
+
+  "pax_logo": {
+    "aria_label": "juriitech PAX"
+  }
+}

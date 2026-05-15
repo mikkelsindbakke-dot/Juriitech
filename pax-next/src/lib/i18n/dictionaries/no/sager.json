@@ -1,0 +1,40 @@
+{
+  "sager": {
+    "tilbage_til_forsiden": "Tilbake til forsiden",
+    "ny_sag": "Ny sak",
+    "titel": "Lagrede saker",
+    "tenant_meta": "Tenant: {tenant} · {antal} sak(er)",
+    "ikke_linket_tenant": "Kontoen din er ikke knyttet til en tenant",
+    "tom_state": "Ingen lagrede saker ennå. Last opp en klage på /sag/ny og trykk \"Lagre som sak\" etter analysen.",
+    "tom_state_prefix": "Ingen lagrede saker ennå. Last opp en klage på",
+    "tom_state_suffix": "og trykk \"Lagre som sak\" etter analysen.",
+    "tom_state_link": "/sag/ny",
+    "opdateret": "Oppdatert {dato}",
+    "oprettet": "Opprettet {dato}",
+    "aabn": "Åpne"
+  },
+  "sag": {
+    "tilbage_til_gemte_sager": "Tilbake til lagrede saker",
+    "ny_sag": "Ny sak",
+    "meta_id_opdateret": "#{id} · Oppdatert {opdateret}",
+    "meta_oprettet": "Opprettet {dato}",
+    "fejl_ikke_logget_ind": "Ikke logget inn",
+    "fejl_ikke_linket_tenant": "Kontoen din er ikke knyttet til en tenant — kontakt administrator",
+    "fejl_titel_mangler": "Tittel mangler",
+    "fejl_tom_state": "Tom state — ingenting å lagre",
+    "fejl_sag_anden_tenant": "Saken tilhører en annen tenant — avvist",
+    "fejl_ikke_linket_kort": "Ikke knyttet til tenant",
+    "fejl_sag_findes_ikke": "Saken finnes ikke i din tenant",
+    "fejl_ukendt": "Ukjent feil"
+  },
+  "gemt_sag": {
+    "oprindelige_filer": "Opprinnelige filer",
+    "fil_fallback": "Fil {nr}",
+    "fil_indhold_ikke_gemt": "Selve filinnholdet er ikke lagret. Hvis du vil generere et nytt svarbrev eller sjekkliste, må du laste opp filene igjen på forsiden.",
+    "ingen_data_fejl": "Den lagrede saken inneholder ingen data.",
+    "uventet_format_fejl": "Den lagrede dataen har et uventet format.",
+    "laese_fejl": "Kunne ikke lese den lagrede saken: {detalje}. Saken kan være korrupt eller lagret med en eldre versjon.",
+    "ukendt_fejl": "ukjent feil",
+    "ingen_analyse": "Den lagrede saken inneholder ikke en ferdig analyse. Det kan skje hvis saken ble lagret før analysen var ferdig — last opp filene igjen på forsiden for å kjøre en ny analyse."
+  }
+}
