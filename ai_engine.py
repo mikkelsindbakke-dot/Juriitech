@@ -5158,6 +5158,31 @@ def _infer_udfald_fra_beloeb(klagers_krav, tilkendt_beloeb):
     return None
 
 
+def _filtrer_og_cap_matches(matches, max_n: int = 3):
+    """
+    Renser lignende-sager-listen før den vises i UI'et.
+
+    Filtrerer alle sager med udfald="Ukendt" (eller tomt/None) ud — de
+    tjener intet juridisk formål når juristen ikke kan se hvad sagen
+    endte med. Capper derefter listen til top N (default 3 — reranker'en
+    har allerede sorteret efter relevans, så top 3 er de juridisk
+    stærkeste matches der har et klart udfald).
+
+    Robust mod None og fejlende matches-input.
+    """
+    if not matches:
+        return []
+    filtreret = []
+    for m in matches:
+        if not isinstance(m, dict):
+            continue
+        udfald = str(m.get("udfald") or "").strip().lower()
+        if udfald == "ukendt" or udfald == "":
+            continue
+        filtreret.append(m)
+    return filtreret[:max_n]
+
+
 def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
     """
     Generér struktureret match-metadata for hver retriever-match, til brug i
@@ -5514,11 +5539,51 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
                 "juridisk_relevant_match": juridisk_relevant,
                 "match_begrundelse": beg_renset,
             })
+        # Resultatet er 1:1 med relevante_sager (samme rækkefølge, samme
+        # længde). Kalderen kan bruge par_filtrer_relevante_og_matches
+        # til at filtrere både rel_sager og match_info parallelt så
+        # frontend-pairingen forbliver konsistent.
         return resultat
 
     except Exception as e:
         print(f"DEBUG: opsummer_matches_til_visning fejlede: {e}")
         return []
+
+
+def par_filtrer_relevante_og_matches(relevante_sager, match_info, max_n: int = 3):
+    """
+    Filtrerer to parallelle lister samtidig: relevante_sager og det
+    tilhørende match_info (returneret af opsummer_matches_til_visning).
+    Drop entries hvor match_info[i].udfald er "Ukendt" eller tomt, og
+    cap til top N. Bevarer 1:1-pairingen frontend forventer.
+
+    Returnerer (rel_sager_filtreret, match_info_filtreret).
+
+    Robust over for længde-mismatch (kortere match_info → de overskydende
+    rel_sager bevares uden filter, så vi ikke smider data væk på grund
+    af et fejlende AI-kald).
+    """
+    if not relevante_sager:
+        return [], []
+    if not match_info:
+        # match_info kunne ikke beregnes — vis så bare top N raw matches
+        # (det er bedre end at smide alt væk).
+        return relevante_sager[:max_n], []
+
+    par_filtreret_rel = []
+    par_filtreret_mi = []
+    for i, mi in enumerate(match_info):
+        udfald = ""
+        if isinstance(mi, dict):
+            udfald = str(mi.get("udfald") or "").strip().lower()
+        if udfald == "ukendt" or udfald == "":
+            continue
+        if i < len(relevante_sager):
+            par_filtreret_rel.append(relevante_sager[i])
+            par_filtreret_mi.append(mi)
+        if len(par_filtreret_rel) >= max_n:
+            break
+    return par_filtreret_rel, par_filtreret_mi
 
 
 def chat_om_sag(spoergsmaal, chat_historik, sag, sagsakter=None):

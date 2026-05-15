@@ -1291,11 +1291,21 @@ async def foerstevurdering(
     match_info = []
     if rel_sager_clean:
         try:
-            from ai_engine import opsummer_matches_til_visning
+            from ai_engine import (
+                opsummer_matches_til_visning,
+                par_filtrer_relevante_og_matches,
+            )
             match_info = opsummer_matches_til_visning(
                 uploadet_sag=sag,
                 relevante_sager=rel_sager_clean,
             ) or []
+            # Drop sager hvor udfaldet ikke kunne udledes (de tilbyder
+            # ingen prejudikatværdi til juristen) og cap til top 3.
+            # rel_sager_clean og match_info filtreres parallelt så
+            # frontend-pairingen [i] forbliver konsistent.
+            rel_sager_clean, match_info = par_filtrer_relevante_og_matches(
+                rel_sager_clean, match_info, max_n=3,
+            )
         except Exception as e:
             print(f"DEBUG: opsummer_matches_til_visning fejlede ({e}) — fortsætter uden")
             match_info = []
