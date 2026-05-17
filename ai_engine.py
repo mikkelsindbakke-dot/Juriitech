@@ -298,6 +298,12 @@ from selskab_profiler import (
     hent_klageorgan_navn as _hent_klageorgan_navn,
     hent_sprog as _hent_sprog,
 )
+# ADVARSEL: Disse to evalueres ved IMPORT-tid — før nogen tenant er
+# aktiv — så de fanger ALTID TUI-defaulten. Brug dem ALDRIG direkte i
+# tenant-bevidst kode (prompts, schemaer osv.). Kald i stedet _hent_navn()
+# / _hent_sagsbehandler() pr. request, eller shadow lokalt i funktionen
+# (se byg_svarbrev_opgave for mønstret). Beholdt kun som backward-compat
+# default for ikke-request-kontekster (scripts, backfills).
 REJSESELSKAB_NAVN = _hent_navn()
 REJSESELSKAB_SAGSBEHANDLER = _hent_sagsbehandler()
 
@@ -375,7 +381,7 @@ SYSTEM_PROMPT_DA = (
     "gælder uanset om påstanden er central eller perifer. Format:\n"
     "  • Fra sagens bilag: [Bilag 03, s. 2]  eller  [Klageskema, s. 1]\n"
     "  • Fra tidligere afgørelse: [Afgørelse 19-1467 (2019)]\n"
-    f"  • Fra rejseselskabets vilkår: [{REJSESELSKAB_NAVN} rejsevilkår, punkt 4.3]\n"
+    "  • Fra rejseselskabets vilkår: [__REJSESELSKAB__ rejsevilkår, punkt 4.3]\n"
     "  • Fra sagsakter (C4C/interne): [Sagsakter — C4C-notat 14/8-2024]\n"
     "  • Fra høringsbrev: [Høring, s. 1]\n"
     "\n"
@@ -482,7 +488,7 @@ SYSTEM_PROMPT_NO = (
     "gjelder uansett om påstanden er sentral eller perifer. Format:\n"
     "  • Fra sakens vedlegg: [Vedlegg 03, s. 2]  eller  [Klageskjema, s. 1]\n"
     "  • Fra tidligere avgjørelse: [Avgjørelse 2024-00078]\n"
-    f"  • Fra reiseselskapets vilkår: [{REJSESELSKAB_NAVN} reisevilkår, punkt 4.3]\n"
+    "  • Fra reiseselskapets vilkår: [__REJSESELSKAB__ reisevilkår, punkt 4.3]\n"
     "  • Fra saksakter (interne): [Saksakter — internt notat 14/8-2024]\n"
     "  • Fra høringsbrev: [Høring, s. 1]\n"
     "\n"
@@ -538,10 +544,14 @@ def _system_prompt() -> str:
     Fallback: dansk (det 'gamle' default for backward-kompatibilitet med
     scripts der ikke kører under en request-context).
     """
+    # __REJSESELSKAB__ er en placeholder i SYSTEM_PROMPT-konstanterne
+    # (de bygges ved import-tid, før nogen tenant er aktiv). Vi
+    # substituerer den her med den faktisk aktive tenants navn så
+    # citat-format-eksemplet i prompten viser fx [Apollo Rejser
+    # rejsevilkår...] og ikke en hardcoded fremmed tenant.
     sprog = _hent_sprog()
-    if sprog == "no":
-        return SYSTEM_PROMPT_NO
-    return SYSTEM_PROMPT_DA
+    basis = SYSTEM_PROMPT_NO if sprog == "no" else SYSTEM_PROMPT_DA
+    return basis.replace("__REJSESELSKAB__", _hent_navn())
 
 
 # ─── SPROG-HJÆLPERE TIL USER-PROMPTS ───────────────────────────────
@@ -2986,6 +2996,13 @@ def _sikr_svarbrev_anonymiseret(svarbrev_tekst):
         if not svarbrev_tekst or not svarbrev_tekst.strip():
             return svarbrev_tekst
 
+        # Shadow modul-globalerne med per-request-lookup — ellers
+        # instruerer vi AI'en i at BEVARE "TUI" og maskere medarbejder-
+        # navne som "TUI", selv når svarbrevet tilhører Apollo/Spies/
+        # FjordTravel. Værst: en fremmed tenants navn ville ikke være
+        # eksplicit beskyttet mod anonymisering.
+        REJSESELSKAB_NAVN = _hent_navn()
+        REJSESELSKAB_SAGSBEHANDLER = _hent_sagsbehandler()
         _klageorgan = _hent_klageorgan_navn()
         instruktion = (
             "Du modtager et allerede færdigskrevet svarbrev fra "
@@ -3162,7 +3179,7 @@ def _check_og_rens_forbudte_ord(svarbrev_tekst):
         '  - "...hvilket vi tager til efterretning"\n'
         '  - "...som vi har lært af"\n'
         '  - "...som vi vil arbejde på at forbedre"\n'
-        '  - "...{REJSESELSKAB_NAVN} medgiver/medgav at..."\n\n'
+        f'  - "...{_hent_navn()} medgiver/medgav at..."\n\n'
         "REWRITE-EKSEMPLER:\n\n"
         '  Type 1 — ord:\n'
         '  ❌ "X beklager at Y skete" → ✅ "Y skete (uden følelsesladede '
@@ -5744,7 +5761,7 @@ def spoerg_ai_med_sag(
 
         indled = (
             f"VIDENSBANK (de mest relevante tidligere afgørelser og "
-            f"{REJSESELSKAB_NAVN}'s rejsevilkår):\n"
+            f"{_hent_navn()}'s rejsevilkår):\n"
             f"{vidensbank}\n\n"
             f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + bilag — "
             f"{len(filer)} filer i alt):"
@@ -5826,6 +5843,12 @@ def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
 
     For DK-tenants: byte-identisk med pre-lokaliserings-state.
     """
+    # KRITISK: modul-niveau REJSESELSKAB_NAVN er evalueret ved import-tid
+    # og fanger altid TUI-default. Vi shadow'er lokalt så schema-
+    # beskrivelserne afspejler den faktisk aktive tenant (Apollo, Spies,
+    # FjordTravel osv.) — ellers ser AI'en "TUI" i schemaet uanset hvem
+    # vi analyserer for. Samme mønster som byg_svarbrev_opgave.
+    REJSESELSKAB_NAVN = _hent_navn()
     if sprog == "no":
         return {
             "type": "object",
@@ -6013,8 +6036,8 @@ def _byg_foerstevurdering_schema(sprog: str = "da") -> dict:
                     "selve formuleringen, ikke af et prefix.\n\n"
                     "  ❌ 'Kontekst — Rejsens samlede pris var 28.912 DKK.'\n"
                     "  ✅ 'Rejsens samlede pris var 28.912 DKK [Bilag 03].'\n\n"
-                    "  ❌ 'Klagepunkt — TUI's After Travel-afdeling henviste forkert.'\n"
-                    "  ✅ 'TUI's After Travel-afdeling henviste klager forkert til databeskyttelsespolitikken [Bilag 14].'"
+                    f"  ❌ 'Klagepunkt — {REJSESELSKAB_NAVN}s After Travel-afdeling henviste forkert.'\n"
+                    f"  ✅ '{REJSESELSKAB_NAVN}s After Travel-afdeling henviste klager forkert til databeskyttelsespolitikken [Bilag 14].'"
                 ),
             },
             "rejseselskabets_stillingtagen_indtil_nu": {
@@ -6212,7 +6235,7 @@ def udled_foerstevurdering_struktureret(
             indled = (
                 f"{_sprog_direktiv()}"
                 f"KUNNSKAPSBASE (de mest relevante tidligere avgjørelser og "
-                f"{REJSESELSKAB_NAVN}s reisevilkår):\n{vidensbank}\n\n"
+                f"{_hent_navn()}s reisevilkår):\n{vidensbank}\n\n"
                 f"SAKENS DOKUMENTER (høring fra Nemnda + klageskjema + "
                 f"vedlegg — {len(filer)} filer totalt):"
             )
@@ -6260,7 +6283,7 @@ def udled_foerstevurdering_struktureret(
             indled = (
                 f"{_sprog_direktiv()}"
                 f"VIDENSBANK (de mest relevante tidligere afgørelser og "
-                f"{REJSESELSKAB_NAVN}'s rejsevilkår):\n{vidensbank}\n\n"
+                f"{_hent_navn()}'s rejsevilkår):\n{vidensbank}\n\n"
                 f"SAGENS DOKUMENTER (høring fra Nævnet + klageskema + "
                 f"bilag — {len(filer)} filer i alt):"
             )

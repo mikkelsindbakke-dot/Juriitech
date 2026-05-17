@@ -52,17 +52,44 @@ def med_profil():
         selskab_profiler.reset_aktiv_profil(t)
 
 
-def test_da_system_prompt_byte_identisk_med_baseline():
-    """DK SYSTEM_PROMPT skal være byte-identisk med pre-refactor."""
-    from ai_engine import SYSTEM_PROMPT_DA
-    h = hashlib.sha256(SYSTEM_PROMPT_DA.encode()).hexdigest()
-    assert len(SYSTEM_PROMPT_DA) == DK_SYSTEM_PROMPT_LENGTH, (
-        f"DK system-prompt har {len(SYSTEM_PROMPT_DA)} tegn, "
+def test_da_system_prompt_byte_identisk_med_baseline(med_profil):
+    """
+    DK system-prompt SKAL være byte-identisk med pre-refactor for TUI.
+
+    Bemærk: SYSTEM_PROMPT_DA-konstanten indeholder nu en __REJSESELSKAB__-
+    placeholder (i stedet for hardcoded 'TUI'), så multi-tenant får deres
+    eget navn i citat-format-eksemplet. Vi tester derfor det FAKTISKE
+    output af _system_prompt() med TUI aktiv — efter substitution er det
+    byte-identisk med den oprindelige konstant.
+    """
+    from ai_engine import _system_prompt
+    med_profil(TUI_STUB)
+    prompt = _system_prompt()
+    h = hashlib.sha256(prompt.encode()).hexdigest()
+    assert len(prompt) == DK_SYSTEM_PROMPT_LENGTH, (
+        f"DK system-prompt (TUI) har {len(prompt)} tegn, "
         f"forventet {DK_SYSTEM_PROMPT_LENGTH} (byte-identisk med før refactor)"
     )
     assert h == DK_SYSTEM_PROMPT_SHA256, (
-        f"DK system-prompt har SHA256={h}, forventet {DK_SYSTEM_PROMPT_SHA256}. "
+        f"DK system-prompt (TUI) har SHA256={h}, forventet {DK_SYSTEM_PROMPT_SHA256}. "
         "Dansk PAX-adfærd ville være ÆNDRET hvis denne test fejler."
+    )
+
+
+def test_system_prompt_placeholder_substitueres_pr_tenant(med_profil):
+    """__REJSESELSKAB__-placeholderen SKAL erstattes med aktiv tenants navn."""
+    from ai_engine import _system_prompt
+    med_profil(TUI_STUB)
+    tui_prompt = _system_prompt()
+    assert "__REJSESELSKAB__" not in tui_prompt, "placeholder ikke substitueret"
+    assert "[TUI rejsevilkår, punkt 4.3]" in tui_prompt
+
+    med_profil({**TUI_STUB, "slug": "apollo", "navn": "Apollo Rejser"})
+    apollo_prompt = _system_prompt()
+    assert "__REJSESELSKAB__" not in apollo_prompt
+    assert "[Apollo Rejser rejsevilkår, punkt 4.3]" in apollo_prompt
+    assert "[TUI rejsevilkår" not in apollo_prompt, (
+        "TUI lækkede ind i Apollos system-prompt"
     )
 
 
@@ -76,23 +103,31 @@ def test_backwards_compat_SYSTEM_PROMPT_peger_paa_DA():
 
 
 def test_system_prompt_function_for_tui_returnerer_DA(med_profil):
-    """Aktiv profil TUI → _system_prompt() returnerer SYSTEM_PROMPT_DA."""
+    """Aktiv profil TUI → _system_prompt() returnerer den danske prompt.
+
+    Sammenligner med SYSTEM_PROMPT_DA efter placeholder-substitution
+    (_system_prompt returnerer en .replace()'d kopi, ikke samme objekt)."""
     from ai_engine import _system_prompt, SYSTEM_PROMPT_DA
     med_profil(TUI_STUB)
-    assert _system_prompt() is SYSTEM_PROMPT_DA
+    forventet = SYSTEM_PROMPT_DA.replace("__REJSESELSKAB__", "TUI")
+    assert _system_prompt() == forventet
 
 
 def test_system_prompt_function_for_fjordtravel_returnerer_NO(med_profil):
-    """Aktiv profil FjordTravel → _system_prompt() returnerer SYSTEM_PROMPT_NO."""
+    """Aktiv profil FjordTravel → _system_prompt() returnerer den norske prompt."""
     from ai_engine import _system_prompt, SYSTEM_PROMPT_NO
     med_profil(FJORD_STUB)
-    assert _system_prompt() is SYSTEM_PROMPT_NO
+    forventet = SYSTEM_PROMPT_NO.replace("__REJSESELSKAB__", "FjordTravel AS")
+    assert _system_prompt() == forventet
 
 
 def test_system_prompt_default_er_DA():
     """Uden aktiv profil falder vi tilbage til dansk (bagudkompatibelt)."""
-    from ai_engine import _system_prompt, SYSTEM_PROMPT_DA
-    assert _system_prompt() is SYSTEM_PROMPT_DA
+    from ai_engine import _system_prompt
+    prompt = _system_prompt()
+    # Dansk prompt: nævner Pakkerejseankenævnet, ikke det norske organ
+    assert "Pakkerejseankenævnet" in prompt
+    assert "Pakkereisenemnda" not in prompt
 
 
 def test_NO_system_prompt_indeholder_norske_juridiske_termer():
