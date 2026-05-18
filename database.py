@@ -3457,3 +3457,78 @@ def find_relevante_sager(
     except Exception as e:
         print(f"DEBUG: Kunne ikke finde relevante sager: {e}")
         return []
+
+
+# ─────────────────────────────────────────────────────────────────
+# FORUDSIGELSES-FEEDBACK-LØKKE (bagvedliggende — usynlig for brugeren)
+# ─────────────────────────────────────────────────────────────────
+
+def log_forudsigelse(
+    sagsnummer,
+    tenant_id,
+    sandsynlighedsvurdering,
+    konklusion,
+):
+    """
+    FIRE-AND-FORGET: gemmer PAX' forudsigelse til feedback-løkken.
+
+    Kaldes efter en førstevurdering. Fejler ALDRIG — enhver exception
+    (DB nede, tabel mangler, ugyldig data) sluges, så en analyse aldrig
+    blokeres eller fejler pga. dette skygge-trin. Hele formålet er at
+    være en ren observation der ikke kan røre den eksisterende flow.
+
+    Springer over (uden fejl) hvis sagsnummeret er tomt — uden et
+    sagsnummer kan forudsigelsen aldrig matches mod den faktiske
+    afgørelse, så rækken ville være værdiløs.
+
+    Gemmer INGEN klager- eller persondata — kun det offentlige
+    nævns-sagsnummer, tenant_id, PAX' egne sandsynligheds-tal og
+    konklusionslinjen.
+    """
+    try:
+        from forudsigelses_eval import (
+            normaliser_sagsnummer,
+            pax_argmax_bucket,
+        )
+
+        sagsnummer = (sagsnummer or "").strip()
+        sagsnummer_norm = normaliser_sagsnummer(sagsnummer)
+        if not sagsnummer_norm:
+            # Intet brugbart sagsnummer — drop stille (ingen join-nøgle).
+            return
+
+        sv = sandsynlighedsvurdering or {}
+        fuld = sv.get("fuld_medhold_til_klager")
+        delvist = sv.get("delvist_medhold_til_klager")
+        afvisning = sv.get("afvisning_af_klagen")
+        bucket = pax_argmax_bucket(fuld, delvist, afvisning)
+
+        conn = _connect()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                INSERT INTO forudsigelses_log (
+                    sagsnummer, sagsnummer_norm, tenant_id,
+                    forudsagt_fuld_medhold, forudsagt_delvist_medhold,
+                    forudsagt_afvisning, forudsagt_konklusion, pax_bucket
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (
+                    sagsnummer,
+                    sagsnummer_norm,
+                    tenant_id,
+                    fuld,
+                    delvist,
+                    afvisning,
+                    (konklusion or "").strip() or None,
+                    bucket,
+                ),
+            )
+            conn.commit()
+            cur.close()
+        finally:
+            conn.close()
+    except Exception as e:
+        # Bevidst bredt: dette trin må ALDRIG påvirke analysen.
+        print(f"DEBUG: log_forudsigelse sprang over ({e})")

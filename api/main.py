@@ -1394,6 +1394,24 @@ async def foerstevurdering(
         },
     )
 
+    # ---------- Forudsigelses-feedback-løkke (bagvedliggende) ----------
+    # FIRE-AND-FORGET: gem PAX' forudsigelse så vi senere kan måle hvor
+    # præcist den ramte den faktiske nævnsafgørelse. Helt usynligt for
+    # brugeren. Pakket i try/except + log_forudsigelse er selv fail-safe,
+    # så dette trin kan ALDRIG blokere eller fejle analysen.
+    try:
+        from ai_engine import _regex_find_sagsnummer
+        from database import log_forudsigelse, hent_aktiv_tenant_id
+        _sagsnr = _regex_find_sagsnummer(sag, sagsakter or "")
+        log_forudsigelse(
+            sagsnummer=_sagsnr,
+            tenant_id=hent_aktiv_tenant_id(),
+            sandsynlighedsvurdering=analyse_dict.get("sandsynlighedsvurdering"),
+            konklusion=analyse_dict.get("konklusion_en_linje"),
+        )
+    except Exception as _fe:
+        print(f"DEBUG: forudsigelses-capture sprang over ({_fe})")
+
     return {
         "klagepunkter": klagepunkter,
         "tidsforhold": tidsforhold,
