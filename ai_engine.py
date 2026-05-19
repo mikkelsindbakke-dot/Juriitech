@@ -5200,10 +5200,16 @@ def _filtrer_og_cap_matches(matches, max_n: int = 3):
     return filtreret[:max_n]
 
 
-def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
+def opsummer_matches_til_visning(uploadet_sag, relevante_sager, kernepunkter=None):
     """
     Generér struktureret match-metadata for hver retriever-match, til brug i
     de visuelle sagskort.
+
+    kernepunkter (valgfri list[str]): klagens kernepunkter fra
+    førstevurderingen. Når de gives, leder de relevans-dommen som PRIMÆRT
+    sammenlignings-grundlag — essens-mod-essens frem for at AI'en selv
+    skal grave kernen ud af rå, støjfyldt filtekst. Udeladt/tom → prompten
+    er byte-identisk med før, så legacy-kald er fuldt uberørt.
 
     Returnerer en liste af dicts i samme rækkefølge som 'relevante_sager':
       {
@@ -5232,6 +5238,31 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         if t:
             upload_dele.append(f"--- {f.get('filnavn', 'fil')} ---\n{t[:1500]}")
     uploadet_resume = "\n\n".join(upload_dele)[:5000] or "(Ingen tekst udtrukket lokalt)"
+
+    # Klagens kernepunkter (fra førstevurderingen) er en præcis, støjfri
+    # destillering af hvad sagen juridisk handler om. Når de gives, leder
+    # vi prompten med dem som PRIMÆRT grundlag for relevans-dommen — den
+    # rå filtekst beholdes kun som sekundær kontekst. Gives de ikke, er
+    # kernepunkter_blok tom og ny_sag_label uændret, så prompten er
+    # byte-identisk med tidligere adfærd.
+    kernepunkter_rene = [
+        str(kp).strip() for kp in (kernepunkter or []) if str(kp).strip()
+    ]
+    if kernepunkter_rene:
+        kernepunkter_blok = (
+            "NY SAGS KERNEPUNKTER (præcis destillering af hvad den nye "
+            "sag juridisk handler om — brug DISSE som primært grundlag "
+            "for relevans-vurderingen):\n"
+            + "\n".join(f"- {kp}" for kp in kernepunkter_rene)
+            + "\n\n"
+        )
+        ny_sag_label = (
+            "NY SAG (rå uddrag af de uploadede filer — supplerende "
+            "kontekst, kan indeholde procedurel støj):"
+        )
+    else:
+        kernepunkter_blok = ""
+        ny_sag_label = "NY SAG (uddrag af de uploadede filer):"
 
     # Byg tekst for hver tidligere afgørelse — bruger udtraek_sagen_angaar
     # til at trække titel + 'Klagen angår'-afsnit + nævnets bemærkninger
@@ -5345,7 +5376,8 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager):
         "═══════════════════════════════════════════════════════════════\n"
         "MATERIALE:\n"
         "═══════════════════════════════════════════════════════════════\n\n"
-        "NY SAG (uddrag af de uploadede filer):\n"
+        f"{kernepunkter_blok}"
+        f"{ny_sag_label}\n"
         f"{uploadet_resume}\n\n"
         "TIDLIGERE AFGØRELSER:"
         f"{sager_tekst}\n\n"

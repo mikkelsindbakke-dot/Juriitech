@@ -1298,6 +1298,7 @@ async def foerstevurdering(
             match_info = opsummer_matches_til_visning(
                 uploadet_sag=sag,
                 relevante_sager=rel_sager_clean,
+                kernepunkter=analyse_dict.get("klagens_kernepunkter"),
             ) or []
             # Drop sager hvor udfaldet ikke kunne udledes (de tilbyder
             # ingen prejudikatværdi til juristen) og cap til top 3.

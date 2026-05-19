@@ -21,6 +21,10 @@ env
 .env
 .env.*
 !.env.example
+# NB: pax-next/.env.local er BEVIDST IKKE filtreret — Next.js kræver
+# DATABASE_URL ved build-time (collect page data for /arkiv). I stedet
+# overskriver Dockerfile.next NEXT_PUBLIC_API_URL="" eksplicit, så
+# klient-bundlen bruger relative URLs i produktion.
 
 # Git og editor-filer
 .git
@@ -49,3 +53,30 @@ fly.toml
 
 # Streamlit-cache (oprettes ved runtime)
 .streamlit/cache
+
+# Next.js build- og dependency-artefakter (~2GB hvis ikke ekskluderet)
+# Docker bygger Next.js selv inde i containeren — vi behøver kun source.
+pax-next/node_modules
+pax-next/.next
+pax-next/.turbo
+pax-next/coverage
+pax-next/test-results
+pax-next/.swc
+pax-next/playwright-report
+pax-next/.vercel
+
+# Worktrees + arbejdsfiler
+.worktrees
+docs/superpowers
+worktree-*
+
+# DB-backup-snapshots — ikke nødvendige i container
+backups/
+*.dump
+*.sql.gz
+
+# Test-sager-PDF'er (genereres frisk via scripts/generer_test_sager.py)
+# Ikke nødvendige i produktions-image hvis vi ikke skal teste i prod.
+# Pax-next/public/test-sager er offentligt distribuerbart materiale,
+# så lad det blive med — fjern denne linje hvis du vil have det i prod.
+# pax-next/public/test-sager

@@ -28,6 +28,9 @@ ENV/
 .DS_Store
 Thumbs.db
 
+# Claude Code — lokal agent-state (scheduled_tasks.lock m.m.)
+.claude/
+
 # Streamlit-cache
 .streamlit/cache/
 

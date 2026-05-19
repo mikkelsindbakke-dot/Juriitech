@@ -1,25 +1,26 @@
 "use client";
 
 import { useEffect, useRef, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { InfoTooltip } from "@/components/ui/info-tooltip";
 import { toast } from "sonner";
 import type { Tidsforhold } from "@/components/analyse-resultat";
-import { gemIArkivAction } from "@/app/arkiv/actions";
 import {
-  ApiError,
   postOgValider,
   sagsmetadataSchema,
   svarbrevSchema,
 } from "@/lib/api-client";
+import { useFejlBesked, useIsAdmin } from "@/lib/bruger-rolle";
+import { useT } from "@/lib/i18n/client";
 
 type SvarbrevRespons = {
   svarbrev: string;
   docx_base64?: string;
   docx_fejl?: string | null;
+  paragraf_advarsler?: string[];
   metadata: {
     antal_filer: number;
     antal_instrukser: number;
@@ -48,7 +49,9 @@ export function SvarbrevSektion({
   tidsforhold?: Tidsforhold;
   bilagListe?: BilagItem[];
 }) {
-  const router = useRouter();
+  const t = useT();
+  const isAdmin = useIsAdmin();
+  const formatFejl = useFejlBesked();
   const [pending, startTransition] = useTransition();
   const [meta_pending, startMetaTransition] = useTransition();
 
@@ -108,7 +111,7 @@ export function SvarbrevSektion({
 
   function generer() {
     if (filer.length === 0) {
-      toast.error("Vælg filer først.");
+      toast.error(t("svarbrev.vaelg_filer_foerst"));
       return;
     }
     startTransition(async () => {
@@ -139,36 +142,15 @@ export function SvarbrevSektion({
           { formData, retries: 3 },
         )) as SvarbrevRespons;
         sætSvarbrev(data);
-        toast.success(`Svarbrev genereret (${data.metadata.tegn} tegn).`);
+        toast.success(
+          t("svarbrev.svarbrev_genereret_toast", { tegn: data.metadata.tegn }),
+        );
 
-        // Pre-warm /arkiv — brugeren navigerer ofte dertil bagefter
-        // for at finde det auto-arkiverede svarbrev. Prefetch giver
-        // instant client-side overgang.
-        router.prefetch("/arkiv");
-
-        // Auto-arkivér
-        const klageFn = filer[0]?.name ?? null;
-        const arkivResultat = await gemIArkivAction({
-          titel: klageFn ? `Svarbrev — ${klageFn}` : "Svarbrev",
-          type: "svarbrev",
-          indhold: data.svarbrev,
-          klageFilnavn: klageFn,
-          ekstraInstrukser:
-            instrukser.length > 0 ? instrukser.join("\n") : null,
-        });
-        if (!arkivResultat.ok) {
-          console.warn("Auto-arkiv fejlede:", arkivResultat.fejl);
-        }
+        // Auto-arkivering FJERNET — vi gemmer ikke længere svarbreve
+        // på siden af GDPR/datasikkerheds-grunde. Brugeren skal hente
+        // DOCX-fil og selv arkivere lokalt.
       } catch (e) {
-        if (e instanceof ApiError) {
-          toast.error(
-            e.detalje ? `${e.message}: ${e.detalje.slice(0, 100)}` : e.message,
-          );
-        } else {
-          toast.error(
-            `Uventet fejl: ${e instanceof Error ? e.message : "ukendt"}`,
-          );
-        }
+        toast.error(formatFejl(e));
       }
     });
   }
@@ -177,13 +159,13 @@ export function SvarbrevSektion({
     if (!svarbrev) return;
     navigator.clipboard
       .writeText(svarbrev.svarbrev)
-      .then(() => toast.success("Svarbrev kopieret til udklipsholder"))
-      .catch(() => toast.error("Kunne ikke kopiere"));
+      .then(() => toast.success(t("svarbrev.kopieret_toast")))
+      .catch(() => toast.error(t("svarbrev.kopi_fejl_toast")));
   }
 
   function downloadDocx() {
     if (!svarbrev?.docx_base64) {
-      toast.error("Word-fil er ikke klar — prøv at generere svarbrevet igen.");
+      toast.error(t("svarbrev.docx_ikke_klar_toast"));
       return;
     }
     try {
@@ -203,29 +185,24 @@ export function SvarbrevSektion({
       a.remove();
       URL.revokeObjectURL(a.href);
     } catch (e) {
-      toast.error(
-        `Kunne ikke downloade: ${e instanceof Error ? e.message : "ukendt fejl"}.`,
-      );
+      toast.error(formatFejl(e));
     }
   }
 
   return (
     <Card>
       <CardContent className="space-y-4 pt-6">
-        <p className="text-xs text-zinc-500">
-          {klagepunkter && tidsforhold
-            ? "Bruger verificerede klagepunkter + tidsforhold fra førstevurderingen — sparer 2 AI-kald."
-            : "Vil udlede klagepunkter + tidsforhold internt (~30s ekstra)."}
-        </p>
         {/* Særlige instrukser */}
         <div className="space-y-2">
-          <Label>
-            Særlige instrukser <span className="text-zinc-400">(valgfrit)</span>
-          </Label>
-          <p className="text-xs text-zinc-500 -mt-1">
-            Tilføj én eller flere instrukser der skal påvirke svarbrevet.
-            Instrukserne bruges KUN til denne sag.
-          </p>
+          <div className="flex items-center gap-1.5">
+            <Label>
+              {t("svarbrev.saerlige_instrukser_label")}{" "}
+              <span className="text-zinc-400">{t("svarbrev.valgfrit")}</span>
+            </Label>
+            <InfoTooltip>
+              {t("svarbrev.saerlige_instrukser_tooltip")}
+            </InfoTooltip>
+          </div>
           <div className="flex gap-2">
             <Input
               value={nyInstruks}
@@ -236,7 +213,7 @@ export function SvarbrevSektion({
                   tilfoejInstruks();
                 }
               }}
-              placeholder="fx 'læg særlig vægt på force majeure-forbeholdet' eller 'anerkend 2.000 kr. men bestrid resten'"
+              placeholder={t("svarbrev.instruks_placeholder")}
               disabled={pending}
             />
             <Button
@@ -246,7 +223,7 @@ export function SvarbrevSektion({
               onClick={tilfoejInstruks}
               disabled={pending || !nyInstruks.trim()}
             >
-              Tilføj instruks
+              {t("svarbrev.tilfoej_instruks")}
             </Button>
           </div>
           {instrukser.length > 0 && (
@@ -263,7 +240,7 @@ export function SvarbrevSektion({
                     onClick={() => fjernInstruks(i)}
                     disabled={pending}
                     className="text-zinc-400 hover:text-red-700 text-sm leading-none"
-                    aria-label="Fjern instruks"
+                    aria-label={t("svarbrev.fjern_instruks_aria")}
                   >
                     ✕
                   </button>
@@ -274,63 +251,59 @@ export function SvarbrevSektion({
         </div>
 
         {/* Toggle: kildehenvisninger */}
-        <label className="flex items-start gap-2 cursor-pointer">
+        <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"
             checked={kilder}
             onChange={(e) => sætKilder(e.target.checked)}
             disabled={pending}
-            className="mt-1"
           />
-          <span className="text-sm">
-            <span className="font-medium">
-              Vil du tilføje kildehenvisninger til dit svarbrev?
-            </span>
-            <span className="block text-xs text-zinc-500">
-              Slået TIL: eksplicitte henvisninger til bilag (fx [Bilag 04, s.
-              1]), rejsevilkår og lovparagraffer. Slået FRA (standard):
-              brevet bliver mere flydende og naturligt at læse.
-            </span>
+          <span className="text-sm font-medium">
+            {t("svarbrev.kildehenvisninger_label")}
           </span>
+          <InfoTooltip>
+            {t("svarbrev.kildehenvisninger_tooltip_til")}
+            <br />
+            <br />
+            {t("svarbrev.kildehenvisninger_tooltip_fra")}
+          </InfoTooltip>
         </label>
 
         {/* Brevhoved */}
         <div className="space-y-3 pt-2 border-t border-zinc-200">
-          <div>
-            <Label className="text-sm font-semibold">Brevhoved</Label>
-            <p className="text-xs text-zinc-500 mt-0.5">
-              Disse felter sættes på selve svarbrevet. Sagsnummer og klagers
-              navn er forsøgt udtrukket automatisk — ret dem hvis de ikke
-              passer.
-              {meta_pending && (
-                <span className="ml-2 italic text-indigo-600">
-                  henter sagsdata…
-                </span>
-              )}
-            </p>
+          <div className="flex items-center gap-1.5">
+            <Label className="text-sm font-semibold">
+              {t("svarbrev.brevhoved")}
+            </Label>
+            <InfoTooltip>{t("svarbrev.brevhoved_tooltip")}</InfoTooltip>
+            {meta_pending && (
+              <span className="text-xs italic text-indigo-600">
+                {t("svarbrev.henter_sagsdata")}
+              </span>
+            )}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="space-y-1">
               <Label htmlFor="sagsnummer" className="text-xs">
-                Sagsnummer
+                {t("svarbrev.sagsnummer")}
               </Label>
               <Input
                 id="sagsnummer"
                 value={sagsnummer}
                 onChange={(e) => sætSagsnummer(e.target.value)}
-                placeholder="fx 25-109-8024327"
+                placeholder={t("svarbrev.sagsnummer_placeholder")}
                 disabled={pending}
               />
             </div>
             <div className="space-y-1">
               <Label htmlFor="klagersnavn" className="text-xs">
-                Klagers fulde navn
+                {t("svarbrev.klagers_navn")}
               </Label>
               <Input
                 id="klagersnavn"
                 value={klagersNavn}
                 onChange={(e) => sætKlagersNavn(e.target.value)}
-                placeholder="fx Laura Stephanie Uhler"
+                placeholder={t("svarbrev.klagers_navn_placeholder")}
                 disabled={pending}
               />
             </div>
@@ -338,11 +311,12 @@ export function SvarbrevSektion({
 
           {/* Høringssvar-nummer */}
           <div className="space-y-1">
-            <Label className="text-xs">Høringssvar-nummer</Label>
-            <p className="text-xs text-zinc-500">
-              Hvilken runde høringssvar er dette? Vises i &quot;Vedr.&quot;-linjen
-              øverst på brevet.
-            </p>
+            <div className="flex items-center gap-1.5">
+              <Label className="text-xs">
+                {t("svarbrev.hoeringssvar_nummer")}
+              </Label>
+              <InfoTooltip>{t("svarbrev.hoeringssvar_tooltip")}</InfoTooltip>
+            </div>
             <div className="inline-flex rounded-md border border-zinc-300 bg-white p-0.5">
               {([1, 2, 3] as const).map((n) => (
                 <button
@@ -356,7 +330,7 @@ export function SvarbrevSektion({
                       : "text-zinc-600 hover:bg-zinc-50"
                   }`}
                 >
-                  {n}. høringssvar
+                  {t("svarbrev.hoeringssvar_knap", { n })}
                 </button>
               ))}
             </div>
@@ -368,27 +342,65 @@ export function SvarbrevSektion({
           type="button"
           onClick={generer}
           disabled={pending || filer.length === 0}
-          className="w-full"
+          className="w-full h-12"
         >
           {pending
-            ? "Genererer svarbrev (30-90 sek)..."
-            : "Generer udkast til svarbrev"}
+            ? t("svarbrev.skriver_svarbrev")
+            : t("svarbrev.generer_udkast")}
         </Button>
 
         {pending && (
-          <div className="rounded-md bg-blue-50 border border-blue-200 p-3 text-sm text-blue-900">
-            AI&apos;en bygger svarbrev: indledning → faktum → juridisk
-            vurdering → stillingtagen → konklusion. Forbudte ord (beklager,
-            anerkender, bestrider osv.) bliver auto-fjernet i
-            post-processing.
+          <div className="rounded-lg border border-indigo-200 bg-indigo-50/40 p-4 space-y-3">
+            <p className="text-sm font-medium text-indigo-900">
+              {t("svarbrev.progress_titel")}
+            </p>
+            <p className="text-xs text-indigo-700">
+              {t("svarbrev.progress_tid")}
+            </p>
+            <div className="h-2 w-full overflow-hidden rounded-full bg-indigo-100">
+              <div
+                className="h-full w-full bg-gradient-to-r from-indigo-500 via-violet-500 via-sky-500 to-indigo-500 bg-[length:200%_100%]"
+                style={{
+                  animation: "pax-pulse 1.8s ease-in-out infinite",
+                  backgroundSize: "200% 100%",
+                }}
+              />
+            </div>
+            <style>{`
+              @keyframes pax-pulse {
+                0%   { background-position:   0% 50%; opacity: 0.85; }
+                50%  { background-position: 100% 50%; opacity: 1; }
+                100% { background-position:   0% 50%; opacity: 0.85; }
+              }
+            `}</style>
           </div>
         )}
 
         {/* Resultat */}
         {svarbrev && (
           <div className="space-y-3 border-t border-zinc-200 pt-4">
+            {/* Admin-only paragraf-hallucinations-advarsel — vises kun
+                hvis AI har citeret §-referencer der ikke findes i
+                pakkerejseloven. Brugere ser aldrig denne. */}
+            {isAdmin &&
+              svarbrev.paragraf_advarsler &&
+              svarbrev.paragraf_advarsler.length > 0 && (
+                <div className="rounded-md border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                  <p className="font-medium mb-1">
+                    {t("svarbrev.admin_paragraf_titel")}
+                  </p>
+                  <p className="text-xs text-amber-800">
+                    {t("svarbrev.admin_paragraf_beskrivelse")}{" "}
+                    <span className="font-mono">
+                      {svarbrev.paragraf_advarsler.join(", ")}
+                    </span>
+                  </p>
+                </div>
+              )}
             <div className="flex items-center justify-between flex-wrap gap-2">
-              <p className="text-sm font-medium">Genereret svarbrev</p>
+              <p className="text-sm font-medium">
+                {t("svarbrev.genereret_svarbrev")}
+              </p>
               <div className="flex gap-2">
                 <Button
                   type="button"
@@ -398,11 +410,15 @@ export function SvarbrevSektion({
                   disabled={!svarbrev.docx_base64}
                   title={
                     svarbrev.docx_fejl
-                      ? `Word-export fejlede: ${svarbrev.docx_fejl}`
+                      ? isAdmin
+                        ? t("svarbrev.word_export_fejl_admin", {
+                            fejl: svarbrev.docx_fejl,
+                          })
+                        : t("svarbrev.word_export_fejl_bruger")
                       : undefined
                   }
                 >
-                  📄 Download som Word
+                  {t("svarbrev.download_word")}
                 </Button>
                 <Button
                   type="button"
@@ -410,7 +426,7 @@ export function SvarbrevSektion({
                   size="sm"
                   onClick={kopier}
                 >
-                  Kopiér
+                  {t("svarbrev.kopier")}
                 </Button>
               </div>
             </div>
@@ -418,15 +434,28 @@ export function SvarbrevSektion({
               {svarbrev.svarbrev}
             </pre>
             <p className="text-xs text-zinc-500">
-              {svarbrev.metadata.tegn} tegn ·{" "}
-              {svarbrev.metadata.antal_instrukser} særlig(e) instrukser ·
-              kildehenvisninger:{" "}
-              {svarbrev.metadata.inkluder_kildehenvisninger ? "ja" : "nej"}
+              {t("svarbrev.metadata_tegn", { tegn: svarbrev.metadata.tegn })} ·{" "}
+              {t("svarbrev.metadata_instrukser", {
+                antal: svarbrev.metadata.antal_instrukser,
+              })}{" "}
+              ·{" "}
+              {t("svarbrev.metadata_kilder", {
+                vaerdi: svarbrev.metadata.inkluder_kildehenvisninger
+                  ? t("svarbrev.ja")
+                  : t("svarbrev.nej"),
+              })}
               {svarbrev.metadata.sagsnummer && (
-                <> · sag {svarbrev.metadata.sagsnummer}</>
+                <>
+                  {" · "}
+                  {t("svarbrev.metadata_sag", {
+                    sagsnummer: svarbrev.metadata.sagsnummer,
+                  })}
+                </>
               )}
               {" · "}
-              {svarbrev.metadata.hoeringssvar_nr ?? 1}. høringssvar
+              {t("svarbrev.metadata_hoeringssvar", {
+                n: svarbrev.metadata.hoeringssvar_nr ?? 1,
+              })}
             </p>
           </div>
         )}

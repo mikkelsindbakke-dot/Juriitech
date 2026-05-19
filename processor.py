@@ -276,10 +276,20 @@ def _rolle_sorteringsnoegle(fil):
 
 def udpak_zip_til_filer(zip_bytes):
     """
-    Pakker en ZIP op i memory og returnerer en liste af (filnavn, bytes).
+    Pakker en ZIP op i memory.
+
+    Returns:
+        (filer, fejl):
+            filer: list[(filnavn, bytes)] — udpakkede filer (kan være tom)
+            fejl: str | None — brugervenlig fejlbesked hvis udpakning gik
+                galt (krypteret zip, ødelagt zip, ikke-understøttet
+                kompression). UI'et kan vise den direkte til brugeren.
+
     Mapper og __MACOSX-skrald springes over.
     """
     resultat = []
+    forsoegt = 0
+    krypteret_detekteret = False
     try:
         with zipfile.ZipFile(BytesIO(zip_bytes)) as z:
             for info in z.infolist():
@@ -288,18 +298,61 @@ def udpak_zip_til_filer(zip_bytes):
                 # Spring over macOS metadata og skjulte filer
                 if info.filename.startswith("__MACOSX/") or info.filename.startswith("."):
                     continue
-                # Kun filer i rodniveau eller første undermappe (ikke dybt indlejret)
                 kort_navn = info.filename.rsplit("/", 1)[-1]
                 if kort_navn.startswith("."):
+                    continue
+                forsoegt += 1
+                # bit 0 i flag_bits = krypteret entry. Detekter inden vi
+                # forsøger at læse, så vi får en præcis fejlbesked frem
+                # for en generisk RuntimeError.
+                if info.flag_bits & 0x1:
+                    krypteret_detekteret = True
                     continue
                 try:
                     data = z.read(info.filename)
                     resultat.append((kort_navn, data))
+                except RuntimeError as e:
+                    # Python's stdlib zipfile rejser RuntimeError både ved
+                    # krypterede filer og ved manglende password.
+                    if "encrypted" in str(e).lower() or "password" in str(e).lower():
+                        krypteret_detekteret = True
+                    print(f"DEBUG: Kunne ikke læse {info.filename} fra ZIP: {e}")
+                except NotImplementedError as e:
+                    # AES-256, deflate64 osv. — stdlib zipfile understøtter
+                    # dem ikke. (macOS Finder's password-protect bruger AES.)
+                    print(f"DEBUG: Ikke-understøttet kompression i {info.filename}: {e}")
                 except Exception as e:
                     print(f"DEBUG: Kunne ikke læse {info.filename} fra ZIP: {e}")
+    except zipfile.BadZipFile as e:
+        print(f"DEBUG: ZIP-udpakning fejlede (badzip): {e}")
+        return [], (
+            "Zip-filen er ødelagt eller ikke en gyldig zip-fil. "
+            "Pak filen ud på din computer (dobbeltklik på den i Finder) "
+            "og upload filerne enkeltvis i stedet."
+        )
     except Exception as e:
         print(f"DEBUG: ZIP-udpakning fejlede: {e}")
-    return resultat
+        return [], (
+            "Vi kunne ikke åbne zip-filen. "
+            "Pak filen ud på din computer og upload filerne enkeltvis."
+        )
+
+    if not resultat and forsoegt > 0:
+        if krypteret_detekteret:
+            return [], (
+                "Zip-filen er beskyttet med adgangskode og kan ikke åbnes "
+                "automatisk. Pak filen ud manuelt på din computer "
+                "(dobbeltklik på den i Finder, indtast adgangskoden) "
+                "og upload de enkelte filer i stedet."
+            )
+        return [], (
+            "Zip-filen indeholder ingen læsbare filer — den bruger "
+            "muligvis et komprimeringsformat vi ikke understøtter "
+            "(fx AES-kryptering eller Deflate64). Pak filen ud manuelt "
+            "og upload filerne enkeltvis."
+        )
+
+    return resultat, None
 
 
 def laes_sag_fra_filer(streamlit_filer):
@@ -318,7 +371,7 @@ def laes_sag_fra_filer(streamlit_filer):
         data = fil.getvalue()
 
         if navn.lower().endswith(".zip"):
-            udpakket = udpak_zip_til_filer(data)
+            udpakket, _ = udpak_zip_til_filer(data)
             for u_navn, u_data in udpakket:
                 alle_fil_bytes.append((u_navn, u_data))
         else:

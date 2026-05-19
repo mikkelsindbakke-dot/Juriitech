@@ -23,12 +23,16 @@ import {
   type TenantOpdater,
 } from "@/lib/queries/tenants";
 import { getAdminClient, genererTempPassword } from "@/lib/supabase/admin";
+import { skrivGdprAudit } from "@/lib/queries/audit";
+import { lavT } from "@/lib/i18n/t";
+import type { Locale } from "@/lib/i18n/config";
 
 type AktuelAdmin = {
   user_id: number;
   email: string;
   tenant_id: number;
   role: "admin" | "jurist";
+  locale: Locale;
 };
 
 // Verificerer at den kaldende session tilhører en admin. Returnerer
@@ -39,14 +43,20 @@ async function requireAdmin(): Promise<AktuelAdmin> {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) throw new Error("Ikke logget ind.");
+  // Tidlig fejl uden locale — vi falder tilbage til dansk for de
+  // helt tidlige fejl. Brugeren har alligevel ikke session-locale her.
+  if (!user) throw new Error(lavT("da")("admin.actions.fejl_ikke_logget_ind"));
   const db = await hentBrugerMedTenant(user.id);
-  if (!db || db.role !== "admin") throw new Error("Kræver admin-rettigheder.");
+  if (!db || db.role !== "admin") {
+    const locale = db?.effektiv_sprog ?? "da";
+    throw new Error(lavT(locale)("admin.actions.fejl_kraever_admin"));
+  }
   return {
     user_id: db.user_id,
     email: db.email,
     tenant_id: db.tenant_id,
     role: db.role,
+    locale: db.effektiv_sprog ?? "da",
   };
 }
 
@@ -58,32 +68,44 @@ type Resultat<T = undefined> =
 
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
-function valideerSlug(slug: string): string | null {
-  if (!slug) return "Slug må ikke være tom.";
-  if (!SLUG_RE.test(slug))
-    return "Slug må kun indeholde små bogstaver, tal og bindestreger (fx 'apollo-dk').";
-  if (slug.length > 32) return "Slug må max være 32 tegn.";
+function valideerSlug(slug: string, t: ReturnType<typeof lavT>): string | null {
+  if (!slug) return t("admin.actions.fejl_slug_tom");
+  if (!SLUG_RE.test(slug)) return t("admin.actions.fejl_slug_format");
+  if (slug.length > 32) return t("admin.actions.fejl_slug_lang");
   return null;
 }
 
 export async function opretTenantAction(
   felter: TenantFelter,
 ): Promise<Resultat<{ id: number }>> {
+  let t = lavT("da");
   try {
-    await requireAdmin();
-    if (!felter.navn?.trim()) return { ok: false, fejl: "Navn er påkrævet." };
+    const aktuel = await requireAdmin();
+    t = lavT(aktuel.locale);
+    if (!felter.navn?.trim()) return { ok: false, fejl: t("admin.actions.fejl_navn_paakraevet") };
     const slug = felter.slug.trim();
-    const slugFejl = valideerSlug(slug);
+    const slugFejl = valideerSlug(slug, t);
     if (slugFejl) return { ok: false, fejl: slugFejl };
     if (await hentTenantBySlug(slug)) {
-      return { ok: false, fejl: `Slug '${slug}' er allerede i brug.` };
+      return { ok: false, fejl: t("admin.actions.fejl_slug_brugt", { slug }) };
     }
     const id = await opretTenant({ ...felter, slug });
-    if (!id) return { ok: false, fejl: "Kunne ikke oprette tenant." };
+    if (!id) return { ok: false, fejl: t("admin.actions.fejl_opret_tenant") };
+
+    // GDPR audit (fail-safe)
+    await skrivGdprAudit({
+      handling: "admin_tenant_oprettet",
+      tenantId: aktuel.tenant_id,
+      userId: aktuel.user_id,
+      userEmail: aktuel.email,
+      sagId: slug,
+      metadata: { ny_tenant_id: id, navn: felter.navn },
+    });
+
     revalidatePath("/admin");
     return { ok: true, data: { id } };
   } catch (e) {
-    return { ok: false, fejl: e instanceof Error ? e.message : "Ukendt fejl." };
+    return { ok: false, fejl: e instanceof Error ? e.message : t("admin.actions.fejl_ukendt") };
   }
 }
 
@@ -91,17 +113,30 @@ export async function opdaterTenantAction(
   id: number,
   felter: TenantOpdater,
 ): Promise<Resultat> {
+  let t = lavT("da");
   try {
-    await requireAdmin();
+    const aktuel = await requireAdmin();
+    t = lavT(aktuel.locale);
     if (felter.navn !== undefined && !felter.navn.trim()) {
-      return { ok: false, fejl: "Navn er påkrævet." };
+      return { ok: false, fejl: t("admin.actions.fejl_navn_paakraevet") };
     }
     const ok = await opdaterTenant(id, felter);
-    if (!ok) return { ok: false, fejl: "Opdatering fejlede." };
+    if (!ok) return { ok: false, fejl: t("admin.actions.fejl_opdatering") };
+
+    // GDPR audit (fail-safe)
+    await skrivGdprAudit({
+      handling: "admin_tenant_opdateret",
+      tenantId: aktuel.tenant_id,
+      userId: aktuel.user_id,
+      userEmail: aktuel.email,
+      sagId: String(id),
+      metadata: { aendrede_felter: Object.keys(felter) },
+    });
+
     revalidatePath("/admin");
     return { ok: true };
   } catch (e) {
-    return { ok: false, fejl: e instanceof Error ? e.message : "Ukendt fejl." };
+    return { ok: false, fejl: e instanceof Error ? e.message : t("admin.actions.fejl_ukendt") };
   }
 }
 
@@ -113,17 +148,19 @@ export async function inviterBrugerAction(args: {
   role: "admin" | "jurist";
   fuldeNavn?: string;
 }): Promise<Resultat<{ besked?: string }>> {
+  let t = lavT("da");
   try {
-    await requireAdmin();
+    const aktuel = await requireAdmin();
+    t = lavT(aktuel.locale);
     const email = args.email.trim().toLowerCase();
-    if (!email) return { ok: false, fejl: "Email er påkrævet." };
-    if (!args.tenantId) return { ok: false, fejl: "Tenant er påkrævet." };
+    if (!email) return { ok: false, fejl: t("admin.actions.fejl_email_paakraevet") };
+    if (!args.tenantId) return { ok: false, fejl: t("admin.actions.fejl_tenant_paakraevet") };
     if (!["admin", "jurist"].includes(args.role)) {
-      return { ok: false, fejl: `Ugyldig rolle: ${args.role}` };
+      return { ok: false, fejl: t("admin.actions.fejl_ugyldig_rolle", { rolle: args.role }) };
     }
 
     if (await hentUserByEmail(email)) {
-      return { ok: false, fejl: `${email} er allerede oprettet.` };
+      return { ok: false, fejl: t("admin.actions.fejl_email_findes", { email }) };
     }
 
     // 1) Opret row i vores users-tabel UDEN supabase_user_id —
@@ -135,7 +172,7 @@ export async function inviterBrugerAction(args: {
       fuldeNavn: args.fuldeNavn ?? "",
     });
     if (!userId) {
-      return { ok: false, fejl: "Kunne ikke oprette bruger i databasen." };
+      return { ok: false, fejl: t("admin.actions.fejl_opret_db") };
     }
 
     // 2) Bed Supabase sende invite-email
@@ -144,6 +181,23 @@ export async function inviterBrugerAction(args: {
       await admin.auth.admin.inviteUserByEmail(email, {
         data: { full_name: args.fuldeNavn ?? "" },
       });
+
+      // GDPR audit (fail-safe)
+      await skrivGdprAudit({
+        handling: "admin_user_inviteret",
+        tenantId: aktuel.tenant_id,
+        userId: aktuel.user_id,
+        userEmail: aktuel.email,
+        sagId: email,
+        metadata: {
+          ny_bruger_id: userId,
+          ny_bruger_email: email,
+          ny_bruger_role: args.role,
+          ny_bruger_tenant_id: args.tenantId,
+          metode: "invite_email",
+        },
+      });
+
       revalidatePath("/admin/brugere");
       return { ok: true };
     } catch (e) {
@@ -152,24 +206,43 @@ export async function inviterBrugerAction(args: {
         // Brugeren har allerede en Supabase-konto. Send password-reset.
         try {
           await admin.auth.resetPasswordForEmail(email);
+
+          // GDPR audit (fail-safe)
+          await skrivGdprAudit({
+            handling: "admin_user_inviteret",
+            tenantId: aktuel.tenant_id,
+            userId: aktuel.user_id,
+            userEmail: aktuel.email,
+            sagId: email,
+            metadata: {
+              ny_bruger_id: userId,
+              ny_bruger_email: email,
+              ny_bruger_role: args.role,
+              metode: "password_reset_fallback",
+            },
+          });
+
           revalidatePath("/admin/brugere");
           return {
             ok: true,
             data: {
-              besked: `${email} havde allerede en Supabase-konto — vi har sendt et password-reset-link i stedet.`,
+              besked: t("admin.actions.besked_havde_konto", { email }),
             },
           };
         } catch {
           return {
             ok: false,
-            fejl: `${email} har allerede en Supabase-konto, og reset-link kunne ikke sendes. Slet manuelt i Supabase Dashboard og prøv igen.`,
+            fejl: t("admin.actions.fejl_havde_konto_reset_fejlede", { email }),
           };
         }
       }
-      return { ok: false, fejl: `Invite-email fejlede: ${e instanceof Error ? e.message : e}` };
+      return {
+        ok: false,
+        fejl: t("admin.actions.fejl_invite_email", { fejl: e instanceof Error ? e.message : String(e) }),
+      };
     }
   } catch (e) {
-    return { ok: false, fejl: e instanceof Error ? e.message : "Ukendt fejl." };
+    return { ok: false, fejl: e instanceof Error ? e.message : t("admin.actions.fejl_ukendt") };
   }
 }
 
@@ -179,16 +252,18 @@ export async function opretBrugerMedTempPasswordAction(args: {
   role: "admin" | "jurist";
   fuldeNavn?: string;
 }): Promise<Resultat<{ tempPassword: string }>> {
+  let t = lavT("da");
   try {
-    await requireAdmin();
+    const aktuel = await requireAdmin();
+    t = lavT(aktuel.locale);
     const email = args.email.trim().toLowerCase();
-    if (!email) return { ok: false, fejl: "Email er påkrævet." };
-    if (!args.tenantId) return { ok: false, fejl: "Tenant er påkrævet." };
+    if (!email) return { ok: false, fejl: t("admin.actions.fejl_email_paakraevet") };
+    if (!args.tenantId) return { ok: false, fejl: t("admin.actions.fejl_tenant_paakraevet") };
     if (!["admin", "jurist"].includes(args.role)) {
-      return { ok: false, fejl: `Ugyldig rolle: ${args.role}` };
+      return { ok: false, fejl: t("admin.actions.fejl_ugyldig_rolle", { rolle: args.role }) };
     }
     if (await hentUserByEmail(email)) {
-      return { ok: false, fejl: `${email} er allerede oprettet.` };
+      return { ok: false, fejl: t("admin.actions.fejl_email_findes", { email }) };
     }
 
     const tempPassword = genererTempPassword();
@@ -204,17 +279,20 @@ export async function opretBrugerMedTempPasswordAction(args: {
         user_metadata: { full_name: args.fuldeNavn ?? "" },
       });
       if (error) throw error;
-      if (!data.user) throw new Error("Ingen user returneret fra Supabase.");
+      if (!data.user) throw new Error(t("admin.actions.fejl_ingen_user"));
       supUserId = data.user.id;
     } catch (e) {
       const msg = (e instanceof Error ? e.message : String(e)).toLowerCase();
       if (msg.includes("already")) {
         return {
           ok: false,
-          fejl: `${email} har allerede en Supabase Auth-konto. Slet i Supabase Dashboard først, eller brug 'Glemt adgangskode?'-flowet.`,
+          fejl: t("admin.actions.fejl_supabase_konto_findes", { email }),
         };
       }
-      return { ok: false, fejl: `Supabase create_user fejlede: ${e instanceof Error ? e.message : e}` };
+      return {
+        ok: false,
+        fejl: t("admin.actions.fejl_supabase_create", { fejl: e instanceof Error ? e.message : String(e) }),
+      };
     }
 
     // 2) Link straks med supabase_user_id
@@ -228,29 +306,47 @@ export async function opretBrugerMedTempPasswordAction(args: {
     if (!userId) {
       return {
         ok: false,
-        fejl: "Bruger oprettet i Supabase, men DB-row kunne ikke oprettes. Slet manuelt i Supabase Dashboard og prøv igen.",
+        fejl: t("admin.actions.fejl_db_row"),
       };
     }
+
+    // GDPR audit (fail-safe)
+    await skrivGdprAudit({
+      handling: "admin_user_oprettet",
+      tenantId: aktuel.tenant_id,
+      userId: aktuel.user_id,
+      userEmail: aktuel.email,
+      sagId: email,
+      metadata: {
+        ny_bruger_id: userId,
+        ny_bruger_email: email,
+        ny_bruger_role: args.role,
+        ny_bruger_tenant_id: args.tenantId,
+        metode: "temp_password",
+      },
+    });
 
     revalidatePath("/admin/brugere");
     return { ok: true, data: { tempPassword } };
   } catch (e) {
-    return { ok: false, fejl: e instanceof Error ? e.message : "Ukendt fejl." };
+    return { ok: false, fejl: e instanceof Error ? e.message : t("admin.actions.fejl_ukendt") };
   }
 }
 
 export async function sletBrugerAction(userId: number): Promise<Resultat> {
+  let t = lavT("da");
   try {
     const aktuel = await requireAdmin();
+    t = lavT(aktuel.locale);
 
     const dbUser = await hentUserById(userId);
-    if (!dbUser) return { ok: false, fejl: `Bruger med id=${userId} findes ikke.` };
+    if (!dbUser) return { ok: false, fejl: t("admin.actions.fejl_bruger_findes_ikke", { id: userId }) };
 
     // Spær: må ikke slette sig selv
     if (aktuel.user_id === dbUser.id) {
       return {
         ok: false,
-        fejl: "Du kan ikke slette din egen konto. Brug 'Log ud' i stedet.",
+        fejl: t("admin.actions.fejl_slet_selv"),
       };
     }
 
@@ -258,7 +354,7 @@ export async function sletBrugerAction(userId: number): Promise<Resultat> {
     if (dbUser.role === "admin" && (await taelAdmins()) <= 1) {
       return {
         ok: false,
-        fejl: "Kan ikke slette den sidste administrator. Opret en anden admin først.",
+        fejl: t("admin.actions.fejl_slet_sidste_admin"),
       };
     }
 
@@ -275,7 +371,7 @@ export async function sletBrugerAction(userId: number): Promise<Resultat> {
         if (!allerede_vaek) {
           return {
             ok: false,
-            fejl: `Supabase-sletning fejlede: ${e instanceof Error ? e.message : e}. Bruger ikke slettet i vores DB.`,
+            fejl: t("admin.actions.fejl_supabase_slet", { fejl: e instanceof Error ? e.message : String(e) }),
           };
         }
       }
@@ -285,13 +381,28 @@ export async function sletBrugerAction(userId: number): Promise<Resultat> {
     if (!(await sletUser(dbUser.id))) {
       return {
         ok: false,
-        fejl: `Slettet i Supabase, men DB-sletning fejlede. Slet manuelt: DELETE FROM users WHERE id=${dbUser.id}`,
+        fejl: t("admin.actions.fejl_db_slet", { id: dbUser.id }),
       };
     }
+
+    // GDPR audit (fail-safe)
+    await skrivGdprAudit({
+      handling: "admin_user_slettet",
+      tenantId: aktuel.tenant_id,
+      userId: aktuel.user_id,
+      userEmail: aktuel.email,
+      sagId: dbUser.email,
+      metadata: {
+        slettet_user_id: dbUser.id,
+        slettet_user_email: dbUser.email,
+        slettet_user_role: dbUser.role,
+        slettet_user_tenant_id: dbUser.tenant_id,
+      },
+    });
 
     revalidatePath("/admin/brugere");
     return { ok: true };
   } catch (e) {
-    return { ok: false, fejl: e instanceof Error ? e.message : "Ukendt fejl." };
+    return { ok: false, fejl: e instanceof Error ? e.message : t("admin.actions.fejl_ukendt") };
   }
 }

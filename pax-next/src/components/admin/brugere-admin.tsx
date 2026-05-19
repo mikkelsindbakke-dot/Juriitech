@@ -8,6 +8,7 @@ import { sletBrugerAction } from "@/app/admin/actions";
 import type { Tenant } from "@/lib/queries/tenants";
 import type { UserRow } from "@/lib/queries/users";
 import { useRouter } from "next/navigation";
+import { useT } from "@/lib/i18n/client";
 
 type Data = { tenant: Tenant; users: UserRow[] }[];
 
@@ -20,10 +21,11 @@ export function BrugereAdmin({
   antalAdmins: number;
   aktuelUserId: number | null;
 }) {
+  const t = useT();
   if (data.length === 0) {
     return (
       <p className="text-sm text-zinc-500">
-        Ingen tenants oprettet endnu — opret en under fanen Tenants.
+        {t("admin.brugere.ingen_tenants")}
       </p>
     );
   }
@@ -35,15 +37,18 @@ export function BrugereAdmin({
             <CardTitle className="text-base font-semibold flex items-center justify-between">
               <span>{tenant.navn}</span>
               <span className="text-xs font-normal text-zinc-500">
-                {users.length} bruger{users.length === 1 ? "" : "e"}
+                {users.length}{" "}
+                {users.length === 1
+                  ? t("admin.brugere.bruger_singular")
+                  : t("admin.brugere.bruger_plural")}
               </span>
             </CardTitle>
           </CardHeader>
           <CardContent>
             {users.length === 0 ? (
               <p className="text-sm text-zinc-500">
-                Ingen brugere endnu. Inviter dem under fanen{" "}
-                <em>Inviter ny bruger</em>.
+                {t("admin.brugere.ingen_brugere_prefix")}{" "}
+                <em>{t("admin.brugere.ingen_brugere_fane")}</em>.
               </p>
             ) : (
               <ul className="divide-y divide-zinc-100">
@@ -73,14 +78,15 @@ function BrugerRække({
   erDigSelv: boolean;
   erSidsteAdmin: boolean;
 }) {
+  const t = useT();
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [bekræft, sætBekræft] = useState(false);
 
   const ikon = bruger.role === "admin" ? "🛡️" : "👤";
   const linkStatus = bruger.supabase_user_id
-    ? "linket"
-    : "ikke linket endnu (har ikke logget ind)";
+    ? t("admin.brugere.linket")
+    : t("admin.brugere.ikke_linket");
 
   function håndter() {
     if (!bekræft) {
@@ -91,7 +97,7 @@ function BrugerRække({
     startTransition(async () => {
       const r = await sletBrugerAction(bruger.id);
       if (r.ok) {
-        toast.success(`Slettede ${bruger.email}`);
+        toast.success(t("admin.brugere.toast_slettet", { email: bruger.email }));
         router.refresh();
       } else {
         toast.error(r.fejl);
@@ -107,17 +113,17 @@ function BrugerRække({
           <span className="mr-2">{ikon}</span>
           <strong>{bruger.email}</strong>{" "}
           <span className="text-zinc-500">
-            ({bruger.fulde_navn || "—"}) · role=
+            ({bruger.fulde_navn || "—"}) · {t("admin.brugere.role_label")}=
             <code className="text-xs">{bruger.role}</code> · {linkStatus}
           </span>
         </p>
       </div>
       <div>
         {erDigSelv ? (
-          <span className="text-xs text-zinc-400 italic">(dig)</span>
+          <span className="text-xs text-zinc-400 italic">{t("admin.brugere.dig")}</span>
         ) : erSidsteAdmin ? (
           <span className="text-xs text-zinc-400 italic">
-            🔒 sidste admin
+            {t("admin.brugere.sidste_admin")}
           </span>
         ) : (
           <Button
@@ -127,7 +133,11 @@ function BrugerRække({
             onClick={håndter}
             disabled={pending}
           >
-            {pending ? "..." : bekræft ? "Bekræft slet" : "Slet"}
+            {pending
+              ? t("admin.brugere.knap_arbejder")
+              : bekræft
+                ? t("admin.brugere.knap_bekraeft_slet")
+                : t("admin.brugere.knap_slet")}
           </Button>
         )}
       </div>

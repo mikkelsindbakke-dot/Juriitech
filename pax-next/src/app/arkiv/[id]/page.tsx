@@ -11,11 +11,13 @@ import { buttonVariants } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/server";
 import { hentBrugerMedTenant } from "@/lib/queries/users";
 import { hentArkivById, type ArkivType } from "@/lib/queries/arkiv";
+import { LocaleProvider } from "@/lib/i18n/client";
+import { lavT } from "@/lib/i18n/t";
 
-const typeEtiket: Record<ArkivType, { tekst: string; farve: string }> = {
-  analyse: { tekst: "Analyse", farve: "bg-blue-100 text-blue-800" },
-  svarbrev: { tekst: "Svarbrev", farve: "bg-emerald-100 text-emerald-800" },
-  tjekliste: { tekst: "Tjekliste", farve: "bg-amber-100 text-amber-800" },
+const TYPE_FARVE: Record<ArkivType, string> = {
+  analyse: "bg-blue-100 text-blue-800",
+  svarbrev: "bg-emerald-100 text-emerald-800",
+  tjekliste: "bg-amber-100 text-amber-800",
 };
 
 export default async function ArkivDetalje({
@@ -34,15 +36,22 @@ export default async function ArkivDetalje({
   const dbBruger = user ? await hentBrugerMedTenant(user.id) : null;
   if (!dbBruger) notFound();
 
-  const indgang = await hentArkivById(id, dbBruger.tenant_id);
+  const indgang = await hentArkivById(id, dbBruger.effektiv_tenant_id);
   if (!indgang) notFound();
 
-  const typeInfo = typeEtiket[indgang.type as ArkivType] ?? {
-    tekst: indgang.type,
-    farve: "bg-zinc-100 text-zinc-700",
-  };
+  const locale = dbBruger.effektiv_sprog ?? "da";
+  const t = lavT(locale);
+  const datoLocale = locale === "no" ? "no-NO" : "da-DK";
+
+  const typeKey = indgang.type as ArkivType;
+  const typeFarve = TYPE_FARVE[typeKey] ?? "bg-zinc-100 text-zinc-700";
+  // Hvis type ikke er kendt, vis raw value (fallback). Ellers oversæt.
+  const typeTekst = TYPE_FARVE[typeKey]
+    ? t(`arkiv.type_${typeKey}`)
+    : indgang.type;
 
   return (
+    <LocaleProvider locale={locale}>
     <main className="flex flex-1 items-start justify-center bg-zinc-50 px-6 py-12">
       <div className="w-full max-w-3xl space-y-4">
         <div className="flex items-center justify-between">
@@ -50,13 +59,13 @@ export default async function ArkivDetalje({
             href="/arkiv"
             className="text-sm text-zinc-500 hover:text-zinc-900 underline-offset-4 hover:underline"
           >
-            ← Tilbage til arkivet
+            ← {t("arkiv.tilbage_til_arkivet")}
           </Link>
           <Link
             href="/sag/ny"
             className={buttonVariants({ variant: "outline", size: "sm" })}
           >
-            Ny sag
+            {t("arkiv.ny_sag")}
           </Link>
         </div>
 
@@ -64,13 +73,13 @@ export default async function ArkivDetalje({
           <CardHeader className="space-y-3">
             <div className="flex items-center gap-2">
               <span
-                className={`text-xs rounded-full px-2 py-0.5 ${typeInfo.farve}`}
+                className={`text-xs rounded-full px-2 py-0.5 ${typeFarve}`}
               >
-                {typeInfo.tekst}
+                {typeTekst}
               </span>
               <span className="text-xs text-zinc-500">
                 #{indgang.id} ·{" "}
-                {new Date(indgang.oprettet_dato).toLocaleString("da-DK", {
+                {new Date(indgang.oprettet_dato).toLocaleString(datoLocale, {
                   dateStyle: "long",
                   timeStyle: "short",
                 })}
@@ -81,7 +90,7 @@ export default async function ArkivDetalje({
             </CardTitle>
             {indgang.klage_filnavn && (
               <CardDescription className="text-xs">
-                Klage: <code>{indgang.klage_filnavn}</code>
+                {t("arkiv.klage_label")}: <code>{indgang.klage_filnavn}</code>
               </CardDescription>
             )}
           </CardHeader>
@@ -97,7 +106,7 @@ export default async function ArkivDetalje({
             {indgang.spoergsmaal && (
               <details className="text-sm">
                 <summary className="cursor-pointer font-medium text-zinc-700 hover:text-zinc-900">
-                  Spørgsmål
+                  {t("arkiv.spoergsmaal_titel")}
                 </summary>
                 <p className="mt-2 text-zinc-700 whitespace-pre-wrap">
                   {indgang.spoergsmaal}
@@ -107,7 +116,7 @@ export default async function ArkivDetalje({
             {indgang.ekstra_instrukser && (
               <details className="text-sm">
                 <summary className="cursor-pointer font-medium text-zinc-700 hover:text-zinc-900">
-                  Særlige instrukser
+                  {t("arkiv.instrukser_titel")}
                 </summary>
                 <pre className="mt-2 whitespace-pre-wrap text-zinc-700 font-sans">
                   {indgang.ekstra_instrukser}
@@ -117,7 +126,9 @@ export default async function ArkivDetalje({
             {indgang.sagsakter && (
               <details className="text-sm">
                 <summary className="cursor-pointer font-medium text-zinc-700 hover:text-zinc-900">
-                  Sagsakter ({indgang.sagsakter.length} tegn)
+                  {t("arkiv.sagsakter_titel", {
+                    antal: indgang.sagsakter.length,
+                  })}
                 </summary>
                 <pre className="mt-2 whitespace-pre-wrap text-zinc-700 font-sans max-h-60 overflow-auto rounded bg-zinc-50 p-2">
                   {indgang.sagsakter}
@@ -128,5 +139,6 @@ export default async function ArkivDetalje({
         </Card>
       </div>
     </main>
+    </LocaleProvider>
   );
 }

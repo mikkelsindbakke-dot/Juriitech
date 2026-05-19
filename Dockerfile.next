@@ -1,0 +1,108 @@
+# juriitech PAX — Next.js-version production container.
+#
+# Bygger to applikationer ind i samme container:
+#   1. Next.js 16 (pax-next/) — UI på port 8080
+#   2. FastAPI bro (api/main.py) — backend på intern port 8000
+#
+# Next.js' rewrites proxy'er /api/*-stien til localhost:8000, så
+# klienten kalder same-origin. Begge processer startes af
+# entrypoint-next.sh ved container-boot.
+#
+# Build kører fra repo-roden så build-konteksten naturligt inkluderer
+# både pax-next/ og parent-Python-koden (ai_engine.py m.fl.).
+#
+# Build:
+#   docker build -f Dockerfile.next -t pax-next .
+# Deploy via Fly:
+#   flyctl deploy -c fly.next.toml --build-arg NEXT_PUBLIC_SUPABASE_URL=... ...
+
+# ─────────── Stage 1: Bygger Next.js standalone-output ───────────
+FROM node:22-slim AS next-build
+
+WORKDIR /build
+
+# Build-args fra Fly. NEXT_PUBLIC_* skal være sat ved build-time fordi
+# Next.js bager dem ind i client-bundlen — kan ikke ændres ved runtime.
+ARG NEXT_PUBLIC_SUPABASE_URL
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY
+ARG NEXT_PUBLIC_SENTRY_DSN=""
+
+# NEXT_PUBLIC_API_URL="" tvinger Next.js til at bake en TOM URL ind i
+# client-bundlen, så fetches bliver relative ('/api/...') og rammer
+# pax.juriitech.com i produktion (proxies videre til intern uvicorn).
+# Uden den vinder pax-next/.env.local's 'http://localhost:8000'
+# (korrekt for lokal dev — forkert for prod).
+ENV NEXT_PUBLIC_SUPABASE_URL=$NEXT_PUBLIC_SUPABASE_URL \
+    NEXT_PUBLIC_SUPABASE_ANON_KEY=$NEXT_PUBLIC_SUPABASE_ANON_KEY \
+    NEXT_PUBLIC_SENTRY_DSN=$NEXT_PUBLIC_SENTRY_DSN \
+    NEXT_PUBLIC_API_URL="" \
+    NEXT_TELEMETRY_DISABLED=1
+
+# npm ci kræver både package.json og lock-fil. Vi kopierer dem først
+# i et separat layer så node_modules cache'es på tværs af kode-ændringer.
+COPY pax-next/package.json pax-next/package-lock.json ./
+RUN npm ci
+
+# Kopier kun pax-next/ ind — Python-koden ligger ved siden af i parent
+# og hører ikke til Next.js-build-konteksten.
+COPY pax-next/ ./
+RUN npm run build
+
+
+# ─────────── Stage 2: Final runtime (Python + Node) ───────────
+FROM python:3.11-slim AS runtime
+
+# System-deps:
+#   - Node 22 til at køre Next.js standalone server (node server.js)
+#   - libpq-dev + gcc til psycopg2-kompilation
+#   - libfreetype6 + fonts-dejavu til ReportLab PDF-generering
+#   - curl til healthcheck + Node-installer
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gnupg \
+    libpq-dev gcc \
+    libfreetype6 fonts-dejavu \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    NEXT_TELEMETRY_DISABLED=1 \
+    NODE_ENV=production \
+    PORT=8080 \
+    HOSTNAME=0.0.0.0
+
+WORKDIR /app
+
+# Python deps i separat layer for caching
+COPY requirements.txt ./
+RUN pip install --upgrade pip && pip install -r requirements.txt
+
+# Python-source (api/main.py + delt domæne-kode i parent-stien)
+COPY *.py ./
+COPY api/ ./api/
+
+# Next.js standalone-build (server.js + minimal node_modules + .next/server)
+COPY --from=next-build /build/.next/standalone ./pax-next-runtime/
+# Statiske assets (CSS, JS chunks) skal kopieres separat — standalone-builderen
+# pakker dem ikke selv. Sti-strukturen .next/static + public/ skal bevares.
+COPY --from=next-build /build/.next/static ./pax-next-runtime/.next/static
+COPY --from=next-build /build/public ./pax-next-runtime/public
+
+# Entrypoint der starter uvicorn + node parallelt
+COPY entrypoint-next.sh ./
+RUN chmod +x ./entrypoint-next.sh
+
+EXPOSE 8080
+
+# Health-check rammer Next.js-laget (rod-page) frem for FastAPI direkte,
+# så Fly opdager også hvis Next.js panicker selv hvis FastAPI lever.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl --fail --silent --max-time 5 http://localhost:8080/ \
+        || curl --fail --silent --max-time 5 http://localhost:8080/login \
+        || exit 1
+
+CMD ["./entrypoint-next.sh"]

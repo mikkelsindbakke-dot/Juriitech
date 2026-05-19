@@ -40,4 +40,15 @@ Authlib>=1.3.2
 supabase>=2.7.0
 
 # Sentry — fejl-monitoring og crash-rapportering
-sentry-sdk>=2.0.0
+sentry-sdk[fastapi]>=2.0.0
+
+# FastAPI-bro mellem Next.js og Python (api/main.py).
+# Kører co-located med Next.js i pax-juriitech-next-containeren.
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+
+# APScheduler — kører GDPR auto-anonymiserings-pipelinen hver time
+# fra FastAPI (BackgroundScheduler i separat thread, blokerer ikke
+# request-loopet). Erstatter den tidligere Fly-cron-machine.
+apscheduler>=3.10.0

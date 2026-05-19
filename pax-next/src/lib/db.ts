@@ -15,16 +15,26 @@ declare global {
 }
 
 function lavPool(): Pool {
-  const url = process.env.DATABASE_URL;
+  // Foretrækker TRANSACTION-pooler (port 6543) hvis tilgængelig — den
+  // understøtter ~200 samtidige connections vs 15 i SESSION mode (5432).
+  // Pg-boss kræver SESSION mode (LISTEN/NOTIFY), så den bruger fortsat
+  // DATABASE_URL direkte; alle andre queries går via den her.
+  const url =
+    process.env.DATABASE_URL_TRANSACTION ?? process.env.DATABASE_URL;
   if (!url) {
     throw new Error("DATABASE_URL er ikke sat (tjek .env.local)");
   }
   return new Pool({
     connectionString: url,
-    // Supabase kræver SSL i produktion. Postgres-modulet sætter SSL
-    // automatisk hvis URL'en indeholder sslmode=require.
-    max: 10, // max samtidige connections
-    idleTimeoutMillis: 30_000,
+    // Reduceret max — vi vil ikke ramme connection-limit selv ved
+    // pludselige spike i load. Transaction-poolen håndterer
+    // many-at-once internt.
+    max: 5,
+    idleTimeoutMillis: 10_000,
+    // PgBouncer i transaction mode understøtter ikke prepared statements
+    // automatisk — pg-pakken bruger ikke prepared statements som default,
+    // så dette er en sikkerhedsforanstaltning hvis vi tilføjer det.
+    statement_timeout: 30_000,
   });
 }
 

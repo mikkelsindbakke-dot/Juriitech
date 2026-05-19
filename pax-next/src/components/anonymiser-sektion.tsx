@@ -6,11 +6,12 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { toast } from "sonner";
 import {
-  ApiError,
   anonymiserSchema,
   postOgValider,
   sagsmetadataSchema,
 } from "@/lib/api-client";
+import { useFejlBesked, useIsAdmin } from "@/lib/bruger-rolle";
+import { useT } from "@/lib/i18n/client";
 
 type AnonymResultat = {
   filnavn: string;
@@ -20,8 +21,10 @@ type AnonymResultat = {
     | "fejl_aaben"
     | "fejl_redaktion"
     | "ikke_pdf"
+    | "ikke_understoettet"
     | "exception";
   anonymiseret_pdf_base64: string | null;
+  output_extension?: string | null;
   antal_bytes_input: number;
   antal_bytes_output: number;
   bemaerkning: string;
@@ -39,11 +42,19 @@ type AnonymRespons = {
 const statusFarve: Record<AnonymResultat["status"], string> = {
   ok: "bg-emerald-100 text-emerald-800",
   scannet: "bg-amber-100 text-amber-800",
-  fejl_aaben: "bg-red-100 text-red-800",
-  fejl_redaktion: "bg-red-100 text-red-800",
+  fejl_aaben: "bg-amber-100 text-amber-800",
+  fejl_redaktion: "bg-amber-100 text-amber-800",
   ikke_pdf: "bg-zinc-100 text-zinc-700",
-  exception: "bg-red-100 text-red-800",
+  ikke_understoettet: "bg-zinc-100 text-zinc-700",
+  exception: "bg-amber-100 text-amber-800",
 };
+
+const ANONYM_UNDERSTOETTEDE_EXT = [".pdf", ".docx"];
+
+function erAnonymiserbar(filnavn: string): boolean {
+  const lower = filnavn.toLowerCase();
+  return ANONYM_UNDERSTOETTEDE_EXT.some((ext) => lower.endsWith(ext));
+}
 
 function formatStr(b: number): string {
   if (b < 1024) return `${b} B`;
@@ -74,16 +85,16 @@ function erFraNaevnet(filnavn: string): boolean {
   );
 }
 
-function rolleAfFilnavn(filnavn: string): string {
+type RolleKey = "hoering" | "vejledning" | "klageskema" | "bilag" | "fil";
+
+function rolleAfFilnavn(filnavn: string): RolleKey {
   const navn = filnavn.toLowerCase();
-  if (/høring|hoering/.test(navn)) return "høring";
+  if (/høring|hoering/.test(navn)) return "hoering";
   if (/retningsl|vejledning/.test(navn)) return "vejledning";
   if (/klageskema/.test(navn)) return "klageskema";
   if (/bilag\s*0?[1-9]\d?/.test(navn)) return "bilag";
   return "fil";
 }
-
-const NAEVNET_NOTE = "Vejledning fra Nævnet — anonymiseres ikke";
 
 // Sektion 10: Anonymisér bilag til Nævnet.
 //
@@ -94,6 +105,40 @@ const NAEVNET_NOTE = "Vejledning fra Nævnet — anonymiseres ikke";
 // udtrækning fejler, bliver klager_navne tom — og find_redaction_targets
 // anonymiserer så ALLE personnavne, hvilket er en sikker fallback.
 export function AnonymiserSektion({ filer }: { filer: File[] }) {
+  const t = useT();
+  const formatFejl = useFejlBesked();
+  const isAdmin = useIsAdmin();
+
+  const statusEtiket: Record<AnonymResultat["status"], string> = {
+    ok: t("anonymiser.status_ok"),
+    scannet: t("anonymiser.status_scannet"),
+    fejl_aaben: t("anonymiser.status_fejl_aaben"),
+    fejl_redaktion: t("anonymiser.status_fejl_redaktion"),
+    ikke_pdf: t("anonymiser.status_ikke_pdf"),
+    ikke_understoettet: t("anonymiser.status_ikke_understoettet"),
+    exception: t("anonymiser.status_exception"),
+  };
+
+  const VENLIG_BEMAERKNING: Partial<Record<AnonymResultat["status"], string>> = {
+    fejl_aaben: t("anonymiser.venlig_fejl_aaben"),
+    fejl_redaktion: t("anonymiser.venlig_fejl_redaktion"),
+    exception: t("anonymiser.venlig_exception"),
+  };
+
+  const rolleEtiket = (rolle: RolleKey): string => {
+    switch (rolle) {
+      case "hoering":
+        return t("anonymiser.rolle_hoering");
+      case "vejledning":
+        return t("anonymiser.rolle_vejledning");
+      case "klageskema":
+        return t("anonymiser.rolle_klageskema");
+      case "bilag":
+        return t("anonymiser.rolle_bilag");
+      case "fil":
+        return t("anonymiser.rolle_fil");
+    }
+  };
   const [pending, startTransition] = useTransition();
   const [klagersNavn, sætKlagersNavn] = useState<string>("");
   const [valgte, sætValgte] = useState<Record<string, boolean>>({});
@@ -106,7 +151,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
     sætValgte((prev) => {
       const ny: Record<string, boolean> = {};
       for (const f of filer) {
-        if (!f.name.toLowerCase().endsWith(".pdf")) continue;
+        if (!erAnonymiserbar(f.name)) continue;
         if (erFraNaevnet(f.name)) continue;
         ny[f.name] = prev[f.name] ?? false;
       }
@@ -158,7 +203,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
 
   function anonymiser() {
     if (antalValgte === 0) {
-      toast.error("Vælg mindst én fil at anonymisere.");
+      toast.error(t("anonymiser.vaelg_mindst_en_toast"));
       return;
     }
     const filerAtSende = filer.filter((f) => valgte[f.name]);
@@ -177,29 +222,30 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
         )) as AnonymRespons;
         sætResultater(data);
         toast.success(
-          `${data.metadata.antal_anonymiseret_ok} af ${data.metadata.antal_input} bilag anonymiseret.`,
+          t("anonymiser.anonymiseret_toast", {
+            ok: data.metadata.antal_anonymiseret_ok,
+            ialt: data.metadata.antal_input,
+          }),
         );
       } catch (e) {
-        if (e instanceof ApiError) {
-          toast.error(
-            e.detalje ? `${e.message}: ${e.detalje.slice(0, 100)}` : e.message,
-          );
-        } else {
-          toast.error(
-            `Uventet fejl: ${e instanceof Error ? e.message : "ukendt"}`,
-          );
-        }
+        toast.error(formatFejl(e));
       }
     });
   }
 
   function download(r: AnonymResultat) {
     if (!r.anonymiseret_pdf_base64) return;
-    const blob = base64TilBlob(r.anonymiseret_pdf_base64, "application/pdf");
+    const ext = (r.output_extension || "pdf").toLowerCase();
+    const mime =
+      ext === "docx"
+        ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        : "application/pdf";
+    const blob = base64TilBlob(r.anonymiseret_pdf_base64, mime);
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = r.filnavn.replace(/\.pdf$/i, "") + "_anonymiseret.pdf";
+    a.download =
+      r.filnavn.replace(/\.(pdf|docx)$/i, "") + `_anonymiseret.${ext}`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -214,9 +260,8 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
         {/* Auto-udledt klager-info — vises som info-strip, ikke som form */}
         {klagersNavn && (
           <div className="rounded-md bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs text-emerald-900">
-            <strong>Klagers navn auto-udledt:</strong> {klagersNavn} —
-            bevares synligt i bilagene. Andre personnavne (medarbejdere,
-            guider, eksterne partnere) sortmaskeres.
+            <strong>{t("anonymiser.klager_auto_udledt")}</strong> {klagersNavn}{" "}
+            — {t("anonymiser.klager_auto_udledt_beskrivelse")}
           </div>
         )}
 
@@ -224,7 +269,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label className="text-sm font-semibold">
-              Vælg de bilag du ønsker at anonymisere
+              {t("anonymiser.vaelg_bilag_label")}
             </Label>
             <div className="flex gap-1">
               <button
@@ -233,7 +278,7 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
                 disabled={pending}
                 className="text-xs text-indigo-600 hover:text-indigo-800"
               >
-                Vælg alle
+                {t("anonymiser.vaelg_alle")}
               </button>
               <span className="text-xs text-zinc-300">·</span>
               <button
@@ -242,15 +287,15 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
                 disabled={pending}
                 className="text-xs text-zinc-500 hover:text-zinc-800"
               >
-                Ryd
+                {t("anonymiser.ryd")}
               </button>
             </div>
           </div>
           <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
             {filerSorted.map((f, idx) => {
-              const erPdf = f.name.toLowerCase().endsWith(".pdf");
+              const understoettet = erAnonymiserbar(f.name);
               const fraNaevnet = erFraNaevnet(f.name);
-              const disabled = !erPdf || fraNaevnet || pending;
+              const disabled = !understoettet || fraNaevnet || pending;
               const rolle = rolleAfFilnavn(f.name);
               return (
                 <li
@@ -272,15 +317,17 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
                   >
                     {f.name}
                   </label>
-                  <span className="text-xs text-zinc-500">Sag · {rolle}</span>
+                  <span className="text-xs text-zinc-500">
+                    {t("anonymiser.sag_rolle", { rolle: rolleEtiket(rolle) })}
+                  </span>
                   {fraNaevnet && (
                     <span className="text-xs italic text-zinc-500">
-                      {NAEVNET_NOTE}
+                      {t("anonymiser.naevnet_note")}
                     </span>
                   )}
-                  {!erPdf && !fraNaevnet && (
+                  {!understoettet && !fraNaevnet && (
                     <span className="text-xs italic text-zinc-400">
-                      kun PDF understøttes
+                      {t("anonymiser.kun_pdf_docx")}
                     </span>
                   )}
                 </li>
@@ -296,15 +343,13 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
           className="w-full"
         >
           {pending
-            ? `Anonymiserer ${antalValgte} bilag…`
-            : `Anonymisér valgte (${antalValgte})`}
+            ? t("anonymiser.anonymiserer_knap", { antal: antalValgte })
+            : t("anonymiser.anonymiser_valgte_knap", { antal: antalValgte })}
         </Button>
 
         {pending && (
           <div className="rounded-md bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-900">
-            juriitech PAX anonymiserer {antalValgte} bilag — lægger
-            sort-bjælke over følsomme felter (CPR, e-mails, telefon,
-            interne medarbejdere og eksterne partnere).
+            {t("anonymiser.progress_besked", { antal: antalValgte })}
           </div>
         )}
 
@@ -312,17 +357,16 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
         {resultater && (
           <div className="space-y-3 border-t border-zinc-200 pt-4">
             <div className="rounded-md bg-emerald-50 border border-emerald-200 p-3 text-sm text-emerald-900">
-              ✓ {resultater.metadata.antal_anonymiseret_ok} af{" "}
-              {resultater.metadata.antal_input} bilag er anonymiseret.
-              Gennemgå indholdet nedenunder og download som PDF når du er
-              tilfreds.
+              {t("anonymiser.resultat_oversigt", {
+                ok: resultater.metadata.antal_anonymiseret_ok,
+                ialt: resultater.metadata.antal_input,
+              })}
             </div>
             <p className="text-sm font-semibold text-zinc-900">
-              Anonymiserede bilag — klar til download
+              {t("anonymiser.klar_til_download")}
             </p>
             <p className="text-xs text-zinc-500">
-              Tjek resultatet manuelt før du sender til Nævnet. AI-anonymisering
-              er et hjælpeværktøj, ikke en garanti.
+              {t("anonymiser.manuel_tjek")}
             </p>
             {resultater.filer.map((r, i) => (
               <div
@@ -337,10 +381,14 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
                   <span
                     className={`rounded-full px-2 py-0.5 text-xs ${statusFarve[r.status]}`}
                   >
-                    {r.status}
+                    {statusEtiket[r.status]}
                   </span>
                 </div>
-                <p className="text-xs text-zinc-600">{r.bemaerkning}</p>
+                <p className="text-xs text-zinc-600">
+                  {isAdmin
+                    ? r.bemaerkning
+                    : VENLIG_BEMAERKNING[r.status] ?? r.bemaerkning}
+                </p>
                 {r.status === "ok" && (
                   <div className="flex items-center justify-between text-xs">
                     <span className="text-zinc-500">
@@ -352,7 +400,9 @@ export function AnonymiserSektion({ filer }: { filer: File[] }) {
                       size="sm"
                       onClick={() => download(r)}
                     >
-                      Download anonymiseret PDF
+                      {t("anonymiser.download_anonymiseret", {
+                        ext: (r.output_extension || "pdf").toUpperCase(),
+                      })}
                     </Button>
                   </div>
                 )}

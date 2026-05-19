@@ -4,8 +4,12 @@ import { useTransition, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { sletSagAction } from "@/app/sager/actions";
+import { useIsAdmin, VENLIG_FEJL } from "@/lib/bruger-rolle";
+import { useT } from "@/lib/i18n/client";
 
 export function SletSagKnap({ id, titel }: { id: number; titel: string }) {
+  const t = useT();
+  const isAdmin = useIsAdmin();
   const [pending, startTransition] = useTransition();
   const [bekræft, sætBekræft] = useState(false);
 
@@ -18,9 +22,13 @@ export function SletSagKnap({ id, titel }: { id: number; titel: string }) {
     startTransition(async () => {
       const r = await sletSagAction(id);
       if (r.ok) {
-        toast.success(`Slettede "${titel}"`);
+        toast.success(t("slet_sag.slettede_toast", { titel }));
       } else {
-        toast.error(`Kunne ikke slette: ${r.fejl}`);
+        toast.error(
+          isAdmin
+            ? t("slet_sag.slet_admin_fejl", { fejl: r.fejl ?? "" })
+            : VENLIG_FEJL,
+        );
       }
       sætBekræft(false);
     });
@@ -34,7 +42,11 @@ export function SletSagKnap({ id, titel }: { id: number; titel: string }) {
       onClick={håndter}
       disabled={pending}
     >
-      {pending ? "Sletter..." : bekræft ? "Bekræft slet" : "Slet"}
+      {pending
+        ? t("knap.sletter")
+        : bekræft
+          ? t("knap.bekraeft_slet")
+          : t("knap.slet")}
     </Button>
   );
 }

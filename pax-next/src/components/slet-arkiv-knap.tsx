@@ -4,8 +4,12 @@ import { useTransition, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { sletFraArkivAction } from "@/app/arkiv/actions";
+import { useIsAdmin, VENLIG_FEJL } from "@/lib/bruger-rolle";
+import { useT } from "@/lib/i18n/client";
 
 export function SletArkivKnap({ id, titel }: { id: number; titel: string }) {
+  const t = useT();
+  const isAdmin = useIsAdmin();
   const [pending, startTransition] = useTransition();
   const [bekræft, sætBekræft] = useState(false);
 
@@ -18,9 +22,13 @@ export function SletArkivKnap({ id, titel }: { id: number; titel: string }) {
     startTransition(async () => {
       const r = await sletFraArkivAction(id);
       if (r.ok) {
-        toast.success(`Slettede "${titel}"`);
+        toast.success(t("slet_arkiv.slettede_toast", { titel }));
       } else {
-        toast.error(`Kunne ikke slette: ${r.fejl}`);
+        toast.error(
+          isAdmin
+            ? t("slet_arkiv.slet_admin_fejl", { fejl: r.fejl ?? "" })
+            : VENLIG_FEJL,
+        );
       }
       sætBekræft(false);
     });
@@ -34,7 +42,11 @@ export function SletArkivKnap({ id, titel }: { id: number; titel: string }) {
       onClick={håndter}
       disabled={pending}
     >
-      {pending ? "..." : bekræft ? "Bekræft slet" : "Slet"}
+      {pending
+        ? t("knap.punktum_punktum_punktum")
+        : bekræft
+          ? t("knap.bekraeft_slet")
+          : t("knap.slet")}
     </Button>
   );
 }

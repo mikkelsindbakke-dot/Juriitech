@@ -11,10 +11,12 @@ import {
   opretBrugerMedTempPasswordAction,
 } from "@/app/admin/actions";
 import type { Tenant } from "@/lib/queries/tenants";
+import { useT } from "@/lib/i18n/client";
 
 type Metode = "email" | "temp";
 
 export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
+  const t = useT();
   const [pending, startTransition] = useTransition();
   const [email, sætEmail] = useState("");
   const [navn, sætNavn] = useState("");
@@ -38,11 +40,11 @@ export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
 
   function send() {
     if (!email.trim()) {
-      toast.error("Email er påkrævet.");
+      toast.error(t("admin.inviter.toast_email_paakraevet"));
       return;
     }
     if (!tenantId) {
-      toast.error("Vælg et selskab.");
+      toast.error(t("admin.inviter.toast_vaelg_selskab"));
       return;
     }
     sætTempPassword(null);
@@ -58,7 +60,7 @@ export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
           toast.success(
             r.data?.besked
               ? r.data.besked
-              : `Invitation sendt til ${email}`,
+              : t("admin.inviter.toast_invitation_sendt", { email }),
           );
           nulstil();
         } else {
@@ -72,7 +74,7 @@ export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
           fuldeNavn: navn,
         });
         if (r.ok) {
-          toast.success(`Bruger oprettet: ${email}`);
+          toast.success(t("admin.inviter.toast_bruger_oprettet", { email }));
           sætTempPassword({ email, pw: r.data!.tempPassword });
           nulstil();
         } else {
@@ -87,7 +89,7 @@ export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
       <Card>
         <CardContent className="py-6">
           <p className="text-sm text-amber-700">
-            Du skal oprette mindst én tenant før du kan invitere brugere.
+            {t("admin.inviter.skal_oprette_tenant")}
           </p>
         </CardContent>
       </Card>
@@ -99,87 +101,85 @@ export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
       <Card>
         <CardHeader>
           <CardTitle className="text-base font-semibold">
-            Inviter ny bruger
+            {t("admin.inviter.titel")}
           </CardTitle>
           <CardDescription className="text-xs">
-            Brugeren modtager en email med invite-link. Når de klikker linket,
-            vælger de selv deres adgangskode og logger ind. Du behøver ikke
-            videregive noget manuelt.
+            {t("admin.inviter.beskrivelse")}
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1.5">
-              <Label>Email-adresse</Label>
+              <Label>{t("admin.inviter.felt_email")}</Label>
               <Input
                 value={email}
                 onChange={(e) => sætEmail(e.target.value)}
-                placeholder="navn@firma.dk"
+                placeholder={t("admin.inviter.felt_email_placeholder")}
                 disabled={pending}
                 type="email"
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Fulde navn (valgfrit)</Label>
+              <Label>{t("admin.inviter.felt_navn")}</Label>
               <Input
                 value={navn}
                 onChange={(e) => sætNavn(e.target.value)}
-                placeholder="Maria Hansen"
+                placeholder={t("admin.inviter.felt_navn_placeholder")}
                 disabled={pending}
               />
             </div>
             <div className="space-y-1.5">
-              <Label>Tilknyt til selskab</Label>
+              <Label>{t("admin.inviter.felt_tenant")}</Label>
               <select
                 value={tenantId}
                 onChange={(e) => sætTenantId(Number(e.target.value))}
                 disabled={pending}
                 className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900"
               >
-                {tenants.map((t) => (
-                  <option key={t.id} value={t.id}>
-                    {t.navn} ({t.slug})
+                {tenants.map((tenant) => (
+                  <option key={tenant.id} value={tenant.id}>
+                    {tenant.navn} ({tenant.slug})
                   </option>
                 ))}
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label>Rolle</Label>
+              <Label>{t("admin.inviter.felt_rolle")}</Label>
               <div className="flex gap-2">
                 <RoleKnap
                   aktiv={role === "jurist"}
                   onClick={() => sætRole("jurist")}
                   disabled={pending}
                 >
-                  Jurist
+                  {t("admin.inviter.rolle_jurist")}
                 </RoleKnap>
                 <RoleKnap
                   aktiv={role === "admin"}
                   onClick={() => sætRole("admin")}
                   disabled={pending}
                 >
-                  Admin
+                  {t("admin.inviter.rolle_admin")}
                 </RoleKnap>
               </div>
             </div>
           </div>
 
           <div className="space-y-2 pt-2 border-t border-zinc-200">
-            <Label>Metode</Label>
+            <Label>{t("admin.inviter.felt_metode")}</Label>
             <div className="space-y-2">
               <MetodeRadio
                 aktiv={metode === "email"}
                 onClick={() => sætMetode("email")}
                 disabled={pending}
-                titel="📧 Send invite-email (anbefalet)"
-                hjælp="Brugeren modtager en mail med link til at sætte deres egen adgangskode."
+                titel={t("admin.inviter.metode_email_titel")}
+                hjælp={t("admin.inviter.metode_email_hjaelp")}
               />
               <MetodeRadio
                 aktiv={metode === "temp"}
                 onClick={() => sætMetode("temp")}
                 disabled={pending}
-                titel="🔑 Opret med temp password (backup)"
-                hjælp="System genererer et midlertidigt password som du videregiver manuelt (Signal/telefonisk — IKKE email). Brug kun hvis email-leveringen er upålidelig."
+                titel={t("admin.inviter.metode_temp_titel")}
+                hjælp={t("admin.inviter.metode_temp_hjaelp")}
               />
             </div>
           </div>
@@ -191,10 +191,10 @@ export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
             className="w-full"
           >
             {pending
-              ? "Sender..."
+              ? t("admin.inviter.knap_sender")
               : metode === "email"
-                ? "Send invitation"
-                : "Opret med temp password"}
+                ? t("admin.inviter.knap_send_invitation")
+                : t("admin.inviter.knap_opret_temp")}
           </Button>
         </CardContent>
       </Card>
@@ -203,16 +203,15 @@ export function InviterAdmin({ tenants }: { tenants: Tenant[] }) {
         <Card className="border-amber-300 bg-amber-50">
           <CardHeader>
             <CardTitle className="text-sm font-semibold text-amber-900">
-              🔐 Videregiv disse credentials sikkert
+              {t("admin.inviter.credentials_titel")}
             </CardTitle>
             <CardDescription className="text-xs text-amber-800">
-              Send IKKE password i almindelig email — brug Signal, telefonisk
-              eller anden krypteret kanal. Passwordet vises kun her én gang.
+              {t("admin.inviter.credentials_beskrivelse")}
             </CardDescription>
           </CardHeader>
           <CardContent>
             <pre className="rounded-md bg-white border border-amber-200 px-4 py-3 text-sm font-mono">
-              {`Email:    ${tempPassword.email}\nPassword: ${tempPassword.pw}`}
+              {`${t("admin.inviter.credentials_email")}:    ${tempPassword.email}\n${t("admin.inviter.credentials_password")}: ${tempPassword.pw}`}
             </pre>
           </CardContent>
         </Card>

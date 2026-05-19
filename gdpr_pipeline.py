@@ -34,7 +34,7 @@ import os
 import traceback
 from datetime import datetime
 
-from database import _connect
+from database import _connect, _decrypt_sql_expr, _decrypt_key_param
 
 
 # ----------------------------------------------------------------------
@@ -239,29 +239,22 @@ def vurder_k_anonymitet(sag_kategori, udfald_kategori, region, conn=None):
 # ----------------------------------------------------------------------
 
 def skriv_audit(sag_id, tenant_id, handling, metadata=None, conn=None):
-    """Skriv en række til gdpr_audit_log. Idempotent ift. transaktioner —
-    hvis conn gives, COMMIT'es ikke her (kalder ejer transaktionen)."""
-    own_conn = conn is None
-    if own_conn:
-        conn = _connect()
-    try:
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO gdpr_audit_log
-            (sag_id, tenant_id, handling, metadata)
-            VALUES (%s, %s, %s, %s::jsonb)
-        """, (
-            sag_id,
-            tenant_id,
-            handling,
-            json.dumps(metadata or {}),
-        ))
-        cur.close()
-        if own_conn:
-            conn.commit()
-    finally:
-        if own_conn:
-            conn.close()
+    """Wrapper omkring database.skriv_gdpr_audit der bevarer bagudkompatibel
+    signatur for gdpr_pipeline-flowet. Pipeline-handlinger har ikke en
+    bruger-kontekst (de kører i baggrund-scheduler), så user_id / email /
+    ip er bevidst None her — det er korrekt: anonymisering er en system-
+    handling, ikke en bruger-handling.
+
+    For bruger-initierede audit-rows (login, view, eksport) skal callers
+    bruge database.skriv_gdpr_audit direkte med user_id + user_email."""
+    from database import skriv_gdpr_audit
+    skriv_gdpr_audit(
+        handling=handling,
+        tenant_id=tenant_id,
+        sag_id=sag_id,
+        metadata=metadata,
+        conn=conn,
+    )
 
 
 # ----------------------------------------------------------------------
@@ -301,16 +294,33 @@ def anonymiser_sag(sag_id, tenant_id, dry_run=False):
 
         cur = conn.cursor()
 
-        # 1. Hent sagens dokumenter
-        cur.execute("""
-            SELECT id, filnavn, indhold, dokumenttype
+        # 1. Hent sagens dokumenter.
+        #
+        # KRITISK: COALESCE mellem dekrypteret krypteret-kolonne og
+        # plaintext-kolonnen. Hvis vi læser 'indhold' direkte er den NULL
+        # for krypterede dokumenter (data ligger i indhold_krypteret), og
+        # pipelinen fejler med "ingen meningsfuld tekst". Det var årsagen
+        # til 19/20 fejlede i første dry-run.
+        cur.execute(
+            f"""
+            SELECT id,
+                   filnavn,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('indhold_krypteret')}
+                       ELSE NULL END,
+                       indhold
+                   ) AS indhold,
+                   dokumenttype
             FROM mine_dokumenter
             WHERE id = %s
               AND tenant_id = %s
               AND is_public = FALSE
               AND anonymiserings_status = 'aktiv'
             FOR UPDATE
-        """, (sag_id, tenant_id))
+            """,
+            _decrypt_key_param() + (sag_id, tenant_id),
+        )
         row = cur.fetchone()
         if row is None:
             return {
@@ -517,16 +527,46 @@ def anonymiser_arkiv_entry(arkiv_id, tenant_id, dry_run=False):
         conn.set_isolation_level(2)  # SERIALIZABLE
         cur = conn.cursor()
 
-        # Lock + fetch
-        cur.execute("""
-            SELECT id, titel, type, klage_filnavn, spoergsmaal,
-                   sagsakter, ekstra_instrukser, indhold
+        # Lock + fetch.
+        # COALESCE-mønstret: hvis er_krypteret=TRUE læses dekrypteret
+        # data fra _krypteret-kolonnerne, ellers fra plaintext-fallback.
+        # Vi sender ENCRYPTION_KEY 4 gange (én pr. felt) som SQL-params.
+        nøgle_param = _decrypt_key_param()
+        cur.execute(
+            f"""
+            SELECT id, titel, type, klage_filnavn,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('spoergsmaal_krypteret')}
+                       ELSE NULL END,
+                       spoergsmaal
+                   ) AS spoergsmaal,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('sagsakter_krypteret')}
+                       ELSE NULL END,
+                       sagsakter
+                   ) AS sagsakter,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('ekstra_instrukser_krypteret')}
+                       ELSE NULL END,
+                       ekstra_instrukser
+                   ) AS ekstra_instrukser,
+                   COALESCE(
+                       CASE WHEN er_krypteret THEN
+                           {_decrypt_sql_expr('indhold_krypteret')}
+                       ELSE NULL END,
+                       indhold
+                   ) AS indhold
             FROM analyse_arkiv
             WHERE id = %s
               AND tenant_id = %s
               AND anonymiserings_status = 'aktiv'
             FOR UPDATE
-        """, (arkiv_id, tenant_id))
+            """,
+            nøgle_param * 4 + (arkiv_id, tenant_id),
+        )
         row = cur.fetchone()
         if row is None:
             return {

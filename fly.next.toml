@@ -1,0 +1,41 @@
+# Fly-konfig til Next.js + FastAPI co-deployment.
+#
+# Adskilt fra den eksisterende fly.toml (Streamlit) så vi kan deploye
+# parallelt og swappe DNS i ro efter test.
+#
+# Deploy:
+#   flyctl deploy -c fly.next.toml --build-arg NEXT_PUBLIC_SUPABASE_URL=... \
+#                                  --build-arg NEXT_PUBLIC_SUPABASE_ANON_KEY=...
+
+app = 'pax-juriitech-next'
+primary_region = 'fra'
+
+[build]
+  dockerfile = 'Dockerfile.next'
+
+[deploy]
+  strategy = 'rolling'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'suspend'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+  [[http_service.checks]]
+    interval = '15s'
+    timeout = '10s'
+    grace_period = '30s'
+    method = 'GET'
+    # Login-siden er server-rendered og kræver ikke auth — perfekt som
+    # health-probe der både tester at Next.js + lambda-laget er oppe.
+    path = '/login'
+
+[[vm]]
+  size = 'shared-cpu-4x'
+  memory = '4gb'
+  # 4 CPU + 4GB efter load-test viste at 5 samtidige analyser OOM-dræbte
+  # 2GB-maskinen. Med 4GB har vi luft til PAX_WORKER_CONCURRENCY=3
+  # (~3×500MB peak for AI-analyser) + Node/Python baseline.

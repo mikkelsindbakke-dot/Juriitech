@@ -180,6 +180,61 @@ describe("postOgValider — INGEN retry på 4xx", () => {
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("pakker FastAPI {detail: ...} ud så brugervenlig besked vises som message", async () => {
+    // FastAPI's HTTPException returnerer altid {"detail": "..."} som
+    // body. Vi vil have detail-strengen som message (besked) i UI'et,
+    // ikke som raw JSON i detalje-feltet.
+    const detailMsg =
+      "Zip-filen er beskyttet med adgangskode. Pak filen ud manuelt og upload filerne enkeltvis.";
+    const fetchMock = vi.fn().mockResolvedValue(
+      fakeResponse({
+        ok: false,
+        status: 422,
+        body: { detail: detailMsg },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await postOgValider("/api/test", testSchema, {
+        formData: fixedFormData,
+        retries: 3,
+      });
+      throw new Error("Forventede ApiError");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      const err = e as ApiError;
+      expect(err.status).toBe(422);
+      expect(err.message).toBe(detailMsg);
+      // detalje skal være tom — info'en er allerede i message
+      expect(err.detalje).toBeUndefined();
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("falder tilbage til raw text hvis body ikke er JSON", async () => {
+    // Hvis backend returnerer plain text (ikke FastAPI-format), så
+    // skal raw text bruges som detalje og message være den generiske
+    // "API svarede N"-string.
+    const fetchMock = vi.fn().mockResolvedValue(
+      fakeResponse({ ok: false, status: 504, bodyText: "Gateway Timeout" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await postOgValider("/api/test", testSchema, {
+        formData: fixedFormData,
+        retries: 1,
+      });
+      throw new Error("Forventede ApiError");
+    } catch (e) {
+      expect(e).toBeInstanceOf(ApiError);
+      const err = e as ApiError;
+      expect(err.message).toBe("API svarede 504");
+      expect(err.detalje).toContain("Gateway Timeout");
+    }
+  });
 });
 
 // ─────────── Schema-validering ───────────
@@ -257,20 +312,46 @@ describe("postOgValider — netværksfejl", () => {
         formData: fixedFormData,
         retries: 2,
       }),
-    ).rejects.toThrow(/Kan ikke nå/);
+    ).rejects.toThrow(/Forbindelsen til serveren blev kortvarigt afbrudt/);
+  });
+
+  it("inkluderer endpoint-sti i tekniske detalje", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new TypeError("DNS lookup failed"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    try {
+      await postOgValider("/api/test", testSchema, {
+        formData: fixedFormData,
+        retries: 1,
+      });
+      throw new Error("forventet exception ikke kastet");
+    } catch (e) {
+      // ApiError.detalje skal indeholde endpoint-stien så admin kan
+      // se hvor fejlen kom fra (gemt bag "Tekniske detaljer"-expander).
+      const err = e as { detalje?: string };
+      expect(err.detalje).toContain("/api/test");
+    }
   });
 });
 
 // ─────────── Konfiguration ───────────
 
 describe("postOgValider — konfigurationsfejl", () => {
-  it("smider hvis NEXT_PUBLIC_API_URL ikke er sat", async () => {
+  it("returnerer fejl hvis NEXT_PUBLIC_API_URL ikke er sat", async () => {
     delete process.env.NEXT_PUBLIC_API_URL;
+    // Når base-URL ikke er sat, ramler fetch fordi den prøver at
+    // bygge URL'en mod ren path. Vi tester at vi får en venlig fejl
+    // (ikke en uventet TypeError).
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError("Invalid URL"));
+    vi.stubGlobal("fetch", fetchMock);
 
     await expect(
       postOgValider("/api/test", testSchema, {
         formData: fixedFormData,
+        retries: 1,
       }),
-    ).rejects.toThrow(/NEXT_PUBLIC_API_URL/);
+    ).rejects.toThrow(/Forbindelsen til serveren blev kortvarigt afbrudt/);
   });
 });

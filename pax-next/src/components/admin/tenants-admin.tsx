@@ -12,42 +12,44 @@ import {
 } from "@/app/admin/actions";
 import type { Tenant } from "@/lib/queries/tenants";
 import { useRouter } from "next/navigation";
+import { useT } from "@/lib/i18n/client";
 
 const SPROG = ["da", "sv", "no", "fi"] as const;
 const LANDE = ["DK", "SE", "NO", "FI"] as const;
 
 export function TenantsAdmin({ tenants }: { tenants: Tenant[] }) {
+  const t = useT();
   const [editId, setEditId] = useState<number | null>(null);
   const [opretterNy, setOpretterNy] = useState(false);
 
-  const aktivTenant = tenants.find((t) => t.id === editId) ?? null;
+  const aktivTenant = tenants.find((tenant) => tenant.id === editId) ?? null;
 
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle className="text-base font-semibold">
-            Eksisterende selskaber ({tenants.length})
+            {t("admin.tenants.eksisterende_titel", { antal: tenants.length })}
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-2">
           {tenants.length === 0 ? (
-            <p className="text-sm text-zinc-500">Ingen tenants oprettet endnu.</p>
+            <p className="text-sm text-zinc-500">{t("admin.tenants.ingen_tenants")}</p>
           ) : (
-            tenants.map((t) => (
+            tenants.map((tenant) => (
               <div
-                key={t.id}
+                key={tenant.id}
                 className="flex items-center justify-between rounded-md border border-zinc-200 px-4 py-3"
               >
                 <div className="space-y-1">
                   <p className="font-medium text-sm">
-                    {t.navn}{" "}
+                    {tenant.navn}{" "}
                     <span className="text-zinc-400 font-normal">
-                      · slug=<code className="text-xs">{t.slug}</code> · id={t.id}
+                      · {t("admin.tenants.slug_label")}=<code className="text-xs">{tenant.slug}</code> · {t("admin.tenants.id_label")}={tenant.id}
                     </span>
                   </p>
                   <p className="text-xs text-zinc-500">
-                    {t.by || "—"} · {t.sagsbehandler} · {t.land}/{t.sprog}
+                    {tenant.by || "—"} · {tenant.sagsbehandler} · {tenant.land}/{tenant.sprog}
                   </p>
                 </div>
                 <Button
@@ -55,11 +57,11 @@ export function TenantsAdmin({ tenants }: { tenants: Tenant[] }) {
                   variant="outline"
                   size="sm"
                   onClick={() => {
-                    setEditId(t.id);
+                    setEditId(tenant.id);
                     setOpretterNy(false);
                   }}
                 >
-                  Rediger
+                  {t("admin.tenants.rediger")}
                 </Button>
               </div>
             ))
@@ -75,7 +77,7 @@ export function TenantsAdmin({ tenants }: { tenants: Tenant[] }) {
             setEditId(null);
           }}
         >
-          Opret nyt selskab
+          {t("admin.tenants.opret_nyt")}
         </Button>
       )}
 
@@ -99,6 +101,7 @@ function TenantForm({
   eksisterende: Tenant | null;
   onAfslut: () => void;
 }) {
+  const t = useT();
   const [pending, startTransition] = useTransition();
   const router = useRouter();
   const erRedigering = !!eksisterende;
@@ -158,7 +161,7 @@ function TenantForm({
         ? await opdaterTenantAction(eksisterende!.id, felter)
         : await opretTenantAction({ ...felter, slug: slug.trim() });
       if (r.ok) {
-        toast.success(erRedigering ? "Tenant opdateret" : "Tenant oprettet");
+        toast.success(erRedigering ? t("admin.tenants.toast_opdateret") : t("admin.tenants.toast_oprettet"));
         onAfslut();
         router.refresh();
       } else {
@@ -171,59 +174,61 @@ function TenantForm({
     <Card>
       <CardHeader>
         <CardTitle className="text-base font-semibold">
-          {erRedigering ? `Rediger ${eksisterende!.navn}` : "Opret nyt selskab"}
+          {erRedigering
+            ? t("admin.tenants.form_rediger_titel", { navn: eksisterende!.navn })
+            : t("admin.tenants.form_opret_titel")}
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Felt label="Selskabsnavn">
+          <Felt label={t("admin.tenants.felt_navn")}>
             <Input
               value={navn}
               onChange={(e) => sætNavn(e.target.value)}
-              placeholder="fx 'Apollo'"
+              placeholder={t("admin.tenants.felt_navn_placeholder")}
               disabled={pending}
             />
           </Felt>
           <Felt
-            label="Slug"
+            label={t("admin.tenants.felt_slug")}
             hjælp={
               erRedigering
-                ? "Slug kan ikke ændres efter oprettelse."
-                : "Små bogstaver, tal, bindestreger (fx 'apollo-dk')."
+                ? t("admin.tenants.felt_slug_hjaelp_rediger")
+                : t("admin.tenants.felt_slug_hjaelp_opret")
             }
           >
             <Input
               value={slug}
               onChange={(e) => sætSlug(e.target.value.toLowerCase())}
-              placeholder="fx 'apollo'"
+              placeholder={t("admin.tenants.felt_slug_placeholder")}
               disabled={pending || erRedigering}
             />
           </Felt>
-          <Felt label="Sagsbehandler-signatur" hjælp="Default = selskabsnavnet.">
+          <Felt label={t("admin.tenants.felt_sagsbehandler")} hjælp={t("admin.tenants.felt_sagsbehandler_hjaelp")}>
             <Input
               value={sagsbehandler}
               onChange={(e) => sætSagsbehandler(e.target.value)}
-              placeholder="fx 'Apollo Kundeservice'"
+              placeholder={t("admin.tenants.felt_sagsbehandler_placeholder")}
               disabled={pending}
             />
           </Felt>
-          <Felt label="By (datolinje)">
+          <Felt label={t("admin.tenants.felt_by")}>
             <Input
               value={by}
               onChange={(e) => sætBy(e.target.value)}
-              placeholder="fx 'København'"
+              placeholder={t("admin.tenants.felt_by_placeholder")}
               disabled={pending}
             />
           </Felt>
-          <Felt label="Anonymiserings-suffix" hjælp="Default = selskabsnavnet.">
+          <Felt label={t("admin.tenants.felt_anonym_suffix")} hjælp={t("admin.tenants.felt_anonym_suffix_hjaelp")}>
             <Input
               value={anonymSuffix}
               onChange={(e) => sætAnonymSuffix(e.target.value)}
-              placeholder="fx 'Apollo'"
+              placeholder={t("admin.tenants.felt_anonym_suffix_placeholder")}
               disabled={pending}
             />
           </Felt>
-          <Felt label="Lov-navn">
+          <Felt label={t("admin.tenants.felt_lov_navn")}>
             <Input
               value={lovNavn}
               onChange={(e) => sætLovNavn(e.target.value)}
@@ -233,13 +238,13 @@ function TenantForm({
         </div>
 
         <Felt
-          label="Interne team-navne"
-          hjælp="En pr. linje. Bruges af AI-anonymisering til at skelne interne medarbejdere fra eksterne."
+          label={t("admin.tenants.felt_team_navne")}
+          hjælp={t("admin.tenants.felt_team_navne_hjaelp")}
         >
           <textarea
             value={teamNavne}
             onChange={(e) => sætTeamNavne(e.target.value)}
-            placeholder="After Travel&#10;Kundeservice"
+            placeholder={t("admin.tenants.felt_team_navne_placeholder")}
             disabled={pending}
             rows={3}
             className="w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900 disabled:opacity-50"
@@ -247,21 +252,21 @@ function TenantForm({
         </Felt>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <Felt label="Klageorgan-navn">
+          <Felt label={t("admin.tenants.felt_klageorgan_navn")}>
             <Input
               value={klageorganNavn}
               onChange={(e) => sætKlageorganNavn(e.target.value)}
               disabled={pending}
             />
           </Felt>
-          <Felt label="Klageorgan-URL">
+          <Felt label={t("admin.tenants.felt_klageorgan_url")}>
             <Input
               value={klageorganUrl}
               onChange={(e) => sætKlageorganUrl(e.target.value)}
               disabled={pending}
             />
           </Felt>
-          <Felt label="Sprog">
+          <Felt label={t("admin.tenants.felt_sprog")}>
             <select
               value={sprog}
               onChange={(e) => sætSprog(e.target.value as (typeof SPROG)[number])}
@@ -275,7 +280,7 @@ function TenantForm({
               ))}
             </select>
           </Felt>
-          <Felt label="Land">
+          <Felt label={t("admin.tenants.felt_land")}>
             <select
               value={land}
               onChange={(e) => sætLand(e.target.value as (typeof LANDE)[number])}
@@ -292,13 +297,13 @@ function TenantForm({
         </div>
 
         <Felt
-          label="Rejsevilkår-kilde URL (valgfrit)"
-          hjælp="Bruges til scraping af deres officielle rejsevilkår — gemmes på tenanten."
+          label={t("admin.tenants.felt_rejsevilkaar")}
+          hjælp={t("admin.tenants.felt_rejsevilkaar_hjaelp")}
         >
           <Input
             value={rejsevilkaarUrl}
             onChange={(e) => sætRejsevilkaarUrl(e.target.value)}
-            placeholder="https://www.apollorejser.dk/rejsevilkaar/"
+            placeholder={t("admin.tenants.felt_rejsevilkaar_placeholder")}
             disabled={pending}
           />
         </Felt>
@@ -310,10 +315,10 @@ function TenantForm({
             disabled={pending || !navn.trim() || (!erRedigering && !slug.trim())}
           >
             {pending
-              ? "Gemmer..."
+              ? t("admin.tenants.knap_gemmer")
               : erRedigering
-                ? "Gem ændringer"
-                : "Opret tenant"}
+                ? t("admin.tenants.knap_gem_aendringer")
+                : t("admin.tenants.knap_opret_tenant")}
           </Button>
           <Button
             type="button"
@@ -321,7 +326,7 @@ function TenantForm({
             onClick={onAfslut}
             disabled={pending}
           >
-            Annullér
+            {t("admin.tenants.knap_annuller")}
           </Button>
         </div>
       </CardContent>

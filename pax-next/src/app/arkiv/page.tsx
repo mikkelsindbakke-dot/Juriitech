@@ -11,11 +11,13 @@ import { createClient } from "@/lib/supabase/server";
 import { hentBrugerMedTenant } from "@/lib/queries/users";
 import { hentArkiv, type ArkivType } from "@/lib/queries/arkiv";
 import { SletArkivKnap } from "@/components/slet-arkiv-knap";
+import { LocaleProvider } from "@/lib/i18n/client";
+import { lavT } from "@/lib/i18n/t";
 
-const typeEtiket: Record<ArkivType, { tekst: string; farve: string }> = {
-  analyse: { tekst: "Analyse", farve: "bg-blue-100 text-blue-800" },
-  svarbrev: { tekst: "Svarbrev", farve: "bg-emerald-100 text-emerald-800" },
-  tjekliste: { tekst: "Tjekliste", farve: "bg-amber-100 text-amber-800" },
+const TYPE_FARVE: Record<ArkivType, string> = {
+  analyse: "bg-blue-100 text-blue-800",
+  svarbrev: "bg-emerald-100 text-emerald-800",
+  tjekliste: "bg-amber-100 text-amber-800",
 };
 
 export default async function ArkivPage({
@@ -28,6 +30,14 @@ export default async function ArkivPage({
     data: { user },
   } = await supabase.auth.getUser();
   const dbBruger = user ? await hentBrugerMedTenant(user.id) : null;
+  const locale = dbBruger?.effektiv_sprog ?? "da";
+  const t = lavT(locale);
+  const datoLocale = locale === "no" ? "no-NO" : "da-DK";
+
+  // Type-etiketter lokaliseres via t() — fallback til dansk hvis nøgle mangler.
+  const typeTekst = (type: ArkivType): string => {
+    return t(`arkiv.type_${type}`);
+  };
 
   const params = await searchParams;
   const filter = (
@@ -37,10 +47,11 @@ export default async function ArkivPage({
     : undefined;
 
   const indgange = dbBruger
-    ? await hentArkiv(dbBruger.tenant_id, 100, filter)
+    ? await hentArkiv(dbBruger.effektiv_tenant_id, 100, filter)
     : [];
 
   return (
+    <LocaleProvider locale={locale}>
     <main className="flex flex-1 items-start justify-center bg-zinc-50 px-6 py-12">
       <div className="w-full max-w-3xl space-y-4">
         <div className="flex items-center justify-between">
@@ -48,35 +59,35 @@ export default async function ArkivPage({
             href="/"
             className="text-sm text-zinc-500 hover:text-zinc-900 underline-offset-4 hover:underline"
           >
-            ← Tilbage til forsiden
+            ← {t("arkiv.tilbage_til_forsiden")}
           </Link>
           <Link
             href="/sag/ny"
             className={buttonVariants({ size: "sm" })}
           >
-            Ny sag
+            {t("arkiv.ny_sag")}
           </Link>
         </div>
 
         <Card className="border-zinc-200 shadow-sm">
           <CardHeader className="space-y-2">
             <CardTitle className="text-2xl font-semibold tracking-tight">
-              Arkiv
+              {t("arkiv.titel")}
             </CardTitle>
             <CardDescription className="text-zinc-600">
               {dbBruger ? (
                 <>
-                  Tenant: <strong>{dbBruger.tenant_navn}</strong> ·{" "}
-                  {indgange.length} indgang(e)
-                  {filter && (
-                    <>
-                      {" "}· filter:{" "}
-                      <strong>{typeEtiket[filter].tekst}</strong>
-                    </>
-                  )}
+                  {t("arkiv.tenant_meta", {
+                    tenant: dbBruger.tenant_navn,
+                    antal: indgange.length,
+                  })}
+                  {filter &&
+                    t("arkiv.tenant_meta_filter", {
+                      filter: typeTekst(filter),
+                    })}
                 </>
               ) : (
-                "Din konto er ikke linket til en tenant"
+                t("arkiv.ikke_linket_tenant")
               )}
             </CardDescription>
 
@@ -90,19 +101,19 @@ export default async function ArkivPage({
                     : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
                 }`}
               >
-                Alle
+                {t("arkiv.filter_alle")}
               </Link>
-              {(["analyse", "svarbrev", "tjekliste"] as const).map((t) => (
+              {(["analyse", "svarbrev", "tjekliste"] as const).map((tp) => (
                 <Link
-                  key={t}
-                  href={`/arkiv?type=${t}`}
+                  key={tp}
+                  href={`/arkiv?type=${tp}`}
                   className={`text-xs rounded-full px-3 py-1 transition-colors ${
-                    filter === t
+                    filter === tp
                       ? "bg-zinc-900 text-white"
                       : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
                   }`}
                 >
-                  {typeEtiket[t].tekst}
+                  {typeTekst(tp)}
                 </Link>
               ))}
             </div>
@@ -111,8 +122,10 @@ export default async function ArkivPage({
             {indgange.length === 0 ? (
               <div className="rounded-md bg-zinc-50 border border-zinc-200 p-6 text-sm text-zinc-600 text-center">
                 {filter
-                  ? `Ingen ${typeEtiket[filter].tekst.toLowerCase()}-indgange.`
-                  : "Arkivet er tomt. Generer en analyse, et svarbrev eller en tjekliste."}
+                  ? t("arkiv.tom_state_filter", {
+                      type: typeTekst(filter).toLowerCase(),
+                    })
+                  : t("arkiv.tom_state")}
               </div>
             ) : (
               <ul className="divide-y divide-zinc-200">
@@ -128,18 +141,18 @@ export default async function ArkivPage({
                       <div className="flex items-center gap-2">
                         <span
                           className={`text-xs rounded-full px-2 py-0.5 ${
-                            typeEtiket[i.type]?.farve ??
+                            TYPE_FARVE[i.type as ArkivType] ??
                             "bg-zinc-100 text-zinc-700"
                           }`}
                         >
-                          {typeEtiket[i.type]?.tekst ?? i.type}
+                          {typeTekst(i.type as ArkivType)}
                         </span>
                         <span className="font-medium text-sm truncate group-hover:underline underline-offset-4">
                           {i.titel}
                         </span>
                       </div>
                       <div className="text-xs text-zinc-500 mt-0.5">
-                        {new Date(i.oprettet_dato).toLocaleString("da-DK", {
+                        {new Date(i.oprettet_dato).toLocaleString(datoLocale, {
                           dateStyle: "short",
                           timeStyle: "short",
                         })}
@@ -159,5 +172,6 @@ export default async function ArkivPage({
         </Card>
       </div>
     </main>
+    </LocaleProvider>
   );
 }
