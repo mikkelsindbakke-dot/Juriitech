@@ -1,0 +1,63 @@
+{
+  "_kommentar": "TEMPLATE. Kopiér til test-brugere-config.json (gitignored) og sæt et lokalt test_password. Konfiguration for fiktive test-brugere + tenants. Læses af scripts/opret_test_brugere.py og pax-next admin-siden. Alle credentials er KUN til test — må aldrig bruges i produktion mod reel data.",
+  "test_password": "SÆT-ET-LOKALT-TEST-PASSWORD",
+  "brugere": [
+    {
+      "slug": "test-quicktour",
+      "navn": "QuickTour A/S",
+      "by": "Billund",
+      "sagsbehandler": "Test Jurist (QuickTour)",
+      "email": "test-quicktour@pax-test.juriitech.dk",
+      "fulde_navn": "Test Jurist QuickTour",
+      "matchende_test_sag": "sag-01-quicktour"
+    },
+    {
+      "slug": "test-firstworldtravel",
+      "navn": "FirstWorldTravel ApS",
+      "by": "København",
+      "sagsbehandler": "Test Jurist (FirstWorldTravel)",
+      "email": "test-firstworldtravel@pax-test.juriitech.dk",
+      "fulde_navn": "Test Jurist FirstWorldTravel",
+      "matchende_test_sag": "sag-02-firstworldtravel"
+    },
+    {
+      "slug": "test-supersafari",
+      "navn": "SuperSafari A/S",
+      "by": "Glostrup",
+      "sagsbehandler": "Test Jurist (SuperSafari)",
+      "email": "test-supersafari@pax-test.juriitech.dk",
+      "fulde_navn": "Test Jurist SuperSafari",
+      "matchende_test_sag": "sag-03-supersafari"
+    },
+    {
+      "slug": "test-eutripper",
+      "navn": "EUtripper ApS",
+      "by": "København",
+      "sagsbehandler": "Test Jurist (EUtripper)",
+      "email": "test-eutripper@pax-test.juriitech.dk",
+      "fulde_navn": "Test Jurist EUtripper",
+      "matchende_test_sag": "sag-04-eutripper"
+    },
+    {
+      "slug": "test-sportstours",
+      "navn": "SportsTours International ApS",
+      "by": "København",
+      "sagsbehandler": "Test Jurist (SportsTours)",
+      "email": "test-sportstours@pax-test.juriitech.dk",
+      "fulde_navn": "Test Jurist SportsTours",
+      "matchende_test_sag": "sag-05-sportstours"
+    },
+    {
+      "_kommentar": "Norsk test-tenant — bruges til at verificere at norsk RAG returnerer norske afgørelser, ikke danske.",
+      "slug": "test-norge-fjordtravel",
+      "navn": "FjordTravel AS",
+      "by": "Oslo",
+      "sagsbehandler": "Test Jurist (FjordTravel)",
+      "email": "test-norge-fjordtravel@pax-test.juriitech.dk",
+      "fulde_navn": "Test Jurist FjordTravel",
+      "land": "NO",
+      "sprog": "no",
+      "matchende_test_sag": null
+    }
+  ]
+}

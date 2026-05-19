@@ -8,6 +8,11 @@
 !.env.example
 .streamlit/secrets.toml
 
+# Test-bruger-config indeholder et test-password — kun .example
+# (uden password) er versioneret. Kopiér den til en lokal
+# test-brugere-config.json og sæt dit eget password.
+test-brugere-config.json
+
 # Python cache
 __pycache__/
 *.py[cod]
