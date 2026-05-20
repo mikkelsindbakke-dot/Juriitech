@@ -114,7 +114,11 @@ function BrugerRække({
           <strong>{bruger.email}</strong>{" "}
           <span className="text-zinc-500">
             ({bruger.fulde_navn || "—"}) · {t("admin.brugere.role_label")}=
-            <code className="text-xs">{bruger.role}</code> · {linkStatus}
+            <code className="text-xs">
+              {bruger.role === "admin"
+                ? t("admin.inviter.rolle_admin")
+                : t("admin.inviter.rolle_jurist")}
+            </code> · {linkStatus}
           </span>
         </p>
       </div>

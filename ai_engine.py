@@ -380,7 +380,7 @@ SYSTEM_PROMPT_DA = (
     "     parentes: fx 'overbooking (engelsk: overbooking)'.\n"
     "\n"
     "  7. KVALITETSKRAV: Oversættelsen skal være så præcis at en dansk\n"
-    "     jurist kan bruge den direkte i et svarbrev til Pakkerejse-\n"
+    "     specialist kan bruge den direkte i et svarbrev til Pakkerejse-\n"
     "     Ankenævnet uden at skulle gå tilbage til originalkilden.\n"
     "\n"
     "\n"
@@ -487,7 +487,7 @@ SYSTEM_PROMPT_NO = (
     "     parentes: f.eks. 'overbooking (engelsk: overbooking)'.\n"
     "\n"
     "  7. KVALITETSKRAV: Oversettelsen skal være så presis at en norsk\n"
-    "     jurist kan bruke den direkte i et tilsvar til Pakkereisenemnda "
+    "     spesialist kan bruke den direkte i et tilsvar til Pakkereisenemnda "
     "uten å måtte gå tilbake til originalkilden.\n"
     "\n"
     "\n"
@@ -595,7 +595,7 @@ def _sprog_adj() -> str:
 def _sprog_adj_sg() -> str:
     """
     Returnerer adjektiv-form (singular ubestemt), fx 'dansk' eller 'norsk'.
-    Til brug i prompts: f"en {_sprog_adj_sg()} jurist".
+    Til brug i prompts: f"en {_sprog_adj_sg()} specialist".
 
     For DK-tenants: 'dansk' — byte-identisk.
     For NO-tenants: 'norsk'.
@@ -2196,14 +2196,14 @@ For HVERT punkt Nævnet beder om, lav en linje i formatet:
 **N. [Punktet fra høringsbrevet, gengivet ordret eller tæt på ordret]**
 - Status: ✅ DÆKKET / ⚠️ DELVIST DÆKKET / ❌ MANGLER / ℹ️ KRÆVER AFKLARING
 - Fundet i: [filnavn(e) fra de uploadede bilag, hvis relevant]
-- Bemærkning: [1-2 sætninger der forklarer hvad der er dækket / hvad der mangler / hvad juristen skal udfylde]
+- Bemærkning: [1-2 sætninger der forklarer hvad der er dækket / hvad der mangler / hvad specialisten skal udfylde]
 
 Eksempler på korrekte punkter:
 
 **1. Første bekræftelsesmail for bestillingen med oversigt over vedhæftede dokumenter, afsender/modtager, dato og emne.**
 - Status: ❌ MANGLER
 - Fundet i: (ingen)
-- Bemærkning: Bekræftelsesmailen er ikke blandt de uploadede bilag. Juristen skal fremsende den fra rejseselskabets e-mail-arkiv.
+- Bemærkning: Bekræftelsesmailen er ikke blandt de uploadede bilag. Specialisten skal fremsende den fra rejseselskabets e-mail-arkiv.
 
 **2. Første og sidste udgave af rejsebeviset.**
 - Status: ⚠️ DELVIST DÆKKET
@@ -2940,7 +2940,7 @@ def generer_svarbrev(
         ekstra = ""
         if ekstra_instrukser and ekstra_instrukser.strip():
             ekstra = (
-                f"\nSÆRLIGE INSTRUKSER FRA JURISTEN (skal følges):\n"
+                f"\nSÆRLIGE INSTRUKSER FRA SPECIALISTEN (skal følges):\n"
                 f"{ekstra_instrukser.strip()}\n"
             )
 
@@ -3338,7 +3338,7 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=
                         header
                         + "[MP4-videofil. juriitech PAX læser ikke video — "
                         "denne fil er IKKE analyseret. Nævn i vurderingen at "
-                        "juristen selv skal gennemse videoen manuelt som "
+                        "specialisten selv skal gennemse videoen manuelt som "
                         "supplement til analysen.]"
                     ),
                 })
@@ -3401,7 +3401,7 @@ def _byg_sag_content(sag, indled_tekst, slutnings_tekst, ekstra_sagsakter_filer=
                     "type": "text",
                     "text": (
                         header
-                        + "[MP4-videofil. IKKE analyseret — juristen "
+                        + "[MP4-videofil. IKKE analyseret — specialisten "
                         "gennemser selv manuelt.]"
                     ),
                 })
@@ -3540,7 +3540,7 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
             "  • 'rettidig reklamasjon' (ikke 'timely complaint')\n"
             "  • 'manglende bistand' (ikke 'lack of assistance')\n"
             "Klagepunktene skal kunne leses og forstås direkte av en "
-            "norsk jurist uten behov for å konsultere originalspråket.\n\n"
+            "norsk spesialist uten behov for å konsultere originalspråket.\n\n"
             "VIKTIG — UNNGÅ DANSKE ORD:\n"
             "  ✓ 'barn'      ✗ IKKE 'børn'\n"
             "  ✓ 'stengt'    ✗ IKKE 'lukket'\n"
@@ -3613,7 +3613,7 @@ def udled_alle_klagepunkter(sag, sagsakter_tekst=""):
             "  • 'rettidig reklamation' (ikke 'timely complaint')\n"
             "  • 'manglende bistand' (ikke 'lack of assistance')\n"
             "Klagepunkterne skal kunne læses og forstås direkte af en "
-            "dansk jurist uden behov for at konsultere originalsproget.\n\n"
+            "dansk specialist uden behov for at konsultere originalsproget.\n\n"
             "FILER FRA SAGEN FØLGER NEDENFOR:\n"
         )
 
@@ -3896,7 +3896,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
             "  • Vurderinger og observasjoner med NORSKE juridiske termer\n"
             "  • Bruk 'rettidig reklamasjon' (ikke 'timely complaint'),\n"
             f"    'mangel' (ikke 'deficiency'), 'henvendelse til {_navn}' osv.\n"
-            "Outputet skal kunne leses direkte av en norsk jurist uten "
+            "Outputet skal kunne leses direkte av en norsk spesialist uten "
             "behov for å konsultere originalspråket.\n\n"
             "VIKTIG — UNNGÅ DANSKE ORD:\n"
             "  ✓ 'barn'      ✗ IKKE 'børn'\n"
@@ -3974,7 +3974,7 @@ def udled_tidsforhold(sag, sagsakter_tekst=""):
             f"  • Vurderinger og observationer i {_sprog_adj()} juridiske termer\n"
             "  • Brug 'rettidig reklamation' (ikke 'timely complaint'),\n"
             f"    'mangel' (ikke 'deficiency'), 'henvendelse til {_navn}' osv.\n"
-            f"Output skal kunne læses direkte af en {_sprog_adj_sg()} jurist uden\n"
+            f"Output skal kunne læses direkte af en {_sprog_adj_sg()} specialist uden\n"
             "konsultation af originalsproget.\n\n"
             "FILER FRA SAGEN FØLGER NEDENFOR:\n"
         )
@@ -4787,7 +4787,7 @@ def udled_sagsresume_strukturelt(
         f"{_sprog_direktiv()}"
         "Baseret på nedenstående juridiske førstevurdering af en klagesag "
         f"fra {_hent_klageorgan_navn()}, udled et KORT struktureret resume af "
-        "sagen. Resuméet skal gøre det muligt for en jurist at få "
+        "sagen. Resuméet skal gøre det muligt for en specialist at få "
         "lynhurtigt overblik over sagen.\n\n"
         f"FØRSTEVURDERING:\n{analyse_tekst[:8000]}"
         f"{ekstra_kontekst}\n\n"
@@ -5376,7 +5376,7 @@ def opsummer_matches_til_visning(uploadet_sag, relevante_sager, kernepunkter=Non
         "ÉN af de KRÆVEDE ligheder ovenfor (lignende mangel-type ELLER "
         "samme juridiske spørgsmål ELLER samme kompensations-princip "
         "ELLER samme paragraf-anvendelse). Det skal ikke være perfekt "
-        "match — bare relateret nok til at en jurist kan trække "
+        "match — bare relateret nok til at en specialist kan trække "
         "argumenter eller præcedens fra den.\n\n"
         "Sæt juridisk_relevant_match=FALSE KUN hvis afgørelsen "
         "udelukkende har overfladiske ligheder (samme destination, "
@@ -5695,7 +5695,7 @@ def chat_om_sag(spoergsmaal, chat_historik, sag, sagsakter=None):
         sagsakter_blok = ""
         if sagsakter_tekst:
             sagsakter_blok = (
-                "\nSAGSAKTER (intern viden fra juristen):\n"
+                "\nSAGSAKTER (intern viden fra specialisten):\n"
                 f"{sagsakter_tekst}\n"
             )
 

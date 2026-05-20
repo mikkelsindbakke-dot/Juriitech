@@ -6,45 +6,45 @@
       "slug": "test-quicktour",
       "navn": "QuickTour A/S",
       "by": "Billund",
-      "sagsbehandler": "Test Jurist (QuickTour)",
+      "sagsbehandler": "Test Specialist (QuickTour)",
       "email": "test-quicktour@pax-test.juriitech.dk",
-      "fulde_navn": "Test Jurist QuickTour",
+      "fulde_navn": "Test Specialist QuickTour",
       "matchende_test_sag": "sag-01-quicktour"
     },
     {
       "slug": "test-firstworldtravel",
       "navn": "FirstWorldTravel ApS",
       "by": "København",
-      "sagsbehandler": "Test Jurist (FirstWorldTravel)",
+      "sagsbehandler": "Test Specialist (FirstWorldTravel)",
       "email": "test-firstworldtravel@pax-test.juriitech.dk",
-      "fulde_navn": "Test Jurist FirstWorldTravel",
+      "fulde_navn": "Test Specialist FirstWorldTravel",
       "matchende_test_sag": "sag-02-firstworldtravel"
     },
     {
       "slug": "test-supersafari",
       "navn": "SuperSafari A/S",
       "by": "Glostrup",
-      "sagsbehandler": "Test Jurist (SuperSafari)",
+      "sagsbehandler": "Test Specialist (SuperSafari)",
       "email": "test-supersafari@pax-test.juriitech.dk",
-      "fulde_navn": "Test Jurist SuperSafari",
+      "fulde_navn": "Test Specialist SuperSafari",
       "matchende_test_sag": "sag-03-supersafari"
     },
     {
       "slug": "test-eutripper",
       "navn": "EUtripper ApS",
       "by": "København",
-      "sagsbehandler": "Test Jurist (EUtripper)",
+      "sagsbehandler": "Test Specialist (EUtripper)",
       "email": "test-eutripper@pax-test.juriitech.dk",
-      "fulde_navn": "Test Jurist EUtripper",
+      "fulde_navn": "Test Specialist EUtripper",
       "matchende_test_sag": "sag-04-eutripper"
     },
     {
       "slug": "test-sportstours",
       "navn": "SportsTours International ApS",
       "by": "København",
-      "sagsbehandler": "Test Jurist (SportsTours)",
+      "sagsbehandler": "Test Specialist (SportsTours)",
       "email": "test-sportstours@pax-test.juriitech.dk",
-      "fulde_navn": "Test Jurist SportsTours",
+      "fulde_navn": "Test Specialist SportsTours",
       "matchende_test_sag": "sag-05-sportstours"
     },
     {
@@ -52,9 +52,9 @@
       "slug": "test-norge-fjordtravel",
       "navn": "FjordTravel AS",
       "by": "Oslo",
-      "sagsbehandler": "Test Jurist (FjordTravel)",
+      "sagsbehandler": "Test Specialist (FjordTravel)",
       "email": "test-norge-fjordtravel@pax-test.juriitech.dk",
-      "fulde_navn": "Test Jurist FjordTravel",
+      "fulde_navn": "Test Specialist FjordTravel",
       "land": "NO",
       "sprog": "no",
       "matchende_test_sag": null
