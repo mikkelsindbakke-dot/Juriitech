@@ -21,26 +21,36 @@ import anthropic
 _GYLDIGE_PARAGRAFFER: set = None  # type: ignore
 _PARAGRAF_HENVISNING_RE = None  # lazy-compiled regex
 
+# Kanonisk, verificeret liste over paragraffer i pakkerejseloven (Lov om
+# pakkerejser og sammensatte rejsearrangementer, lov nr. 1666 af
+# 26/12/2017). Loven har §§ 1-32 — § 32 er sidste paragraf. Verificeret
+# mod danskelove.dk + retsinformation.dk. Bruges i UNION med det
+# DB-skrabede sæt, så et ufuldstændigt skrabe-resultat (fx en tabt
+# paragraf-fil) ALDRIG kan give falsk "ugyldig §"-alarm på en paragraf
+# der faktisk findes i loven.
+_KANONISKE_PAKKEREJSELOV_PARAGRAFFER = {str(n) for n in range(1, 33)}
+
 
 def _hent_gyldige_paragraffer_cached() -> set:
-    """Lazy-cache. Henter ÉN gang per process."""
+    """Lazy-cache. Henter ÉN gang per process.
+
+    Resultatet er UNIONEN af (a) det DB-skrabede sæt og (b) den kanoniske
+    verificerede liste — så valideringen altid er pålidelig, også hvis DB
+    er nede eller skraberen har tabt en paragraf på gulvet.
+    """
     global _GYLDIGE_PARAGRAFFER
     if _GYLDIGE_PARAGRAFFER is None:
+        db_saet = set()
         try:
-            _GYLDIGE_PARAGRAFFER = hent_gyldige_pakkerejselov_paragraffer() or set()
-            if _GYLDIGE_PARAGRAFFER:
-                print(
-                    f"DEBUG: Paragraf-validering — indlæste "
-                    f"{len(_GYLDIGE_PARAGRAFFER)} paragraffer fra pakkerejselov"
-                )
-            else:
-                print(
-                    "WARN: Paragraf-validering — DB returnerede tom liste "
-                    "over pakkerejselov-paragraffer. Validering deaktiveret."
-                )
+            db_saet = hent_gyldige_pakkerejselov_paragraffer() or set()
         except Exception as e:
-            print(f"WARN: Paragraf-validering — kunne ikke hente liste: {e}")
-            _GYLDIGE_PARAGRAFFER = set()
+            print(f"WARN: Paragraf-validering — kunne ikke hente DB-liste: {e}")
+        _GYLDIGE_PARAGRAFFER = db_saet | _KANONISKE_PAKKEREJSELOV_PARAGRAFFER
+        print(
+            f"DEBUG: Paragraf-validering — {len(_GYLDIGE_PARAGRAFFER)} "
+            f"gyldige paragraffer ({len(db_saet)} fra DB unioneret med "
+            f"kanonisk §§ 1-32)"
+        )
     return _GYLDIGE_PARAGRAFFER
 
 
