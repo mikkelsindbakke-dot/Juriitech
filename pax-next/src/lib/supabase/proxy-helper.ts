@@ -7,6 +7,7 @@
 // route, redirect'es de til /login.
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { erProeveUdloebetForBruger } from "@/lib/queries/trial-gate";
 
 export async function updateSession(request: NextRequest) {
   let supabaseResponse = NextResponse.next({ request });
@@ -88,6 +89,30 @@ export async function updateSession(request: NextRequest) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     return NextResponse.redirect(url);
+  }
+
+  // Prøve-tenant-udløbsgate: brugere hvis HOME tenant er en udløbet
+  // prøve-tenant sendes til /proeve-udloebet. Eksisterende undtagelser:
+  //   - selve /proeve-udloebet-siden (hvor de skal lande)
+  //   - /api/* (FastAPI-laget håndterer sin egen 401/403)
+  //   - /auth/* (logout-flow skal stadig virke)
+  //   - /login (allerede dækket ovenfor)
+  if (user) {
+    const path = request.nextUrl.pathname;
+    const gate_undtaget =
+      path.startsWith("/proeve-udloebet") ||
+      path.startsWith("/api") ||
+      path.startsWith("/auth") ||
+      path.startsWith("/login");
+    if (!gate_undtaget) {
+      const udloebet = await erProeveUdloebetForBruger(user.id);
+      if (udloebet) {
+        const url = request.nextUrl.clone();
+        url.pathname = "/proeve-udloebet";
+        url.search = "";
+        return NextResponse.redirect(url);
+      }
+    }
   }
 
   return supabaseResponse;

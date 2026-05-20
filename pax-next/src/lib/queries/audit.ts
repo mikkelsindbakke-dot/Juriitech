@@ -28,7 +28,11 @@ export type AuditHandling =
   | "admin_user_slettet"
   | "admin_user_inviteret"
   | "admin_tenant_oprettet"
-  | "admin_tenant_opdateret";
+  | "admin_tenant_opdateret"
+  | "admin_proeve_tenant_oprettet"
+  | "admin_proeve_tenant_konverteret"
+  | "admin_proeve_tenant_forlaenget"
+  | "admin_proeve_tenant_data_purged";
 
 export type AuditInput = {
   handling: AuditHandling;

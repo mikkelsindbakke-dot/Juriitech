@@ -21,12 +21,18 @@ Pipeline-flow per sag:
    - Hvis k≥5: indsæt i shared_patterns
 6. Skriv audit-log-row
 
-VIGTIGT: Modulet er IKKE aktiveret. Det kaldes hverken fra app eller cron.
-Aktiveres først i Fase 4 når cron-trigger sættes op. Indtil da: tomgang.
+AKTIVERING: Modulet kører hver time via APScheduler i FastAPI-processen
+(api/main.py:_start_gdpr_scheduler). BackgroundScheduler trigger
+trigger_auto_anonymisering(maks_per_kørsel=20) hver time. Manuel kørsel
+kan trigges via POST /api/admin/gdpr-tick med X-Admin-Key-header.
 
 Køres manuelt for test:
     python3 -c "from gdpr_pipeline import anonymiser_sag; \
                 anonymiser_sag('test-sag-id', tenant_id=1)"
+
+Manuel produktions-trigger:
+    curl -X POST https://pax.juriitech.com/api/admin/gdpr-tick \\
+         -H "X-Admin-Key: $ADMIN_KEY"
 """
 
 import json
@@ -749,6 +755,126 @@ def slet_gamle_gemte_sager(dry_run=False):
 
 
 # ----------------------------------------------------------------------
+# PRØVE-TENANT CLEANUP — 30 DAGE EFTER UDLØB
+# ----------------------------------------------------------------------
+
+def slet_proeve_tenant_data(dry_run=False, dage_efter_udløb=30):
+    """Sletter al kundedata for prøve-tenants der har været udløbet
+    i mindst N dage (default 30). Selve tenant-rækken bevares så
+    audit-log-referencer forbliver gyldige.
+
+    Kriterier for en kandidat:
+        - is_trial = TRUE
+        - trial_converted_at IS NULL (ikke konverteret til kunde)
+        - trial_expires_at + N dage < NOW()
+        - trial_data_purged_at IS NULL (ikke allerede purged)
+
+    Hvad slettes pr. tenant:
+        - mine_dokumenter (klage-tekster + filbytes)
+        - dokument_chunks (CASCADE fra mine_dokumenter via FK)
+        - analyse_arkiv (gemte AI-analyser)
+        - gemte_sager (sags-kladder)
+
+    Hvad BEVARES:
+        - tenant-rækken (med trial_data_purged_at = NOW())
+        - gdpr_audit_log (compliance — 5-årig retention)
+        - users-rækken (login virker stadig → udløbet-skærm)
+
+    Args:
+        dry_run: hvis True returneres KUN listen af kandidater uden DELETE
+        dage_efter_udløb: hvor mange dage efter trial_expires_at før purge
+
+    Returns:
+        dict med antal_kandidater, antal_purged, dry_run, fejl.
+    """
+    mode = "DRY-RUN" if dry_run else "LIVE"
+    conn = _connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT id, slug, navn, trial_expires_at
+              FROM tenants
+             WHERE is_trial = TRUE
+               AND trial_converted_at IS NULL
+               AND trial_expires_at IS NOT NULL
+               AND trial_expires_at + (%s || ' days')::INTERVAL < NOW()
+               AND trial_data_purged_at IS NULL
+        """, (str(dage_efter_udløb),))
+        kandidater = cur.fetchall()
+        print(
+            f"INFO: {mode} slet_proeve_tenant_data — "
+            f"fandt {len(kandidater)} kandidater"
+        )
+
+        antal_purged = 0
+        if not dry_run:
+            for tenant_id, slug, navn, udløb in kandidater:
+                slettet_summary = {}
+                for tabel in (
+                    "mine_dokumenter",
+                    "analyse_arkiv",
+                    "gemte_sager",
+                ):
+                    cur.execute(
+                        f"DELETE FROM {tabel} WHERE tenant_id = %s",
+                        (tenant_id,),
+                    )
+                    slettet_summary[tabel] = cur.rowcount
+                # dokument_chunks slettes automatisk via CASCADE fra
+                # mine_dokumenter — men vi rydder eksplicit for at fange
+                # eventuelle orphans.
+                cur.execute(
+                    """
+                    DELETE FROM dokument_chunks
+                      WHERE dokument_id NOT IN (SELECT id FROM mine_dokumenter)
+                    """
+                )
+                cur.execute(
+                    """
+                    UPDATE tenants
+                       SET trial_data_purged_at = NOW()
+                     WHERE id = %s
+                    """,
+                    (tenant_id,),
+                )
+                skriv_audit(
+                    str(tenant_id),
+                    tenant_id,
+                    "admin_proeve_tenant_data_purged",
+                    {
+                        "tenant_slug": slug,
+                        "tenant_navn": navn,
+                        "trial_expires_at": (
+                            udløb.isoformat() if udløb else None
+                        ),
+                        "dage_efter_udløb": dage_efter_udløb,
+                        "slettet_pr_tabel": slettet_summary,
+                    },
+                    conn=conn,
+                )
+                antal_purged += 1
+            conn.commit()
+
+        cur.close()
+        return {
+            "antal_kandidater": len(kandidater),
+            "antal_purged": antal_purged,
+            "dry_run": dry_run,
+        }
+    except Exception as e:
+        conn.rollback()
+        print(f"FEJL: slet_proeve_tenant_data fejlede: {e}")
+        traceback.print_exc()
+        return {
+            "antal_kandidater": 0,
+            "antal_purged": 0,
+            "fejl": str(e),
+        }
+    finally:
+        conn.close()
+
+
+# ----------------------------------------------------------------------
 # CRON-ENTRY POINT
 # ----------------------------------------------------------------------
 
@@ -848,6 +974,17 @@ def trigger_auto_anonymisering(maks_per_kørsel=20, dry_run=False,
         samlet["gemte_sager"] = result
     else:
         samlet["gemte_sager"] = {"sprunget_over": True}
+
+    # ─── 4) Prøve-tenant data-purge (30 dage efter udløb) ───
+    # Kører hver time men finder typisk 0 kandidater. Først efter
+    # første prøveperiode er ramt 30 dage forbi udløb sker faktisk
+    # sletning.
+    try:
+        purge_result = slet_proeve_tenant_data(dry_run=dry_run)
+        samlet["proeve_tenant_purge"] = purge_result
+    except Exception as e:
+        print(f"FEJL: slet_proeve_tenant_data integration: {e}")
+        samlet["proeve_tenant_purge"] = {"fejl": str(e)}
 
     return samlet
 

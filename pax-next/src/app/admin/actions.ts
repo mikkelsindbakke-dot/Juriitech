@@ -19,6 +19,8 @@ import {
   hentTenantBySlug,
   opretTenant,
   opdaterTenant,
+  konverterProeveTenant,
+  forlængProeveTenant,
   type TenantFelter,
   type TenantOpdater,
 } from "@/lib/queries/tenants";
@@ -89,17 +91,31 @@ export async function opretTenantAction(
     if (await hentTenantBySlug(slug)) {
       return { ok: false, fejl: t("admin.actions.fejl_slug_brugt", { slug }) };
     }
+    // Hvis det er en prøve-tenant: valider at udløbsdato er sat og
+    // tilføj admin's user_id som "oprettet af" for audit-spor.
+    if (felter.is_trial) {
+      if (!felter.trial_expires_at) {
+        return { ok: false, fejl: t("admin.actions.fejl_proeve_udloeber_mangler") };
+      }
+      felter = { ...felter, trial_created_by: aktuel.user_id };
+    }
     const id = await opretTenant({ ...felter, slug });
     if (!id) return { ok: false, fejl: t("admin.actions.fejl_opret_tenant") };
 
     // GDPR audit (fail-safe)
     await skrivGdprAudit({
-      handling: "admin_tenant_oprettet",
+      handling: felter.is_trial ? "admin_proeve_tenant_oprettet" : "admin_tenant_oprettet",
       tenantId: aktuel.tenant_id,
       userId: aktuel.user_id,
       userEmail: aktuel.email,
       sagId: slug,
-      metadata: { ny_tenant_id: id, navn: felter.navn },
+      metadata: {
+        ny_tenant_id: id,
+        navn: felter.navn,
+        ...(felter.is_trial
+          ? { is_trial: true, trial_expires_at: felter.trial_expires_at }
+          : {}),
+      },
     });
 
     revalidatePath("/admin");
@@ -131,6 +147,67 @@ export async function opdaterTenantAction(
       userEmail: aktuel.email,
       sagId: String(id),
       metadata: { aendrede_felter: Object.keys(felter) },
+    });
+
+    revalidatePath("/admin");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, fejl: e instanceof Error ? e.message : t("admin.actions.fejl_ukendt") };
+  }
+}
+
+export async function konverterProeveTenantAction(
+  id: number,
+): Promise<Resultat> {
+  let t = lavT("da");
+  try {
+    const aktuel = await requireAdmin();
+    t = lavT(aktuel.locale);
+    const ok = await konverterProeveTenant(id);
+    if (!ok) return { ok: false, fejl: t("admin.actions.fejl_proeve_ikke_konverteret") };
+
+    await skrivGdprAudit({
+      handling: "admin_proeve_tenant_konverteret",
+      tenantId: aktuel.tenant_id,
+      userId: aktuel.user_id,
+      userEmail: aktuel.email,
+      sagId: String(id),
+      metadata: { konverteret_tenant_id: id },
+    });
+
+    revalidatePath("/admin");
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, fejl: e instanceof Error ? e.message : t("admin.actions.fejl_ukendt") };
+  }
+}
+
+export async function forlængProeveTenantAction(
+  id: number,
+  nyUdløber: string,
+): Promise<Resultat> {
+  let t = lavT("da");
+  try {
+    const aktuel = await requireAdmin();
+    t = lavT(aktuel.locale);
+    // Valider at nyUdløber er en gyldig ISO-dato i fremtiden
+    const parsed = new Date(nyUdløber);
+    if (Number.isNaN(parsed.getTime())) {
+      return { ok: false, fejl: t("admin.actions.fejl_proeve_udloeber_ugyldig") };
+    }
+    if (parsed.getTime() < Date.now()) {
+      return { ok: false, fejl: t("admin.actions.fejl_proeve_udloeber_fortid") };
+    }
+    const ok = await forlængProeveTenant(id, parsed.toISOString());
+    if (!ok) return { ok: false, fejl: t("admin.actions.fejl_proeve_ikke_forlaenget") };
+
+    await skrivGdprAudit({
+      handling: "admin_proeve_tenant_forlaenget",
+      tenantId: aktuel.tenant_id,
+      userId: aktuel.user_id,
+      userEmail: aktuel.email,
+      sagId: String(id),
+      metadata: { ny_udløbsdato: parsed.toISOString() },
     });
 
     revalidatePath("/admin");

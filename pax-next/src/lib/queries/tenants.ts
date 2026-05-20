@@ -23,6 +23,14 @@ export type Tenant = {
   land: string;
   lov_navn: string;
   oprettet_dato: string;
+  // Free-trial-felter — NULL for almindelige (betalende) tenants.
+  // is_trial=TRUE + trial_expires_at < NOW() = brugere skal redirectes
+  // til /proeve-udloebet af proxy-middleware.
+  is_trial: boolean;
+  trial_expires_at: string | null;
+  trial_created_by: number | null;
+  trial_converted_at: string | null;
+  trial_data_purged_at: string | null;
 };
 
 type TenantRow = Omit<Tenant, "interne_team_navne"> & {
@@ -48,7 +56,9 @@ const TENANT_KOLONNER = `
   id, slug, navn, sagsbehandler, by, logo_filnavn,
   anonymisering_suffix, interne_team_navne, klageorgan_navn,
   klageorgan_url, rejsevilkaar_kilde_url, sprog, land, lov_navn,
-  oprettet_dato
+  oprettet_dato,
+  is_trial, trial_expires_at, trial_created_by,
+  trial_converted_at, trial_data_purged_at
 `;
 
 export async function hentAlleTenants(): Promise<Tenant[]> {
@@ -87,6 +97,10 @@ export type TenantFelter = {
   sprog?: string;
   land?: string;
   lov_navn?: string;
+  // Prøve-tenant: hvis is_trial=true MÅ trial_expires_at ikke være null
+  is_trial?: boolean;
+  trial_expires_at?: string | null; // ISO-string, fx '2026-06-03T00:00:00Z'
+  trial_created_by?: number | null;
 };
 
 export async function opretTenant(felter: TenantFelter): Promise<number | null> {
@@ -96,8 +110,10 @@ export async function opretTenant(felter: TenantFelter): Promise<number | null> 
       (slug, navn, sagsbehandler, by, logo_filnavn,
        anonymisering_suffix, interne_team_navne,
        klageorgan_navn, klageorgan_url, rejsevilkaar_kilde_url,
-       sprog, land, lov_navn)
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       sprog, land, lov_navn,
+       is_trial, trial_expires_at, trial_created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,
+            $14,$15,$16)
     RETURNING id
     `,
     [
@@ -114,12 +130,18 @@ export async function opretTenant(felter: TenantFelter): Promise<number | null> 
       felter.sprog ?? "da",
       felter.land ?? "DK",
       felter.lov_navn ?? "Pakkerejseloven",
+      felter.is_trial ?? false,
+      felter.trial_expires_at ?? null,
+      felter.trial_created_by ?? null,
     ],
   );
   return rows[0]?.id ?? null;
 }
 
-export type TenantOpdater = Partial<Omit<TenantFelter, "slug">>;
+export type TenantOpdater = Partial<Omit<TenantFelter, "slug">> & {
+  trial_converted_at?: string | null;
+  trial_data_purged_at?: string | null;
+};
 
 export async function opdaterTenant(
   id: number,
@@ -137,6 +159,10 @@ export async function opdaterTenant(
     "sprog",
     "land",
     "lov_navn",
+    "is_trial",
+    "trial_expires_at",
+    "trial_converted_at",
+    "trial_data_purged_at",
   ]);
   const dele: string[] = [];
   const params: unknown[] = [];
@@ -151,6 +177,42 @@ export async function opdaterTenant(
   const rows = await query<{ id: number }>(
     `UPDATE tenants SET ${dele.join(", ")} WHERE id=$${i} RETURNING id`,
     params,
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Konvertér en prøve-tenant til en betalende kunde.
+ * Flipper is_trial=FALSE og rydder trial_expires_at, men beholder
+ * trial_converted_at som audit-spor på at det oprindeligt var en prøve.
+ */
+export async function konverterProeveTenant(id: number): Promise<boolean> {
+  const rows = await query<{ id: number }>(
+    `UPDATE tenants
+       SET is_trial = FALSE,
+           trial_expires_at = NULL,
+           trial_converted_at = NOW()
+     WHERE id = $1 AND is_trial = TRUE
+     RETURNING id`,
+    [id],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Forlæng en prøve-tenants udløbsdato. Tager en absolut ISO-dato
+ * (ikke et antal dage), så admin har fuld kontrol over hvad de sætter.
+ */
+export async function forlængProeveTenant(
+  id: number,
+  nyUdløber: string,
+): Promise<boolean> {
+  const rows = await query<{ id: number }>(
+    `UPDATE tenants
+       SET trial_expires_at = $1
+     WHERE id = $2 AND is_trial = TRUE
+     RETURNING id`,
+    [nyUdløber, id],
   );
   return rows.length > 0;
 }

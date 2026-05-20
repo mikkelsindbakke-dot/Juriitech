@@ -418,6 +418,44 @@ def opret_tabeller():
             )
         """)
 
+        # Free-trial-felter — idempotente ALTER så vi kan tilføje dem
+        # uden migration-script. Bruges af /admin til at oprette
+        # prøve-tenants som potentielle kunder kan teste på.
+        #
+        # Flow: admin opretter tenant med is_trial=TRUE + trial_expires_at
+        # (typisk 14 dage frem). Når trial_expires_at < NOW() bliver
+        # brugerne redirected til /proeve-udloebet af proxy-middleware.
+        # 30 dage efter udløb rydder cleanup-cron'en data ud (men
+        # bevarer tenant-row + audit-log af compliance-grunde).
+        cur.execute("""
+            ALTER TABLE tenants
+            ADD COLUMN IF NOT EXISTS is_trial BOOLEAN NOT NULL DEFAULT FALSE
+        """)
+        cur.execute("""
+            ALTER TABLE tenants
+            ADD COLUMN IF NOT EXISTS trial_expires_at TIMESTAMPTZ DEFAULT NULL
+        """)
+        cur.execute("""
+            ALTER TABLE tenants
+            ADD COLUMN IF NOT EXISTS trial_created_by INTEGER DEFAULT NULL
+        """)
+        cur.execute("""
+            ALTER TABLE tenants
+            ADD COLUMN IF NOT EXISTS trial_converted_at TIMESTAMPTZ DEFAULT NULL
+        """)
+        cur.execute("""
+            ALTER TABLE tenants
+            ADD COLUMN IF NOT EXISTS trial_data_purged_at TIMESTAMPTZ DEFAULT NULL
+        """)
+        # Index på trial_expires_at brugt af cleanup-cron til at finde
+        # udløbede prøve-tenants effektivt. Partial index → kun rækker
+        # med is_trial=TRUE indexes, så det er meget billigt.
+        cur.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tenants_trial_expires
+            ON tenants (trial_expires_at)
+            WHERE is_trial = TRUE
+        """)
+
         # 9. users — én række per autentificeret bruger
         # supabase_user_id er UUID'en fra Supabase Auth (vi bruger Supabase
         # som auth-leverandør i B2). Vi gemmer ikke password — det er
@@ -984,7 +1022,8 @@ def hent_alle_tenants():
             "SELECT id, slug, navn, sagsbehandler, by, logo_filnavn, "
             "anonymisering_suffix, interne_team_navne, klageorgan_navn, "
             "klageorgan_url, rejsevilkaar_kilde_url, sprog, land, "
-            "lov_navn, oprettet_dato "
+            "lov_navn, oprettet_dato, is_trial, trial_expires_at, "
+            "trial_created_by, trial_converted_at, trial_data_purged_at "
             "FROM tenants ORDER BY navn ASC"
         )
         raekker = cur.fetchall()
@@ -1007,7 +1046,8 @@ def hent_tenant_by_id(tenant_id):
             "SELECT id, slug, navn, sagsbehandler, by, logo_filnavn, "
             "anonymisering_suffix, interne_team_navne, klageorgan_navn, "
             "klageorgan_url, rejsevilkaar_kilde_url, sprog, land, "
-            "lov_navn, oprettet_dato "
+            "lov_navn, oprettet_dato, is_trial, trial_expires_at, "
+            "trial_created_by, trial_converted_at, trial_data_purged_at "
             "FROM tenants WHERE id = %s",
             (int(tenant_id),),
         )
@@ -1034,7 +1074,8 @@ def hent_tenant_by_slug(slug):
             "SELECT id, slug, navn, sagsbehandler, by, logo_filnavn, "
             "anonymisering_suffix, interne_team_navne, klageorgan_navn, "
             "klageorgan_url, rejsevilkaar_kilde_url, sprog, land, "
-            "lov_navn, oprettet_dato "
+            "lov_navn, oprettet_dato, is_trial, trial_expires_at, "
+            "trial_created_by, trial_converted_at, trial_data_purged_at "
             "FROM tenants WHERE slug = %s",
             (slug,),
         )
@@ -1054,11 +1095,16 @@ def opret_tenant(
     klageorgan_url="https://www.pakkerejseankenaevnet.dk",
     rejsevilkaar_kilde_url=None, sprog="da", land="DK",
     lov_navn="Pakkerejseloven",
+    is_trial=False, trial_expires_at=None, trial_created_by=None,
 ):
     """
     Opretter en ny tenant. interne_team_navne er en liste — gemmes
     som JSON-string i DB. Returnerer den nye tenant's id, eller None
     ved fejl (fx hvis slug allerede findes).
+
+    Prøve-tenants oprettes med is_trial=True og en trial_expires_at-
+    dato. Når den dato passerer, redirecter middleware tenantens
+    brugere til /proeve-udloebet.
     """
     import json as _json
     try:
@@ -1071,8 +1117,10 @@ def opret_tenant(
               (slug, navn, sagsbehandler, by, logo_filnavn,
                anonymisering_suffix, interne_team_navne,
                klageorgan_navn, klageorgan_url, rejsevilkaar_kilde_url,
-               sprog, land, lov_navn)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+               sprog, land, lov_navn,
+               is_trial, trial_expires_at, trial_created_by)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                    %s, %s, %s)
             RETURNING id
             """,
             (
@@ -1082,6 +1130,7 @@ def opret_tenant(
                 klageorgan_navn, klageorgan_url,
                 rejsevilkaar_kilde_url or "",
                 sprog, land, lov_navn,
+                bool(is_trial), trial_expires_at, trial_created_by,
             ),
         )
         ny_id = cur.fetchone()[0]
@@ -1108,6 +1157,10 @@ def opdater_tenant(tenant_id, **felter):
         "anonymisering_suffix", "interne_team_navne",
         "klageorgan_navn", "klageorgan_url",
         "rejsevilkaar_kilde_url", "sprog", "land", "lov_navn",
+        # Prøve-tenant-felter — admin kan forlænge, konvertere eller
+        # markere data som purged via denne path
+        "is_trial", "trial_expires_at", "trial_created_by",
+        "trial_converted_at", "trial_data_purged_at",
     }
     sat_dele = []
     params = []
@@ -1162,6 +1215,11 @@ def _row_to_tenant_dict(row):
         "land": row[12] or "DK",
         "lov_navn": row[13] or "Pakkerejseloven",
         "oprettet_dato": row[14],
+        "is_trial": bool(row[15]) if row[15] is not None else False,
+        "trial_expires_at": row[16],
+        "trial_created_by": row[17],
+        "trial_converted_at": row[18],
+        "trial_data_purged_at": row[19],
     }
 
 

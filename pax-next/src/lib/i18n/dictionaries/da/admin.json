@@ -60,7 +60,22 @@
       "knap_gemmer": "Gemmer...",
       "knap_annuller": "Annullér",
       "toast_opdateret": "Tenant opdateret",
-      "toast_oprettet": "Tenant oprettet"
+      "toast_oprettet": "Tenant oprettet",
+      "proeve_titel": "Prøve-tenant (free trial)",
+      "proeve_checkbox": "Dette er en prøve-tenant",
+      "proeve_checkbox_hjaelp": "Markér hvis det er en gratis prøveperiode for en potentiel kunde. Brugerne kan kun bruge appen indtil udløbsdatoen.",
+      "proeve_udloeber_label": "Prøveperioden udløber",
+      "proeve_udloeber_hjaelp": "Default 14 dage frem. Brugerne ser en låst skærm efter denne dato.",
+      "proeve_badge": "🧪 PRØVE",
+      "proeve_badge_udløber_om": "udløber om {dage} dage",
+      "proeve_badge_udløbet_for": "udløbet for {dage} dage siden",
+      "proeve_badge_udløbet_i_dag": "udløber i dag",
+      "proeve_badge_konverteret": "✅ KONVERTERET",
+      "knap_konverter_til_kunde": "Konvertér til betalende kunde",
+      "knap_forlaeng_proeve": "Forlæng prøveperiode",
+      "toast_konverteret": "Tenant konverteret til betalende kunde",
+      "toast_forlaenget": "Prøveperiode forlænget til {dato}",
+      "forlaeng_prompt": "Ny udløbsdato (YYYY-MM-DD)"
     },
     "brugere": {
       "ingen_tenants": "Ingen tenants oprettet endnu — opret en under fanen Tenants.",
@@ -143,7 +158,11 @@
       "handling_admin_user_slettet": "Admin: bruger slettet",
       "handling_admin_user_inviteret": "Admin: bruger inviteret",
       "handling_admin_tenant_oprettet": "Admin: tenant oprettet",
-      "handling_admin_tenant_opdateret": "Admin: tenant opdateret"
+      "handling_admin_tenant_opdateret": "Admin: tenant opdateret",
+      "handling_admin_proeve_tenant_oprettet": "Admin: prøve-tenant oprettet",
+      "handling_admin_proeve_tenant_konverteret": "Admin: prøve-tenant konverteret til betalende kunde",
+      "handling_admin_proeve_tenant_forlaenget": "Admin: prøveperiode forlænget",
+      "handling_admin_proeve_tenant_data_purged": "Admin: prøve-tenant-data slettet (cron)"
     },
     "test_sager": {
       "kort_titel": "Fiktive testsager til upload-test",
@@ -193,6 +212,11 @@
       "fejl_slug_brugt": "Slug '{slug}' er allerede i brug.",
       "fejl_opret_tenant": "Kunne ikke oprette tenant.",
       "fejl_opdatering": "Opdatering fejlede.",
+      "fejl_proeve_udloeber_mangler": "Udløbsdato er påkrævet for prøve-tenants.",
+      "fejl_proeve_udloeber_ugyldig": "Ugyldig udløbsdato.",
+      "fejl_proeve_udloeber_fortid": "Udløbsdatoen kan ikke ligge i fortiden.",
+      "fejl_proeve_ikke_konverteret": "Kunne ikke konvertere prøve-tenant — er den stadig en prøve?",
+      "fejl_proeve_ikke_forlaenget": "Kunne ikke forlænge prøveperioden.",
       "fejl_email_paakraevet": "Email er påkrævet.",
       "fejl_tenant_paakraevet": "Tenant er påkrævet.",
       "fejl_ugyldig_rolle": "Ugyldig rolle: {rolle}",
